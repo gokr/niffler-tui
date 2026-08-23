@@ -1,0 +1,15 @@
+{
+  "name": "niffler-tui",
+  "version": "0.1.0",
+  "description": "Bubble Tea terminal chat client for Niffler sessions.",
+  "license": "MIT",
+  "components": [
+    {
+      "name": "tui",
+      "lang": "go",
+      "main": "tui/main.go",
+      "interactive": true,
+      "description": "Interactive terminal chat client; registers no LLM tools"
+    }
+  ]
+}
