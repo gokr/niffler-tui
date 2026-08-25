@@ -8,6 +8,13 @@
       "name": "tui",
       "lang": "go",
       "main": "tui/main.go",
+      "sources": [
+        "tui/backend.go",
+        "tui/context_status.go",
+        "tui/controls.go",
+        "tui/provider_form.go",
+        "tui/selectors.go"
+      ],
       "interactive": true,
       "description": "Interactive terminal chat client; registers no LLM tools"
     }

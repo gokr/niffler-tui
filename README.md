@@ -39,8 +39,51 @@ Configuration:
 Keys:
 
 - `Enter`: send the current input
-- `Page Up` / `Page Down` or mouse wheel: scroll the transcript
+- `Alt+Enter` / `Ctrl+J`: insert a newline in the input (multiline messages)
+- `Up` / `Down`: move within the input; at the first/last line they walk
+  sent-message history (readline-style), restoring the in-progress draft
+- `Ctrl+R`: reverse history search; type to filter, `Ctrl+R` again for older
+  matches, `Enter` to accept, `Esc` to cancel
+- `PgUp` / `PgDn`: page through the transcript
+- `Ctrl+Up` / `Ctrl+Down`: scroll the transcript one line at a time
+- Mouse wheel: scroll the transcript
 - `Ctrl+C`: quit
+
+Local commands are handled by the TUI and are never sent to the model:
+
+- `/provider` — searchable global provider selector; also offers the
+  environment fallback and provider setup
+- `/model` — searchable active-provider model catalog; selection is persisted
+  immediately as this conversation's override (without an inference call)
+- `/connect` — masked provider connection form using models.dev templates or a
+  custom OpenAI-compatible endpoint
+- `/status` — detailed effective provider/model/context provenance and usage
+- `/help` — command summary
+
+Selectors use `/` to filter, arrows to move, `Enter` to choose, and `Esc` to
+return to chat. The provider form masks its API-key field; slash commands and
+credentials are not written to sent-message history or the transcript.
+
+The second header line always shows the effective provider and model plus a
+context gauge. Context occupancy uses model-reported total tokens when
+available, survives session resume through Niffler's conversation metadata,
+and changes colour at the same 75% warning / 90% trimming thresholds as core.
+Provider selection changes Niffler's global default; model selection is scoped
+to the current conversation.
+
+Assistant replies are rendered as Markdown (headings, bold, italics, lists,
+tables, and syntax-highlighted fenced code blocks via Glamour). While tokens
+stream, blocks show as plain text and upgrade to styled Markdown when output
+pauses, avoiding an expensive full Markdown render on every token.
+
+History is persisted per session as JSONL under
+`$XDG_STATE_HOME/niffler-tui/history-<session>.jsonl` (or
+`~/.local/state/niffler-tui/`), capped at 200 entries. Delete the file to
+clear it.
+
+The Markdown style follows the `GLAMOUR_STYLE` environment variable (default
+`dark`; see Glamour's styles, e.g. `light`, `ascii`, `dracula`,
+`tokyo-night`).
 
 The alternate screen keeps the viewport and input stable while tokens stream.
 When the transcript is scrolled up, new tokens do not force it back to the
