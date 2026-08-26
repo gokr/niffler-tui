@@ -851,3 +851,125 @@ func TestStatusWarningAcceptsStringWhileContextWarningUsesBool(t *testing.T) {
 		t.Fatalf("context warning = %q", m.contextNote)
 	}
 }
+
+func TestParseApprovalPayload(t *testing.T) {
+	req, ok := parseApprovalPayload(json.RawMessage(
+		`{"id":"a1","tool":"bash","args":{"cmd":"make"},"sessionId":"sess-1"}`))
+	if !ok {
+		t.Fatal("valid payload not accepted")
+	}
+	if req.id != "a1" || req.tool != "bash" || req.sessionID != "sess-1" {
+		t.Fatalf("parsed req = %+v", req)
+	}
+	if _, ok := parseApprovalPayload(json.RawMessage(`{"id":"a1"}`)); ok {
+		t.Fatal("payload without tool accepted")
+	}
+	if _, ok := parseApprovalPayload(json.RawMessage(`not json`)); ok {
+		t.Fatal("malformed payload accepted")
+	}
+}
+
+func TestApprovalDirectedAckAndAutoApprove(t *testing.T) {
+	m := newTestModel()
+
+	// Broadcast (no ack expected) request is queued.
+	m.applyApprovalEvent(approvalEventMsg{
+		req: approvalRequest{id: "b1", tool: "bash", args: json.RawMessage(`{"cmd":"ls"}`)},
+	})
+	if len(m.approvals) != 1 || m.approvals[0].id != "b1" {
+		t.Fatalf("broadcast request not queued: %+v", m.approvals)
+	}
+
+	// An auto-approved tool skips the queue entirely.
+	m.rememberAutoApprove("sess-1", "bash")
+	m.applyApprovalEvent(approvalEventMsg{
+		req:      approvalRequest{id: "b2", tool: "bash", sessionID: "sess-1"},
+		directed: true,
+	})
+	if len(m.approvals) != 1 {
+		t.Fatalf("auto-approved request was queued: %+v", m.approvals)
+	}
+
+	// A directed (non-auto) request is queued behind existing ones.
+	m.applyApprovalEvent(approvalEventMsg{
+		req:      approvalRequest{id: "d1", tool: "bash", sessionID: "sess-2"},
+		directed: true,
+	})
+	if len(m.approvals) != 2 || m.approvals[1].id != "d1" {
+		t.Fatalf("directed request not queued: %+v", m.approvals)
+	}
+}
+
+func TestApprovalAnswerPopsAndAutoRemembers(t *testing.T) {
+	m := newTestModel()
+	m.applyApprovalEvent(approvalEventMsg{
+		req: approvalRequest{id: "c1", tool: "core.spawn", sessionID: "sess-9"},
+	})
+	m.answerApproval(true, true)
+	if len(m.approvals) != 0 {
+		t.Fatalf("queue not empty after answer: %+v", m.approvals)
+	}
+	if !m.isAutoApproved("sess-9", "core.spawn") {
+		t.Fatal("auto-approve not remembered")
+	}
+	if m.isAutoApproved("sess-9", "bash") {
+		t.Fatal("unrelated tool auto-approved")
+	}
+
+	m.answerApproval(true, true) // no-op on empty queue
+	if len(m.approvals) != 0 {
+		t.Fatalf("empty-queue answer mutated state: %+v", m.approvals)
+	}
+}
+
+func TestApprovalResolvedDismisses(t *testing.T) {
+	m := newTestModel()
+	m.applyApprovalEvent(approvalEventMsg{req: approvalRequest{id: "x1", tool: "bash"}})
+	m.applyApprovalEvent(approvalEventMsg{req: approvalRequest{id: "x2", tool: "bash"}})
+	m.applyApprovalResolved("x1")
+	if len(m.approvals) != 1 || m.approvals[0].id != "x2" {
+		t.Fatalf("resolved did not dismiss: %+v", m.approvals)
+	}
+}
+
+func TestApprovalKeysRouteWhilePending(t *testing.T) {
+	m := newTestModel()
+	// Enter with no pending approval must NOT be consumed.
+	if m.approvalKey(tea.KeyPressMsg{}) {
+		t.Fatal("empty key consumed without pending approval")
+	}
+
+	m.applyApprovalEvent(approvalEventMsg{req: approvalRequest{id: "k1", tool: "bash", sessionID: "s1"}})
+	if !m.approvalKey(tea.KeyPressMsg{Code: tea.KeyEnter}) {
+		t.Fatal("enter not consumed by pending approval")
+	}
+	if len(m.approvals) != 0 {
+		t.Fatalf("enter did not answer: %+v", m.approvals)
+	}
+
+	m.applyApprovalEvent(approvalEventMsg{req: approvalRequest{id: "k2", tool: "bash", sessionID: "s1"}})
+	if !m.approvalKey(tea.KeyPressMsg{Code: tea.KeyEsc}) {
+		t.Fatal("esc not consumed by pending approval")
+	}
+	if len(m.approvals) != 0 {
+		t.Fatalf("esc did not deny: %+v", m.approvals)
+	}
+
+	m.applyApprovalEvent(approvalEventMsg{req: approvalRequest{id: "k3", tool: "bash", sessionID: "s1"}})
+	if !m.approvalKey(tea.KeyPressMsg{Code: 'a'}) {
+		t.Fatal("'a' not consumed by pending approval")
+	}
+	if !m.isAutoApproved("s1", "bash") {
+		t.Fatal("'a' did not remember auto-approve")
+	}
+}
+
+func TestApprovalPrettyArgs(t *testing.T) {
+	got := prettyApprovalArgs(json.RawMessage(`{"cmd":"make","dir":"src"}`))
+	if !strings.Contains(got, "\"cmd\": \"make\"") {
+		t.Fatalf("args not indented: %q", got)
+	}
+	if prettyApprovalArgs(nil) != "{}" {
+		t.Fatal("empty args should render {}")
+	}
+}

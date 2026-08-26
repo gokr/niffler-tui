@@ -175,6 +175,11 @@ type model struct {
 	renderer *glamour.TermRenderer
 	renderW  int
 
+	// Human approval gate: queued x-harness.approval requests (front of the
+	// queue is the modal on screen) and per-session auto-approve memory.
+	approvals    []approvalRequest
+	autoApproved map[string][]string // sessionId -> tool names
+
 	// streaming marks output that should remain plain until it settles.
 	// renderTimerActive ensures only one settle timer spans token bursts,
 	// including across tool rounds. lastTokenAt drives the quiet check.
@@ -306,7 +311,21 @@ func (m model) sendTurn(content string) tea.Cmd {
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmds []tea.Cmd
 
+	// A pending approval is a modal gate: Enter/Esc/"a" answer it no matter
+	// which mode or control would otherwise consume them.
+	if kp, ok := msg.(tea.KeyPressMsg); ok && m.approvalKey(kp) {
+		return m, nil
+	}
+
 	switch msg := msg.(type) {
+	case approvalEventMsg:
+		m.applyApprovalEvent(msg)
+		return m, nil
+
+	case approvalResolvedMsg:
+		m.applyApprovalResolved(msg.id)
+		return m, nil
+
 	case connectedMsg:
 		m.connected = true
 		m.addBlock(blockMeta, "connected to "+m.natsURL+"; session "+m.session)
@@ -1048,6 +1067,11 @@ func (m model) View() tea.View {
 		return view
 	}
 
+	if len(m.approvals) > 0 {
+		parts := []string{header, runtimeLine, m.approvalBox()}
+		return makeView(strings.Join(parts, "\n"))
+	}
+
 	if m.mode != modeChat {
 		var control string
 		parts := []string{header, runtimeLine}
@@ -1285,6 +1309,36 @@ func main() {
 	comp.On("ev.models.updated", func(_ *sdk.Component, _ string, _ json.RawMessage) {
 		if program != nil {
 			program.Send(modelsCatalogUpdatedMsg{})
+		}
+	})
+	// Human approval gate: directed requests arrive on this component's own
+	// subject (core derives it from the call envelope's caller — no
+	// hardcoded names), broadcast requests are direct calls or fallbacks.
+	comp.On("svc.approval."+componentName+".request", func(_ *sdk.Component, _ string, payload json.RawMessage) {
+		if program == nil {
+			return
+		}
+		if req, ok := parseApprovalPayload(payload); ok {
+			program.Send(approvalEventMsg{req: req, directed: true})
+		}
+	})
+	comp.On("ev.approval.request", func(_ *sdk.Component, _ string, payload json.RawMessage) {
+		if program == nil {
+			return
+		}
+		if req, ok := parseApprovalPayload(payload); ok {
+			program.Send(approvalEventMsg{req: req, directed: false})
+		}
+	})
+	comp.On("ev.approval.resolved", func(_ *sdk.Component, _ string, payload json.RawMessage) {
+		if program == nil {
+			return
+		}
+		var p struct {
+			ID string `json:"id"`
+		}
+		if err := json.Unmarshal(payload, &p); err == nil && p.ID != "" {
+			program.Send(approvalResolvedMsg{id: p.ID})
 		}
 	})
 

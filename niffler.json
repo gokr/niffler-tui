@@ -9,6 +9,7 @@
       "lang": "go",
       "main": "tui/main.go",
       "sources": [
+        "tui/approvals.go",
         "tui/backend.go",
         "tui/context_status.go",
         "tui/controls.go",
