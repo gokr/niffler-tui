@@ -33,13 +33,7 @@ const (
 	componentVersion = "0.1.0"
 	turnTimeout      = 31 * time.Minute
 	reconnectDelay   = 2 * time.Second
-	// maxToolLines caps how many lines of a tool result are shown inline and
-	// maxToolWidth caps each shown line. Beyond that the remaining lines are
-	// folded into a "(+N more lines, M chars)" summary so a large result does
-	// not fill the terminal.
-	maxToolLines   = 8
-	maxToolWidth   = 120
-	maxToolText    = 4000
+	maxToolText      = 4000
 	maxInputHeight   = 8
 	maxHistory       = 200
 	defaultNATSURL   = "nats://127.0.0.1:4222"
@@ -202,6 +196,13 @@ type model struct {
 	streaming         bool
 	renderTimerActive bool
 	lastTokenAt       time.Time
+
+	// roundClosed marks the current LLM round as finalized: the assistant
+	// event carried the complete content, or the turn ended (done). Late
+	// token frames can arrive after that (NATS ordering across subjects
+	// isn't guaranteed); they are ignored so they don't reopen the round or
+	// spawn a duplicate block. Reset when a new round or turn starts.
+	roundClosed bool
 }
 
 var (
@@ -390,6 +391,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.assistantIdx = -1
 			m.thinkingIdx = -1
 			m.streaming = false
+			m.roundClosed = false
 			m.addBlock(blockUser, content)
 			m.layout()
 			m.syncViewport(true)
@@ -650,6 +652,12 @@ func (m *model) applySessionEvent(msg sessionEventMsg) tea.Cmd {
 	var renderCmd tea.Cmd
 	switch msg.kind {
 	case "token":
+		// Once the assistant event delivered the complete content (or the
+		// turn ended), late token frames from the same round are redundant
+		// and must not reopen the block or push a duplicate tail.
+		if m.roundClosed {
+			return nil
+		}
 		m.streaming = true
 		m.lastTokenAt = time.Now()
 		if event.Reasoning != "" {
@@ -680,10 +688,12 @@ func (m *model) applySessionEvent(msg sessionEventMsg) tea.Cmd {
 			m.blocks[m.assistantIdx].text = event.Content
 			m.hadAssistant = true
 		}
+		m.roundClosed = true
 
 	case "toolcall":
 		m.assistantIdx = -1
 		m.thinkingIdx = -1
+		m.roundClosed = false
 		// The assistant round ended; render its markdown immediately.
 		m.streaming = false
 		m.appendToolCall(toolCall{
@@ -767,6 +777,7 @@ func (m *model) updateRuntimeFromEvent(event sessionEvent) {
 func (m *model) finishTurn(reply, errorText string) {
 	m.busy = false
 	m.streaming = false
+	m.roundClosed = true
 	if errorText != "" {
 		m.addUniqueBlock(blockError, errorText)
 	} else if reply != "" && !m.hadAssistant {

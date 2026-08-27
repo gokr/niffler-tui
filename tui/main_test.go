@@ -1081,3 +1081,67 @@ func TestToggleAllToolRuns(t *testing.T) {
 		}
 	}
 }
+
+func TestLateTokenAfterAssistantDoesNotDuplicate(t *testing.T) {
+	m := newTestModel()
+	// Stream the full reply, then the final assistant event with the complete
+	// content, then a straggler token frame carrying the tail — NATS does not
+	// order across subjects, so this is the duplicate-output race.
+	m.applySessionEvent(sessionEventMsg{kind: "token", event: sessionEvent{
+		SessionID: "game", Content: "Everything works and the suite passing."}})
+	m.applySessionEvent(sessionEventMsg{kind: "assistant", event: sessionEvent{
+		SessionID: "game", Content: "Everything works and the suite passing."}})
+	m.applySessionEvent(sessionEventMsg{kind: "token", event: sessionEvent{
+		SessionID: "game", Content: " suite passing."}})
+
+	if len(m.blocks) != 1 {
+		t.Fatalf("late token created %d blocks, want 1:\n%+v", len(m.blocks), m.blocks)
+	}
+	got := m.blocks[0].text
+	if strings.Count(got, "suite passing.") != 1 {
+		t.Fatalf("duplicate content in assistant block: %q", got)
+	}
+	if got != "Everything works and the suite passing." {
+		t.Fatalf("assistant block text = %q", got)
+	}
+}
+
+func TestLateTokenAfterDoneDoesNotCreateBlock(t *testing.T) {
+	m := newTestModel()
+	m.applySessionEvent(sessionEventMsg{kind: "assistant", event: sessionEvent{
+		SessionID: "game", Content: "done reply"}})
+	m.finishTurn("done reply", "")
+
+	// A token frame that arrives after the turn finished must be ignored.
+	m.applySessionEvent(sessionEventMsg{kind: "token", event: sessionEvent{
+		SessionID: "game", Content: " suite passing."}})
+	if len(m.blocks) != 1 {
+		t.Fatalf("post-done token created %d blocks, want 1:\n%+v", len(m.blocks), m.blocks)
+	}
+	if m.blocks[0].text != "done reply" {
+		t.Fatalf("assistant block text = %q", m.blocks[0].text)
+	}
+}
+
+func TestMultiRoundStillStreams(t *testing.T) {
+	m := newTestModel()
+	// Round 1: stream + assistant + toolcall (opens a fresh round).
+	m.applySessionEvent(sessionEventMsg{kind: "token", event: sessionEvent{
+		SessionID: "game", Content: "let me check"}})
+	m.applySessionEvent(sessionEventMsg{kind: "assistant", event: sessionEvent{
+		SessionID: "game", Content: "let me check"}})
+	m.applySessionEvent(sessionEventMsg{kind: "toolcall", event: sessionEvent{
+		SessionID: "game", Tool: "bash", Args: json.RawMessage(`{"cmd":"ls"}`)}})
+	// Round 2 tokens must create a fresh block, not be swallowed.
+	m.applySessionEvent(sessionEventMsg{kind: "token", event: sessionEvent{
+		SessionID: "game", Content: "the answer is 42"}})
+	m.applySessionEvent(sessionEventMsg{kind: "assistant", event: sessionEvent{
+		SessionID: "game", Content: "the answer is 42"}})
+
+	if len(m.blocks) != 3 { // thinking? no — user? no — assistant, tool card, assistant
+		t.Fatalf("multi-round turn produced %d blocks, want 3:\n%+v", len(m.blocks), m.blocks)
+	}
+	if m.blocks[2].text != "the answer is 42" {
+		t.Fatalf("round 2 assistant = %q", m.blocks[2].text)
+	}
+}
