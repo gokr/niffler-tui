@@ -44,6 +44,8 @@ type runtimeResolution struct {
 	Catalog        string `json:"catalog"`
 	Context        int    `json:"context"`
 	ContextSource  string `json:"contextSource"`
+	Output         int    `json:"output"`
+	OutputSource   string `json:"outputSource"`
 	HasKey         bool   `json:"hasKey"`
 }
 

@@ -312,6 +312,7 @@ func (m model) detailedRuntimeStatus() string {
 		"model: " + valueOr(m.runtime.Model, "unknown"),
 		"catalog: " + valueOr(m.runtime.Catalog, "none"),
 		"context: " + formatTokens(m.runtime.Context) + " (" + valueOr(m.runtime.ContextSource, "unknown source") + ")",
+		"output: " + formatTokens(m.runtime.Output) + " (" + valueOr(m.runtime.OutputSource, "unknown source") + ")",
 		"used: " + formatTokens(m.contextUsed) + fmt.Sprintf(" (%.1f%%)", contextPercent(m.contextUsed, m.runtime.Context)*100),
 	}
 	if m.modelOverride != "" {

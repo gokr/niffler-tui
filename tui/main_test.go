@@ -303,8 +303,8 @@ func TestMarkdownRendering(t *testing.T) {
 	m.addBlock(blockUser, "plain user text")
 
 	out := m.renderTranscript()
-	if !strings.Contains(out, "niffler>") {
-		t.Fatal("transcript missing assistant label")
+	if !strings.Contains(stripANSI(out), "Title") {
+		t.Fatal("transcript missing assistant markdown content")
 	}
 	if !strings.Contains(out, "\x1b[") {
 		t.Fatal("expected ANSI-styled markdown output from glamour")
@@ -1229,5 +1229,23 @@ func TestAssistantFinalCoalescesIntoStreamedBlock(t *testing.T) {
 	}
 	if !m.blocks[0].finalized {
 		t.Fatal("block should be marked finalized after the assistant event")
+	}
+}
+
+func TestRuntimeOutputLimitSurfaced(t *testing.T) {
+	m := newTestModel()
+	m.runtime = runtimeResolution{
+		OK: true, Provider: "deepseek", ProviderSource: "store",
+		Model: "deepseek-chat", Catalog: "deepseek",
+		Context: 1_000_000, ContextSource: "catalog",
+		Output: 32768, OutputSource: "fallback",
+	}
+	status := m.detailedRuntimeStatus()
+	if !strings.Contains(status, "output: 32.8k (fallback)") {
+		t.Fatalf("detailed status missing output limit: %q", status)
+	}
+	line := runtimeStatusLine(m.runtime, "", 0, 80)
+	if ansi.StringWidth(line) > 79 {
+		t.Fatalf("runtime line too wide: %d", ansi.StringWidth(line))
 	}
 }

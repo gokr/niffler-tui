@@ -1109,11 +1109,12 @@ func (m *model) piece(i int) string {
 	block := &m.blocks[i]
 	switch block.kind {
 	case blockUser:
-		return userStyle.Render("you>") + " " + block.text
+		return userStyle.Render(block.text)
 	case blockAssistant:
-		return assistantStyle.Render("niffler>") + "\n" + m.renderBlock(i)
+		return m.renderBlock(i)
 	case blockThinking:
-		return thinkingStyle.Render("thinking> " + block.text)
+		// Render reasoning in Pi style: pure gray italic, no label.
+		return thinkingStyle.Render(block.text)
 	case blockTool:
 		if block.run != nil {
 			return renderToolRun(block.run)
@@ -1149,7 +1150,8 @@ func (m model) searchView() string {
 
 func (m model) View() tea.View {
 	header := headerStyle.Render("Niffler") + metaStyle.Render(" / "+m.session)
-	runtimeLine := runtimeStatusLine(m.runtime, m.modelOverride, m.contextUsed, m.width)
+	const headerSep = "  │  "
+	runtimeLine := runtimeStatusLine(m.runtime, m.modelOverride, m.contextUsed, max(0, m.width-ansi.StringWidth(header)-ansi.StringWidth(headerSep)))
 	makeView := func(content string) tea.View {
 		view := tea.NewView(content)
 		view.AltScreen = true
