@@ -184,10 +184,12 @@ type model struct {
 	approvals    []approvalRequest
 	autoApproved map[string][]string // sessionId -> tool names
 
-	// mouse toggles terminal mouse tracking. When on, clicking a tool-run
-	// card expands it (and the wheel scrolls the transcript); plain drag
-	// selection then requires Shift, so the default is off to keep native
-	// click-and-drag copy. See /mouse.
+	// mouse toggles terminal mouse tracking (default on). When on, the wheel
+	// scrolls the transcript and clicking a tool-run card expands it; copy
+	// then uses Shift+drag (standard for SGR mouse). /mouse off disables
+	// tracking entirely: native plain-drag copy works, but the wheel is
+	// handled by the terminal itself (the app sees no wheel events), so the
+	// transcript scrolls with PgUp/PgDn/Ctrl+Up instead. See /mouse.
 	mouse bool
 
 	// streaming marks output that should remain plain until it settles.
@@ -276,6 +278,10 @@ func newModel(ctx context.Context, comp *sdk.Component, session, natsURL string)
 		focusCmd:     focusCmd,
 		history:      history,
 		historyFile:  historyFile,
+		// Mouse tracking on by default: the wheel scrolls the transcript and
+		// click expands tool cards; copy uses Shift+drag. See /mouse off for
+		// a pure-native mode (plain-drag copy, no app wheel).
+		mouse: true,
 	}
 	m.layout()
 	m.syncViewport(true)

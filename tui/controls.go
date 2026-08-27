@@ -87,10 +87,11 @@ func (m model) executeLocalCommand(command string) (tea.Model, tea.Cmd) {
 			m.mouse = argument == "on"
 		}
 		if m.mouse {
-			m.addBlock(blockMeta, "mouse on — click a tool card to expand it (ctrl+t toggles all); "+
-				"copy with shift+drag")
+			m.addBlock(blockMeta, "mouse on — wheel scrolls the transcript; click a tool card to expand it "+
+				"(ctrl+t toggles all); copy with shift+drag")
 		} else {
-			m.addBlock(blockMeta, "mouse off — native click-and-drag selection enabled for copy")
+			m.addBlock(blockMeta, "mouse off — native plain-drag copy; wheel is terminal-scroll (transcript: "+
+				"pgup/pgdn/ctrl+up)")
 		}
 		m.syncViewport(true)
 		return m, nil

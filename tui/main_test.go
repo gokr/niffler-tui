@@ -396,6 +396,9 @@ func newTestModel() model {
 		thinkingIdx:  -1,
 		histIdx:      -1,
 		searchIdx:    -1,
+		// Mirror the production default (newModel): tracking on so the wheel
+		// scrolls the transcript and click expands tool cards.
+		mouse: true,
 	}
 }
 
@@ -1055,7 +1058,8 @@ func TestToolCardHitTestAndToggle(t *testing.T) {
 		t.Fatalf("content line 4 -> block %d, want 2", idx)
 	}
 
-	// Toggling via hit-test: collapse/expand the clicked card.
+	// Toggling via hit-test: collapse/expand the clicked card. Mouse tracking
+	// must be on for clicks to reach the app.
 	m.blocks[0].run.collapsed = true
 	m.mouse = true
 	m.handleMouseClick(tea.MouseClickMsg{Button: tea.MouseLeft, Y: 0 + 2})
@@ -1143,5 +1147,29 @@ func TestMultiRoundStillStreams(t *testing.T) {
 	}
 	if m.blocks[2].text != "the answer is 42" {
 		t.Fatalf("round 2 assistant = %q", m.blocks[2].text)
+	}
+}
+
+func TestMouseDefaultAndToggle(t *testing.T) {
+	m := newTestModel()
+	if !m.mouse {
+		t.Fatal("mouse tracking should default to on so the wheel scrolls the transcript")
+	}
+
+	// /mouse off (no argument = toggle) disables tracking.
+	updated, _ := m.executeLocalCommand("/mouse")
+	m = updated.(model)
+	if m.mouse {
+		t.Fatal("/mouse did not toggle tracking off")
+	}
+
+	// Explicit on/off forms.
+	updated, _ = m.executeLocalCommand("/mouse on")
+	if !updated.(model).mouse {
+		t.Fatal("/mouse on did not enable tracking")
+	}
+	updated, _ = m.executeLocalCommand("/mouse off")
+	if updated.(model).mouse {
+		t.Fatal("/mouse off did not disable tracking")
 	}
 }

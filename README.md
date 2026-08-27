@@ -61,10 +61,13 @@ Keys:
 Consecutive tool calls in a turn are folded into a single collapsible
 "tool-run card" with a summary line (✓/⚠ glyph, call count, names), collapsed
 by default so long tool sequences stay unobtrusive. `Ctrl+T` expands or
-collapses every card. With `/mouse on`, a left click toggles the card under
-the cursor and the wheel scrolls; note that enabling mouse tracking makes the
-terminal capture clicks, so plain-drag copy then needs `Shift`+drag, which is
-why mouse tracking stays off by default (native click-and-drag copy).
+collapses every card. Mouse tracking is **on by default**: the wheel scrolls
+the transcript and a left click toggles the card under the cursor. Because
+tracking captures clicks, copy/paste selection uses `Shift`+drag (standard
+for SGR mouse). `/mouse off` disables tracking entirely — native plain-drag
+copy comes back, but the app then receives no wheel events, so the transcript
+scrolls with `PgUp`/`PgDn`/`Ctrl+Up` and the wheel behaves as ordinary
+terminal scroll instead.
 
 Local commands are handled by the TUI and are never sent to the model:
 
@@ -75,7 +78,8 @@ Local commands are handled by the TUI and are never sent to the model:
 - `/connect` — masked provider connection form using models.dev templates or a
   custom OpenAI-compatible endpoint
 - `/status` — detailed effective provider/model/context provenance and usage
-- `/mouse [on|off]` — toggle tool-card click expansion (off keeps native copy)
+- `/mouse [on|off]` — mouse tracking (default on: wheel+click work, copy is
+  Shift+drag; off restores native plain-drag copy but no app wheel)
 - `/help` — command summary
 
 Selectors use `/` to filter, arrows to move, `Enter` to choose, and `Esc` to
