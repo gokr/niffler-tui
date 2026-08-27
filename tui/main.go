@@ -183,6 +183,10 @@ type model struct {
 	contextNote      string
 	controlPending   bool
 
+	// Sessions (conversation switcher). sessionsLoading shows a spinner in
+	// the /session selector while the store list is fetched.
+	sessionsLoading bool
+
 	// Markdown renderer for assistant output. Rebuilt when the viewport
 	// width changes; block render caches are invalidated on rebuild.
 	renderer *glamour.TermRenderer
@@ -214,6 +218,12 @@ type model struct {
 	// isn't guaranteed); they are ignored so they don't reopen the round or
 	// spawn a duplicate block. Reset when a new round or turn starts.
 	roundClosed bool
+
+	// Two-stage stop (Opencode/Pi-style): while busy, the first ESC arms a
+	// "Stop?" prompt in the status bar and the second ESC force-cancels the
+	// running LLM stream via llm.cancel.<sessionId>, ending the turn.
+	stopArmed bool
+	stopping  bool
 }
 
 var (
@@ -340,6 +350,40 @@ func (m model) sendTurn(content string) tea.Cmd {
 	}
 }
 
+// cancelTurnCmd force-cancels the running turn by publishing
+// llm.cancel.<sessionId>, which aborts the in-flight streaming chat call
+// in the llm component. The session runner sees the cancelled chat error,
+// ends the turn with "done", and the pending core/session request returns,
+// so finishTurn runs and busy clears. Fire-and-forget (errors surface as
+// nothing here; the request will time out on its own if the cancel fails).
+func (m model) cancelTurnCmd() tea.Cmd {
+	m.stopping = true
+	m.stopArmed = false
+	return func() tea.Msg {
+		subject := "llm.cancel." + sanitizeSessionID(m.session)
+		_ = m.comp.Emit(subject, map[string]any{"sessionId": m.session})
+		return nil
+	}
+}
+
+// sendSteer publishes a mid-turn steering message to the session runner's
+// svc.session.<id>.steer channel (fire-and-forget). It does NOT change busy
+// state: the running turn will fold the message in and may keep working.
+// The subject mirrors Niffler's core/conversation.nim steerSubject().
+func (m model) sendSteer(content string) tea.Cmd {
+	return func() tea.Msg {
+		subject := "svc.session." + sanitizeSessionID(m.session) + ".steer"
+		payload := map[string]any{"sessionId": m.session, "content": content}
+		if err := m.comp.Emit(subject, payload); err != nil {
+			return steerDoneMsg{err: fmt.Errorf("steer publish: %w", err)}
+		}
+		return steerDoneMsg{}
+	}
+}
+
+// steerDoneMsg reports a fire-and-forget steer publish outcome (errors only).
+type steerDoneMsg struct{ err error }
+
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmds []tea.Cmd
 
@@ -392,7 +436,21 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.input.SetValue("")
 				return m.executeLocalCommand(content)
 			}
-			if !m.connected || m.busy || m.controlPending {
+			if !m.connected {
+				return m, nil
+			}
+			if m.busy {
+				// Steer the running turn (Pi-style): the runner folds this into the
+				// live conversation and may keep working; we render it locally so it
+				// is visible in the flow even though busy stays true until "done".
+				m.input.SetValue("")
+				m.histIdx = -1
+				m.addBlock(blockUser, "Steer: "+content)
+				m.layout()
+				m.syncViewport(true)
+				return m, m.sendSteer(content)
+			}
+			if m.controlPending {
 				return m, nil
 			}
 			if m.addHistory(content) {
@@ -433,6 +491,19 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.toggleAllToolRuns()
 			m.syncViewport(false)
 			return m, nil
+		case "esc":
+			// Two-stage stop: first ESC arms the Stop? prompt, second ESC
+			// force-cancels the running turn. Outside a busy turn ESC is left
+			// alone (falls through to the textarea below the switch).
+			if !m.busy {
+				m.stopArmed = false
+				break
+			}
+			if !m.stopArmed {
+				m.stopArmed = true
+				return m, nil
+			}
+			return m, m.cancelTurnCmd()
 		}
 
 	case tea.MouseClickMsg:
@@ -626,6 +697,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.syncViewport(true)
 
+	case steerDoneMsg:
+		if msg.err != nil {
+			m.addBlock(blockMeta, "steer failed: "+msg.err.Error())
+			m.syncViewport(true)
+		}
 	case renderSettleMsg:
 		m.renderTimerActive = false
 		if !m.streaming {
@@ -826,6 +902,8 @@ func (m *model) updateRuntimeFromEvent(event sessionEvent) {
 }
 
 func (m *model) finishTurn(reply, errorText string) {
+	m.stopArmed = false
+	m.stopping = false
 	m.busy = false
 	m.streaming = false
 	m.roundClosed = true
@@ -1029,7 +1107,7 @@ func (m *model) layout() {
 		extra = 1
 	}
 	m.viewport.SetHeight(max(1, height-3-m.input.Height()-extra))
-	if m.mode == modeProviders || m.mode == modeCatalogProviders || m.mode == modeModels {
+	if m.mode == modeProviders || m.mode == modeCatalogProviders || m.mode == modeModels || m.mode == modeSessions {
 		m.selector.setSize(width, max(6, height-4))
 	}
 	if m.mode == modeConnectForm {
@@ -1152,6 +1230,7 @@ func (m model) View() tea.View {
 	header := headerStyle.Render("Niffler") + metaStyle.Render(" / "+m.session)
 	const headerSep = "  │  "
 	runtimeLine := runtimeStatusLine(m.runtime, m.modelOverride, m.contextUsed, max(0, m.width-ansi.StringWidth(header)-ansi.StringWidth(headerSep)))
+	headerLine := header + headerSep + runtimeLine
 	makeView := func(content string) tea.View {
 		view := tea.NewView(content)
 		view.AltScreen = true
@@ -1169,15 +1248,15 @@ func (m model) View() tea.View {
 	}
 
 	if len(m.approvals) > 0 {
-		parts := []string{header, runtimeLine, m.approvalBox()}
+		parts := []string{headerLine, m.approvalBox()}
 		return makeView(strings.Join(parts, "\n"))
 	}
 
 	if m.mode != modeChat {
 		var control string
-		parts := []string{header, runtimeLine}
+		parts := []string{headerLine}
 		switch m.mode {
-		case modeProviders, modeCatalogProviders, modeModels:
+		case modeProviders, modeCatalogProviders, modeModels, modeSessions:
 			control = m.selector.list.View()
 			parts = append(parts, control)
 			footer := "/: filter  •  enter: choose  •  esc: back"
@@ -1197,17 +1276,27 @@ func (m model) View() tea.View {
 	if !m.connected {
 		status = m.spinner.View() + " connecting to " + m.natsURL
 	} else if m.busy {
-		status = m.spinner.View() + " working"
+		// While busy, the status line carries the two-stage stop prompt:
+		// first ESC arms Stop?, second ESC force-cancels the turn.
+		switch {
+		case m.stopping:
+			status = m.spinner.View() + " stopping…"
+		case m.stopArmed:
+			status = errorStyle.Render("Stop?") + "  (press esc again to cancel)"
+		default:
+			status = m.spinner.View() + " working"
+		}
 	} else if m.controlPending {
 		status = "updating settings"
 	}
+
 	if m.contextNote != "" {
 		status += " | " + m.contextNote
 	} else {
-		status += " | /provider /model /connect /help | alt+enter: newline | ctrl+r: history | ctrl+t: tools | ctrl+c: quit"
+		status += " | /provider /model /connect /help | alt+enter: newline | ctrl+r: history | ctrl+t: tools | esc: stop | ctrl+c: quit"
 	}
 
-	parts := []string{header, runtimeLine, m.viewport.View()}
+	parts := []string{headerLine, m.viewport.View()}
 	if m.searchActive {
 		parts = append(parts, m.searchView())
 	}

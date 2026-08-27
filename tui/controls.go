@@ -3,9 +3,42 @@ package main
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 )
+
+// switchSession resets the model for a different conversation (session) id:
+// clears the transcript, per-session state (history, model override, runtime,
+// approvals) and input, then reloads the new session's history. The caller
+// must re-bootstrap (bootstrapBackendCmd) to repopulate provider/model/runtime.
+func (m model) switchSession(id string) model {
+	m.session = id
+	m.blocks = nil
+	m.assistantIdx = -1
+	m.thinkingIdx = -1
+	m.hadAssistant = false
+	m.busy = false
+	m.streaming = false
+	m.roundClosed = false
+	m.contextNote = ""
+	m.modelOverride = ""
+	m.runtime = runtimeResolution{}
+	m.promptTokens = 0
+	m.contextUsed = 0
+	m.models = nil
+	m.modelsCatalog = ""
+	m.approvals = nil
+	m.searchActive = false
+	m.searchQuery = ""
+	m.mode = modeChat
+	m.histIdx = -1
+	m.draft = ""
+	m.input.SetValue("")
+	m.historyFile = historyFilePath(id)
+	m.history = loadHistory(m.historyFile)
+	return m
+}
 
 func (m model) executeLocalCommand(command string) (tea.Model, tea.Cmd) {
 	parts := strings.Fields(strings.TrimSpace(command))
@@ -29,6 +62,19 @@ func (m model) executeLocalCommand(command string) (tea.Model, tea.Cmd) {
 			m.controlPending = true
 			if argument == "environment" || argument == "env" {
 				return m, useEnvironmentProviderCmd(m.comp)
+			}
+			// /provider strip [on|off] — toggle the active provider's model
+			// prefix stripping for gateways that route on the canonical id.
+			if argument == "strip" || strings.HasPrefix(argument, "strip ") {
+				on := true
+				if parts := strings.Fields(argument); len(parts) > 1 {
+					on = parts[1] != "off"
+				}
+				nickname := m.providerStatus.Provider.Nickname
+				if nickname == "" {
+					nickname = "default"
+				}
+				return m, setProviderStripCmd(m.comp, nickname, on)
 			}
 			return m, switchProviderCmd(m.comp, argument)
 		}
@@ -80,6 +126,23 @@ func (m model) executeLocalCommand(command string) (tea.Model, tea.Cmd) {
 		m.syncViewport(true)
 		return m, nil
 
+	case "new", "newsession":
+		id := strings.TrimSpace(argument)
+		if id == "" {
+			id = "conv-" + fmt.Sprintf("%d", time.Now().Unix())
+		}
+		return m.switchSession(id), bootstrapBackendCmd(m.comp, id)
+
+	case "session", "sessions":
+		if argument != "" {
+			id := strings.TrimSpace(argument)
+			return m.switchSession(id), bootstrapBackendCmd(m.comp, id)
+		}
+		// Open the conversation browser; the store list is fetched in the
+		// background and the selector rebuilds when it arrives.
+		m.sessionListSelecting()
+		return m, sessionListCmd(m.comp)
+
 	case "mouse":
 		if argument == "" {
 			m.mouse = !m.mouse
@@ -127,6 +190,25 @@ func (m *model) openCatalogProviderSelector() {
 	m.selector = newSelector("Connect provider — choose a catalog template",
 		catalogProviderItems(m.configuredCatalogProviders()), m.width, m.height-3)
 	m.mode = modeCatalogProviders
+	m.layout()
+}
+
+// sessionListSelecting opens the conversation browser with a placeholder
+// spinner; the selector is rebuilt with the loaded list in the sessionListMsg
+// handler.
+func (m *model) sessionListSelecting() {
+	m.sessionsLoading = true
+	m.selector = newSelector("Sessions — loading…", nil, m.width, m.height-3)
+	m.mode = modeSessions
+	m.layout()
+}
+
+// openSessionSelector rebuilds the /session list with the fetched sessions.
+func (m *model) openSessionSelector(sessions []sessionSummary) {
+	m.sessionsLoading = false
+	m.selector = newSelector("Sessions",
+		sessionSelectorItems(m.session, sessions), m.width, m.height-3)
+	m.mode = modeSessions
 	m.layout()
 }
 
@@ -314,6 +396,9 @@ func (m model) detailedRuntimeStatus() string {
 		"context: " + formatTokens(m.runtime.Context) + " (" + valueOr(m.runtime.ContextSource, "unknown source") + ")",
 		"output: " + formatTokens(m.runtime.Output) + " (" + valueOr(m.runtime.OutputSource, "unknown source") + ")",
 		"used: " + formatTokens(m.contextUsed) + fmt.Sprintf(" (%.1f%%)", contextPercent(m.contextUsed, m.runtime.Context)*100),
+	}
+	if m.providerStatus.Provider.StripPrefix {
+		lines = append(lines, "strip model prefix: on")
 	}
 	if m.modelOverride != "" {
 		lines = append(lines, "session model override: "+m.modelOverride)

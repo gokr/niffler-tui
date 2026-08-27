@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -21,6 +22,7 @@ type providerSummary struct {
 	Plugin   string `json:"plugin"`
 	Active   bool   `json:"active"`
 	HasKey   bool   `json:"hasKey"`
+	StripPrefix bool `json:"stripPrefix"`
 }
 
 type providerListResponse struct {
@@ -228,6 +230,60 @@ func loadConversationState(comp *sdk.Component, session string) (conversationSta
 	}, nil
 }
 
+// sessionSummary is one conversation listed from the store for /session.
+type sessionSummary struct {
+	ID        string
+	Title     string
+	CreatedAt float64
+}
+
+// sessionListMsg carries the store's conversations for the /session selector.
+type sessionListMsg struct {
+	Sessions []sessionSummary
+	Err      error
+}
+
+// loadSessionList lists every conversation (session) in the store, newest
+// first. Columns include the persisted model override so the selector can
+// show per-session configuration.
+type sessionRow struct {
+	ID           string `json:"id"`
+	Value        struct {
+		Title         string `json:"title"`
+		CreatedAt     float64 `json:"createdAt"`
+		ModelOverride string `json:"modelOverride"`
+	} `json:"value"`
+}
+
+func loadSessionList(comp *sdk.Component) ([]sessionSummary, error) {
+	var response struct {
+		Items []sessionRow `json:"items"`
+	}
+	if err := requestInto(comp, "store", "list", map[string]any{
+		"kind": "conversation",
+	}, &response); err != nil {
+		return nil, err
+	}
+	sessions := make([]sessionSummary, 0, len(response.Items))
+	for _, row := range response.Items {
+		sessions = append(sessions, sessionSummary{
+			ID: row.ID, Title: row.Value.Title, CreatedAt: row.Value.CreatedAt,
+		})
+	}
+	// newest first
+	sort.SliceStable(sessions, func(i, j int) bool {
+		return sessions[i].CreatedAt > sessions[j].CreatedAt
+	})
+	return sessions, nil
+}
+
+func sessionListCmd(comp *sdk.Component) tea.Cmd {
+	return func() tea.Msg {
+		sessions, err := loadSessionList(comp)
+		return sessionListMsg{Sessions: sessions, Err: err}
+	}
+}
+
 func bootstrapBackendCmd(comp *sdk.Component, session string) tea.Cmd {
 	return func() tea.Msg {
 		var msg bootstrapMsg
@@ -341,6 +397,23 @@ func switchProviderCmd(comp *sdk.Component, nickname string) tea.Cmd {
 			err = fmt.Errorf("provider switch failed")
 		}
 		return providerActionMsg{Action: "switch", Nickname: nickname, Err: err}
+	}
+}
+
+// setProviderStripCmd toggles the active provider's stripModelPrefix option
+// (gateways that route on the canonical id, e.g. devpass).
+func setProviderStripCmd(comp *sdk.Component, nickname string, strip bool) tea.Cmd {
+	return func() tea.Msg {
+		var response struct {
+			OK bool `json:"ok"`
+		}
+		err := requestInto(comp, "provider", "provider_update", map[string]any{
+			"nickname": nickname, "stripPrefix": strip,
+		}, &response)
+		if err == nil && !response.OK {
+			err = fmt.Errorf("provider update failed")
+		}
+		return providerActionMsg{Action: "strip", Nickname: nickname, Err: err}
 	}
 }
 

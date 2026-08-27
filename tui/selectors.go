@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/url"
 	"strings"
+	"time"
 
 	"charm.land/bubbles/v2/list"
 )
@@ -15,6 +16,7 @@ const (
 	modeProviders
 	modeCatalogProviders
 	modeModels
+	modeSessions
 	modeConnectForm
 )
 
@@ -28,6 +30,8 @@ const (
 	selectorCustomProvider
 	selectorModel
 	selectorProviderDefaultModel
+	selectorSession
+	selectorNewSession
 )
 
 type selectorItem struct {
@@ -203,4 +207,45 @@ func endpointHost(raw string) string {
 		return parsed.Hostname() + ":" + parsed.Port()
 	}
 	return parsed.Hostname()
+}
+
+// sessionSelectorItems builds the /session list: the current session first,
+// then every stored conversation (newest first), plus a "new session" entry.
+func sessionSelectorItems(current string, sessions []sessionSummary) []list.Item {
+	items := make([]list.Item, 0, len(sessions)+2)
+	items = append(items, selectorItem{
+		kind: selectorNewSession,
+		id:   "__new__", title: "+ New session",
+		description: "start a fresh conversation",
+	})
+	for _, s := range sessions {
+		title := s.ID
+		marked := ""
+		if s.ID == current {
+			marked = "● "
+		}
+		if s.Title != "" {
+			title = s.Title
+			if marked != "" {
+				title = marked + title
+			}
+		} else if marked != "" {
+			title = marked + s.ID
+		}
+		items = append(items, selectorItem{
+			kind: selectorSession,
+			id:   s.ID, title: title,
+			description: s.ID + "" + fmtTimeShort(s.CreatedAt),
+			payload:     s,
+		})
+	}
+	return items
+}
+
+func fmtTimeShort(ts float64) string {
+	if ts <= 0 {
+		return ""
+	}
+	t := time.Unix(int64(ts), 0)
+	return t.Format("2006-01-02 15:04")
 }

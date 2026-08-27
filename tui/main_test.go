@@ -434,6 +434,39 @@ func TestMultilineEditingAndSend(t *testing.T) {
 	}
 }
 
+func TestSteerWhileBusy(t *testing.T) {
+	m := newTestModel()
+	m.connected = true
+	m.busy = true
+	m.input.SetValue("steer me now")
+	updated, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	m = updated.(model)
+	if got := m.input.Value(); got != "" {
+		t.Fatalf("input after steer = %q, want empty", got)
+	}
+	if !m.busy {
+		t.Fatal("steer cleared busy; the turn is still working until done")
+	}
+	want := "Steer: steer me now"
+	if len(m.blocks) != 1 || m.blocks[0].kind != blockUser || m.blocks[0].text != want {
+		t.Fatalf("blocks after steer = %#v, want one block with %q", m.blocks, want)
+	}
+	// Busy-Enter must not be treated as a fresh send: no history entry.
+	if len(m.history) != 0 {
+		t.Fatalf("steer added a history entry: %#v", m.history)
+	}
+}
+
+func TestSteerClearedByDone(t *testing.T) {
+	m := newTestModel()
+	m.connected = true
+	m.busy = true
+	m.applySessionEvent(sessionEventMsg{kind: "done", event: sessionEvent{SessionID: "game", Reply: "final"}})
+	if m.busy {
+		t.Fatal("done did not clear busy")
+	}
+}
+
 func TestWrappedInputEdges(t *testing.T) {
 	m := newTestModel()
 	m.width = 14 // 12 columns after the prompt allowance in layout.
