@@ -67,6 +67,15 @@ type transcriptBlock struct {
 	// the block was created by the card path rather than addBlock).
 	run *toolRun
 
+	// finalized marks an assistant block as complete: its text was set by the
+	// round's final assistant event (full content). While false the block is
+	// the active streamed partial, which token frames keep appending to. The
+	// distinction lets the assistant event and late token frames coalesce
+	// into the right block even when tool-call events arrive out of order
+	// (NATS orders per subject, not across them), instead of opening a fresh
+	// duplicate block.
+	finalized bool
+
 	// rendered is the cached terminal rendering of text, used by the
 	// transcript renderer. renderedOK reports whether the cache is valid for
 	// renderedText; blocks are re-rendered when the text changes or the
@@ -667,18 +676,10 @@ func (m *model) applySessionEvent(msg sessionEventMsg) tea.Cmd {
 		m.streaming = true
 		m.lastTokenAt = time.Now()
 		if event.Reasoning != "" {
-			if m.thinkingIdx < 0 {
-				m.blocks = append(m.blocks, transcriptBlock{kind: blockThinking})
-				m.thinkingIdx = len(m.blocks) - 1
-			}
-			m.blocks[m.thinkingIdx].text += event.Reasoning
+			m.appendStreamingText(blockThinking, &m.thinkingIdx, event.Reasoning)
 		}
 		if event.Content != "" {
-			if m.assistantIdx < 0 {
-				m.blocks = append(m.blocks, transcriptBlock{kind: blockAssistant})
-				m.assistantIdx = len(m.blocks) - 1
-			}
-			m.blocks[m.assistantIdx].text += event.Content
+			m.appendStreamingText(blockAssistant, &m.assistantIdx, event.Content)
 			m.hadAssistant = true
 		}
 		renderCmd = m.scheduleRender()
@@ -687,11 +688,19 @@ func (m *model) applySessionEvent(msg sessionEventMsg) tea.Cmd {
 		m.streaming = false
 		m.updateRuntimeFromEvent(event)
 		if event.Content != "" {
-			if m.assistantIdx < 0 {
+			// Finalize the round's streamed block: replace its partial text
+			// with the complete content. Coalesce into the trailing
+			// unfinalized block even if a late tool-call event reset
+			// assistantIdx (NATS orders per subject, not across them), so a
+			// fresh duplicate block is not opened.
+			idx := m.streamingBlock(blockAssistant, m.assistantIdx)
+			if idx < 0 {
 				m.blocks = append(m.blocks, transcriptBlock{kind: blockAssistant})
-				m.assistantIdx = len(m.blocks) - 1
+				idx = len(m.blocks) - 1
 			}
-			m.blocks[m.assistantIdx].text = event.Content
+			m.blocks[idx].text = event.Content
+			m.blocks[idx].finalized = true
+			m.assistantIdx = idx
 			m.hadAssistant = true
 		}
 		m.roundClosed = true
@@ -729,6 +738,42 @@ func (m *model) applySessionEvent(msg sessionEventMsg) tea.Cmd {
 	}
 	m.syncViewport(false)
 	return renderCmd
+}
+
+// streamingBlock returns the index of the assistant/thinking block that a
+// token frame or the assistant event should target. It prefers the trailing
+// unfinalized block of that kind — the one currently being streamed — even
+// when idx was reset by an out-of-order tool-call event, so streaming and
+// the final content always land in a single block for the round. Creates and
+// returns a fresh block when there is none to reuse.
+func (m *model) streamingBlock(kind blockKind, idx int) int {
+	if idx >= 0 && idx < len(m.blocks) && m.blocks[idx].kind == kind && !m.blocks[idx].finalized {
+		return idx
+	}
+	// Scan from the end: reuse the last unfinalized block of this kind from
+	// the current round, but do not cross into an earlier completed round.
+	for i := len(m.blocks) - 1; i >= 0; i-- {
+		if m.blocks[i].kind != kind {
+			continue
+		}
+		if m.blocks[i].finalized {
+			return -1 // the most recent block of this kind is complete
+		}
+		return i
+	}
+	return -1
+}
+
+// appendStreamingText appends text to the active streaming block of kind,
+// creating one if necessary, and records its index in *idx.
+func (m *model) appendStreamingText(kind blockKind, idx *int, text string) {
+	target := m.streamingBlock(kind, *idx)
+	if target < 0 {
+		m.blocks = append(m.blocks, transcriptBlock{kind: kind})
+		target = len(m.blocks) - 1
+	}
+	m.blocks[target].text += text
+	*idx = target
 }
 
 func rawJSONBool(raw json.RawMessage) bool {

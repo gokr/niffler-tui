@@ -1173,3 +1173,61 @@ func TestMouseDefaultAndToggle(t *testing.T) {
 		t.Fatal("/mouse off did not disable tracking")
 	}
 }
+
+func TestToolcallReorderBetweenStreamAndFinalNoDuplicate(t *testing.T) {
+	m := newTestModel()
+	// Round 1 narration streams, then finishes.
+	m.applySessionEvent(sessionEventMsg{kind: "token", event: sessionEvent{
+		SessionID: "game", Content: "Let me check the docs"}})
+	m.applySessionEvent(sessionEventMsg{kind: "assistant", event: sessionEvent{
+		SessionID: "game", Content: "Let me check the docs"}})
+	// A tool-call event follows (round 1 closes); it resets round state.
+	m.applySessionEvent(sessionEventMsg{kind: "toolcall", event: sessionEvent{
+		SessionID: "game", Tool: "fetch", Args: json.RawMessage(`{"url":"x"}`)}})
+
+	// Round 2 streams a *partial*, then — because NATS does not order across
+	// subjects — a stray tool-call event from an earlier round lands BETWEEN
+	// the stream and the round-2 assistant event, resetting assistantIdx.
+	m.applySessionEvent(sessionEventMsg{kind: "token", event: sessionEvent{
+		SessionID: "game", Content: "storage as a"}})
+	m.applySessionEvent(sessionEventMsg{kind: "toolcall", event: sessionEvent{
+		SessionID: "game", Tool: "fetch", Args: json.RawMessage(`{"url":"y"}`)}})
+	m.applySessionEvent(sessionEventMsg{kind: "assistant", event: sessionEvent{
+		SessionID: "game", Content: "storage as a Docker container? Yes, MinIO."}})
+
+	// Expect exactly one block per piece: round-1 assistant, tool card,
+	// round-2 partial (finalized with the full content), and the stray tool
+	// card — no duplicate assistant block for round 2.
+	var assistantBlocks []string
+	for i := range m.blocks {
+		if m.blocks[i].kind == blockAssistant {
+			assistantBlocks = append(assistantBlocks, m.blocks[i].text)
+		}
+	}
+	if len(assistantBlocks) != 2 {
+		t.Fatalf("got %d assistant blocks, want 2:\n%+v", len(assistantBlocks), assistantBlocks)
+	}
+	if assistantBlocks[1] != "storage as a Docker container? Yes, MinIO." {
+		t.Fatalf("round-2 assistant = %q, want the full finalized content", assistantBlocks[1])
+	}
+}
+
+func TestAssistantFinalCoalescesIntoStreamedBlock(t *testing.T) {
+	m := newTestModel()
+	// A round that only participates via the token stream; the assistant
+	// event must finalize the SAME block instead of opening a duplicate.
+	m.applySessionEvent(sessionEventMsg{kind: "token", event: sessionEvent{
+		SessionID: "game", Content: "an answer"}})
+	m.applySessionEvent(sessionEventMsg{kind: "assistant", event: sessionEvent{
+		SessionID: "game", Content: "an extended answer"}})
+
+	if len(m.blocks) != 1 {
+		t.Fatalf("got %d blocks, want 1 (no duplicate):\n%+v", len(m.blocks), m.blocks)
+	}
+	if m.blocks[0].text != "an extended answer" {
+		t.Fatalf("block text = %q, want the full finalized content", m.blocks[0].text)
+	}
+	if !m.blocks[0].finalized {
+		t.Fatal("block should be marked finalized after the assistant event")
+	}
+}
