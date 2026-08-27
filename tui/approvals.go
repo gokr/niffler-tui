@@ -17,6 +17,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
@@ -141,6 +142,16 @@ func (m *model) rememberAutoApprove(sessionID, tool string) {
 		m.autoApproved = map[string][]string{}
 	}
 	m.autoApproved[sessionID] = append(m.autoApproved[sessionID], tool)
+	// Persist so the core's gate honors it for every client (no dialog at
+	// all, not even a flash). Best effort: the in-memory list still covers
+	// this session if the store is unreachable.
+	if m.comp != nil {
+		_, _ = m.comp.Request("store", "put", map[string]any{
+			"kind":  "approval",
+			"id":    sessionID + ":" + tool,
+			"value": map[string]any{"tool": tool, "sessionId": sessionID},
+		}, 5*time.Second)
+	}
 }
 
 // prettyApprovalArgs renders the call arguments as indented JSON, truncated

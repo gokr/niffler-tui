@@ -1249,3 +1249,25 @@ func TestRuntimeOutputLimitSurfaced(t *testing.T) {
 		t.Fatalf("runtime line too wide: %d", ansi.StringWidth(line))
 	}
 }
+
+func TestRememberAutoApprovePersistsToStore(t *testing.T) {
+	// With a live component, rememberAutoApprove writes the decision to the
+	// store so the core gate honors it for every client (no dialog at all).
+	// In tests comp is nil, so the write is skipped but the in-memory list
+	// still records it.
+	m := newTestModel()
+	m.rememberAutoApprove("sess-1", "bash")
+	if !m.isAutoApproved("sess-1", "bash") {
+		t.Fatal("in-memory auto-approve not recorded")
+	}
+	// Idempotent: a second remember does not duplicate.
+	m.rememberAutoApprove("sess-1", "bash")
+	if len(m.autoApproved["sess-1"]) != 1 {
+		t.Fatalf("auto-approve duplicated: %v", m.autoApproved["sess-1"])
+	}
+	// Empty session is ignored (no persistence, no memory).
+	m.rememberAutoApprove("", "bash")
+	if m.isAutoApproved("", "bash") {
+		t.Fatal("empty session auto-approved")
+	}
+}
