@@ -973,3 +973,111 @@ func TestApprovalPrettyArgs(t *testing.T) {
 		t.Fatal("empty args should render {}")
 	}
 }
+
+func TestToolCallGroupingIntoCard(t *testing.T) {
+	m := newTestModel()
+	m.appendToolCall(toolCall{name: "bash", args: json.RawMessage(`{"cmd":"make"}`)})
+	m.appendToolCall(toolCall{name: "bash", args: json.RawMessage(`{"cmd":"git"}`)})
+	m.appendToolCall(toolCall{name: "core.spawn", args: json.RawMessage(`{"name":"x"}`)})
+	if len(m.blocks) != 1 {
+		t.Fatalf("expected 1 grouped card, got %d blocks", len(m.blocks))
+	}
+	run := m.blocks[0].run
+	if run == nil || len(run.calls) != 3 {
+		t.Fatalf("card run = %+v, want 3 calls", run)
+	}
+	if !run.collapsed {
+		t.Fatal("new card should be collapsed by default")
+	}
+
+	// Assistant text starts a fresh card (third block) rather than folding
+	// into the first.
+	m.addBlock(blockAssistant, "ok")
+	m.appendToolCall(toolCall{name: "bash", args: json.RawMessage(`{"cmd":true}`)})
+	if len(m.blocks) != 3 || m.blocks[0].run == nil || len(m.blocks[0].run.calls) != 3 ||
+		m.blocks[2].run == nil || len(m.blocks[2].run.calls) != 1 {
+		t.Fatalf("assistant break did not start a new card: %d blocks", len(m.blocks))
+	}
+}
+
+func TestToolRunRenderingCollapsedAndExpanded(t *testing.T) {
+	run := &toolRun{collapsed: true, calls: []toolCall{
+		{name: "bash", args: json.RawMessage(`{"cmd":"make"}`)},
+		{name: "bash", args: json.RawMessage(`{"cmd":"git"}`)},
+		{name: "core.spawn", args: json.RawMessage(`{"name":"x"}`), err: "denied"},
+	}}
+	// Collapsed: one summary line with count + chips.
+	got := renderToolRun(run)
+	if strings.Contains(got, "\n") {
+		t.Fatalf("collapsed card should be one line:\n%q", got)
+	}
+	if !strings.Contains(got, "3 tool calls") || !strings.Contains(got, "core.spawn") {
+		t.Fatalf("collapsed summary missing count/chips: %q", got)
+	}
+	if strings.Contains(got, "denied") {
+		t.Fatal("collapsed card leaked error text")
+	}
+
+	// Expanded: per-call args + error.
+	run.collapsed = false
+	got = renderToolRun(run)
+	if !strings.Contains(got, "make") || !strings.Contains(got, "denied") {
+		t.Fatalf("expanded card missing detail: %q", got)
+	}
+}
+
+func TestToolRunSingleCallAndGlyph(t *testing.T) {
+	ok := renderToolRun(&toolRun{collapsed: true, calls: []toolCall{{name: "bash"}}})
+	if !strings.Contains(ok, "bash") || strings.Contains(ok, "tool calls") {
+		t.Fatalf("single-call summary wrong: %q", ok)
+	}
+	bad := renderToolRun(&toolRun{collapsed: false, calls: []toolCall{{name: "bash", err: "boom"}}})
+	if strings.Contains(bad, "✓") {
+		t.Fatal("errored call rendered the ok glyph")
+	}
+}
+
+func TestToolCardHitTestAndToggle(t *testing.T) {
+	m := newTestModel()
+	m.width = 80
+	m.height = 40
+	m.appendToolCall(toolCall{name: "bash", args: json.RawMessage(`{"cmd":"make"}`)})
+	m.appendToolCall(toolCall{name: "bash", args: json.RawMessage(`{"cmd":"git"}`)})
+	m.addBlock(blockUser, "hello")
+	m.appendToolCall(toolCall{name: "core.spawn"})
+
+	// Content line 0 is the first (collapsed) card; line 1 is the blank
+	// separator; line 2 is the user block; line 4 is the second card.
+	if idx := m.blockAtContentLine(0); idx != 0 {
+		t.Fatalf("content line 0 -> block %d, want 0", idx)
+	}
+	if idx := m.blockAtContentLine(4); idx != 2 {
+		t.Fatalf("content line 4 -> block %d, want 2", idx)
+	}
+
+	// Toggling via hit-test: collapse/expand the clicked card.
+	m.blocks[0].run.collapsed = true
+	m.mouse = true
+	m.handleMouseClick(tea.MouseClickMsg{Button: tea.MouseLeft, Y: 0 + 2})
+	if m.blocks[0].run.collapsed {
+		t.Fatal("click did not expand the first card")
+	}
+	// Non-left button is ignored: the card stays expanded.
+	m.handleMouseClick(tea.MouseClickMsg{Button: tea.MouseRight, Y: 0 + 2})
+	if m.blocks[0].run.collapsed {
+		t.Fatal("right-click collapsed the card")
+	}
+}
+
+func TestToggleAllToolRuns(t *testing.T) {
+	m := newTestModel()
+	m.appendToolCall(toolCall{name: "a"})
+	m.addBlock(blockUser, "x")
+	m.appendToolCall(toolCall{name: "b"})
+	m.toggleAllToolRuns()
+	for i := range m.blocks {
+		if m.blocks[i].run != nil && m.blocks[i].run.collapsed {
+			t.Fatalf("block %d card still collapsed after toggle all", i)
+		}
+	}
+}

@@ -33,7 +33,13 @@ const (
 	componentVersion = "0.1.0"
 	turnTimeout      = 31 * time.Minute
 	reconnectDelay   = 2 * time.Second
-	maxToolText      = 4000
+	// maxToolLines caps how many lines of a tool result are shown inline and
+	// maxToolWidth caps each shown line. Beyond that the remaining lines are
+	// folded into a "(+N more lines, M chars)" summary so a large result does
+	// not fill the terminal.
+	maxToolLines   = 8
+	maxToolWidth   = 120
+	maxToolText    = 4000
 	maxInputHeight   = 8
 	maxHistory       = 200
 	defaultNATSURL   = "nats://127.0.0.1:4222"
@@ -62,6 +68,10 @@ const (
 type transcriptBlock struct {
 	kind blockKind
 	text string
+
+	// run holds the grouped tool-run card data when kind == blockTool (and
+	// the block was created by the card path rather than addBlock).
+	run *toolRun
 
 	// rendered is the cached terminal rendering of text, used by the
 	// transcript renderer. renderedOK reports whether the cache is valid for
@@ -179,6 +189,12 @@ type model struct {
 	// queue is the modal on screen) and per-session auto-approve memory.
 	approvals    []approvalRequest
 	autoApproved map[string][]string // sessionId -> tool names
+
+	// mouse toggles terminal mouse tracking. When on, clicking a tool-run
+	// card expands it (and the wheel scrolls the transcript); plain drag
+	// selection then requires Shift, so the default is off to keep native
+	// click-and-drag copy. See /mouse.
+	mouse bool
 
 	// streaming marks output that should remain plain until it settles.
 	// renderTimerActive ensures only one settle timer spans token bursts,
@@ -396,7 +412,17 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.layout()
 				return m, nil
 			}
+		case "ctrl+t":
+			m.toggleAllToolRuns()
+			m.syncViewport(false)
+			return m, nil
 		}
+
+	case tea.MouseClickMsg:
+		// A left click toggles the tool-run card under the cursor (only
+		// meaningful with mouse tracking on, see /mouse).
+		m.handleMouseClick(msg)
+		return m, nil
 
 	case tea.PasteMsg:
 		// Bracketed-paste arrives as PasteMsg, not KeyPressMsg, so without
@@ -656,21 +682,16 @@ func (m *model) applySessionEvent(msg sessionEventMsg) tea.Cmd {
 		}
 
 	case "toolcall":
-		text := event.Tool
-		if args := compactJSON(event.Args); args != "" {
-			text += " " + args
-		}
-		if result := compactJSON(event.Result); result != "" && result != "null" {
-			text += "\n" + truncate(result, maxToolText)
-		}
-		if event.Error != "" {
-			text += "\nerror: " + event.Error
-		}
-		m.addBlock(blockTool, text)
 		m.assistantIdx = -1
 		m.thinkingIdx = -1
 		// The assistant round ended; render its markdown immediately.
 		m.streaming = false
+		m.appendToolCall(toolCall{
+			name:   event.Tool,
+			args:   event.Args,
+			result: event.Result,
+			err:    event.Error,
+		})
 
 	case "status":
 		m.updateRuntimeFromEvent(event)
@@ -1019,30 +1040,38 @@ func (m *model) renderBlock(i int) string {
 	return out
 }
 
+// piece returns the terminal rendering of transcript block i — the exact
+// string renderTranscript joins (one blank line between blocks). Shared with
+// blockAtContentLine so mouse hit-testing matches what is on screen.
+func (m *model) piece(i int) string {
+	block := &m.blocks[i]
+	switch block.kind {
+	case blockUser:
+		return userStyle.Render("you>") + " " + block.text
+	case blockAssistant:
+		return assistantStyle.Render("niffler>") + "\n" + m.renderBlock(i)
+	case blockThinking:
+		return thinkingStyle.Render("thinking> " + block.text)
+	case blockTool:
+		if block.run != nil {
+			return renderToolRun(block.run)
+		}
+		return toolStyle.Render("tool> " + block.text)
+	case blockMeta:
+		return metaStyle.Render(block.text)
+	case blockError:
+		return errorStyle.Render("error> " + block.text)
+	}
+	return block.text
+}
+
 func (m *model) renderTranscript() string {
 	var out strings.Builder
-	for i, block := range m.blocks {
+	for i := range m.blocks {
 		if i > 0 {
 			out.WriteString("\n\n")
 		}
-		switch block.kind {
-		case blockUser:
-			out.WriteString(userStyle.Render("you>"))
-			out.WriteString(" ")
-			out.WriteString(block.text)
-		case blockAssistant:
-			out.WriteString(assistantStyle.Render("niffler>"))
-			out.WriteString("\n")
-			out.WriteString(m.renderBlock(i))
-		case blockThinking:
-			out.WriteString(thinkingStyle.Render("thinking> " + block.text))
-		case blockTool:
-			out.WriteString(toolStyle.Render("tool> " + block.text))
-		case blockMeta:
-			out.WriteString(metaStyle.Render(block.text))
-		case blockError:
-			out.WriteString(errorStyle.Render("error> " + block.text))
-		}
+		out.WriteString(m.piece(i))
 	}
 	return out.String()
 }
@@ -1062,7 +1091,15 @@ func (m model) View() tea.View {
 	makeView := func(content string) tea.View {
 		view := tea.NewView(content)
 		view.AltScreen = true
-		view.MouseMode = tea.MouseModeCellMotion
+		// Mouse tracking is off by default so the terminal's native
+		// click-and-drag text selection keeps working (copy/paste). With
+		// /mouse on, CellMotion captures clicks (to expand tool-run cards)
+		// and the wheel; native selection then needs Shift+drag. The
+		// transcript stays keyboard-scrollable (PgUp/PgDn, Ctrl+Up/Ctrl+Down)
+		// either way.
+		if m.mouse {
+			view.MouseMode = tea.MouseModeCellMotion
+		}
 		view.WindowTitle = "Niffler TUI - " + m.session
 		return view
 	}
@@ -1103,7 +1140,7 @@ func (m model) View() tea.View {
 	if m.contextNote != "" {
 		status += " | " + m.contextNote
 	} else {
-		status += " | /provider /model /connect /help | alt+enter: newline | ctrl+r: history search | ctrl+c: quit"
+		status += " | /provider /model /connect /help | alt+enter: newline | ctrl+r: history | ctrl+t: tools | ctrl+c: quit"
 	}
 
 	parts := []string{header, runtimeLine, m.viewport.View()}

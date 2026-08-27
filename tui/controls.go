@@ -80,6 +80,21 @@ func (m model) executeLocalCommand(command string) (tea.Model, tea.Cmd) {
 		m.syncViewport(true)
 		return m, nil
 
+	case "mouse":
+		if argument == "" {
+			m.mouse = !m.mouse
+		} else {
+			m.mouse = argument == "on"
+		}
+		if m.mouse {
+			m.addBlock(blockMeta, "mouse on — click a tool card to expand it (ctrl+t toggles all); "+
+				"copy with shift+drag")
+		} else {
+			m.addBlock(blockMeta, "mouse off — native click-and-drag selection enabled for copy")
+		}
+		m.syncViewport(true)
+		return m, nil
+
 	case "help", "?":
 		m.addBlock(blockMeta, strings.Join([]string{
 			"local commands:",
@@ -87,6 +102,7 @@ func (m model) executeLocalCommand(command string) (tea.Model, tea.Cmd) {
 			"  /model [id|default]   choose this conversation's model",
 			"  /connect              store a provider connection",
 			"  /status               show provider/model/context details",
+			"  /mouse [on|off]       tool-card click expansion (off = native copy)",
 			"  /help                 show this help",
 		}, "\n"))
 		m.syncViewport(true)

@@ -13,6 +13,14 @@ This checkout is expected next to Niffler so the local `go.mod` replacement
 finds the Go SDK:
 
 ```bash
+make            # builds bin/niffler-tui
+make test       # runs the TUI test suite
+make run        # build + run
+```
+
+or directly:
+
+```bash
 go build -o bin/niffler-tui ./tui
 ```
 
@@ -46,8 +54,17 @@ Keys:
   matches, `Enter` to accept, `Esc` to cancel
 - `PgUp` / `PgDn`: page through the transcript
 - `Ctrl+Up` / `Ctrl+Down`: scroll the transcript one line at a time
+- `Ctrl+T`: expand/collapse all tool-run cards
 - Mouse wheel: scroll the transcript
 - `Ctrl+C`: quit
+
+Consecutive tool calls in a turn are folded into a single collapsible
+"tool-run card" with a summary line (✓/⚠ glyph, call count, names), collapsed
+by default so long tool sequences stay unobtrusive. `Ctrl+T` expands or
+collapses every card. With `/mouse on`, a left click toggles the card under
+the cursor and the wheel scrolls; note that enabling mouse tracking makes the
+terminal capture clicks, so plain-drag copy then needs `Shift`+drag, which is
+why mouse tracking stays off by default (native click-and-drag copy).
 
 Local commands are handled by the TUI and are never sent to the model:
 
@@ -58,6 +75,7 @@ Local commands are handled by the TUI and are never sent to the model:
 - `/connect` — masked provider connection form using models.dev templates or a
   custom OpenAI-compatible endpoint
 - `/status` — detailed effective provider/model/context provenance and usage
+- `/mouse [on|off]` — toggle tool-card click expansion (off keeps native copy)
 - `/help` — command summary
 
 Selectors use `/` to filter, arrows to move, `Enter` to choose, and `Esc` to

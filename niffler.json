@@ -14,7 +14,8 @@
         "tui/context_status.go",
         "tui/controls.go",
         "tui/provider_form.go",
-        "tui/selectors.go"
+        "tui/selectors.go",
+        "tui/toolcard.go"
       ],
       "interactive": true,
       "description": "Interactive terminal chat client; registers no LLM tools"
