@@ -80,9 +80,13 @@ type sessionEventMsg struct {
 	event sessionEvent
 }
 
+// turnDoneMsg completes a session turn. session is the conversation the
+// turn was sent for; after a session switch the stale completion is dropped
+// so the old conversation's reply cannot leak into the new transcript.
 type turnDoneMsg struct {
-	reply string
-	err   error
+	session string
+	reply   string
+	err     error
 }
 
 // renderSettleMsg fires after markdownSettleDelay of quiet streaming output;
@@ -143,9 +147,6 @@ type model struct {
 	contextNote           string
 	controlPending        bool
 
-	// Sessions (conversation switcher). sessionsLoading shows a spinner in
-	// the /session selector while the store list is fetched.
-	sessionsLoading bool
 	// transcript is the cached joined rendering of all blocks (see
 	// renderTranscript); viewportContent is the last string pushed into the
 	// viewport, so syncViewport can skip SetContent when nothing changed.
@@ -293,6 +294,17 @@ func (m model) connectCmd() tea.Cmd {
 	}
 }
 
+// applyRuntimeRefresh applies a runtime resolution to the model and reports
+// whether it was applied (a failed resolve keeps the current runtime). The
+// caller has already checked that the refresh belongs to the current session.
+func (m *model) applyRuntimeRefresh(msg runtimeRefreshedMsg) bool {
+	if msg.ResolveErr != nil {
+		return false
+	}
+	m.runtime = msg.Runtime
+	return true
+}
+
 func (m model) sendTurn(content string) tea.Cmd {
 	return func() tea.Msg {
 		args := map[string]any{
@@ -304,15 +316,15 @@ func (m model) sendTurn(content string) tea.Cmd {
 		}
 		result, err := m.comp.Request("core", "session", args, turnTimeout)
 		if err != nil {
-			return turnDoneMsg{err: fmt.Errorf("session turn: %w", err)}
+			return turnDoneMsg{session: m.session, err: fmt.Errorf("session turn: %w", err)}
 		}
 		var response struct {
 			Reply string `json:"reply"`
 		}
 		if err := json.Unmarshal(result, &response); err != nil {
-			return turnDoneMsg{err: fmt.Errorf("decode session result: %w", err)}
+			return turnDoneMsg{session: m.session, err: fmt.Errorf("decode session result: %w", err)}
 		}
-		return turnDoneMsg{reply: response.Reply}
+		return turnDoneMsg{session: m.session, reply: response.Reply}
 	}
 }
 
@@ -322,7 +334,8 @@ func (m model) sendTurn(content string) tea.Cmd {
 // ends the turn with "done", and the pending core/session request returns,
 // so finishTurn runs and busy clears. Fire-and-forget (errors surface as
 // nothing here; the request will time out on its own if the cancel fails).
-func (m model) cancelTurnCmd() tea.Cmd {
+// Pointer receiver: arming the stopping state must survive on the model.
+func (m *model) cancelTurnCmd() tea.Cmd {
 	m.stopping = true
 	m.stopArmed = false
 	return func() tea.Msg {
@@ -378,6 +391,20 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		cmds = append(cmds, bootstrapBackendCmd(m.comp, m.session))
 
 	case connectStoppedMsg:
+		return m, nil
+
+	case sessionListMsg:
+		// The user may have left the browser while the store list was
+		// loading; drop the result instead of yanking them back into it.
+		if m.mode != modeSessions {
+			return m, nil
+		}
+		if msg.Err != nil {
+			m.contextNote = msg.Err.Error()
+			m.mode = modeChat
+			return m, nil
+		}
+		m.openSessionSelector(msg.Sessions)
 		return m, nil
 
 	case tea.WindowSizeMsg:
@@ -496,6 +523,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// chat mode: fall through to normal input handling below
 
 	case bootstrapMsg:
+		// A snapshot belongs to the session it was loaded for; after a
+		// further /session or /new switch it is stale and must not clobber
+		// the new conversation's state.
+		if msg.Session != m.session {
+			break
+		}
 		m.providers = msg.Providers.Providers
 		m.providerStatus = msg.ProviderStatus
 		m.catalogProviders = msg.CatalogProviders
@@ -540,8 +573,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.StatusErr == nil {
 			m.providerStatus = msg.Status
 		}
-		if msg.ResolveErr == nil {
-			m.runtime = msg.Runtime
+		// The runtime resolution reflects the model override of the session
+		// the refresh was fired for; on mismatch keep the current runtime.
+		if msg.Session == m.session && m.applyRuntimeRefresh(msg) {
 			if m.runtime.Catalog != "" && m.runtime.Catalog != m.modelsCatalog {
 				cmds = append(cmds, loadModelsCmd(m.comp, m.runtime.Catalog))
 			}
@@ -611,16 +645,21 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.providerDeleteErr = ""
 		m.addBlock(blockMeta, label)
 		m.syncViewport(true)
-		cmds = append(cmds, refreshRuntimeCmd(m.comp, m.modelOverride))
+		cmds = append(cmds, refreshRuntimeCmd(m.comp, m.session, m.modelOverride))
 
 	case modelActionMsg:
+		// A conversation-scoped save belongs to the session it was fired for;
+		// after a switch neither its runtime snapshot nor the rollback apply.
+		if msg.Session != m.session {
+			break
+		}
 		m.controlPending = false
 		if msg.Err != nil {
 			m.modelOverride = msg.Previous
 			m.contextNote = msg.Err.Error()
 			m.addBlock(blockError, msg.Err.Error())
 			m.syncViewport(true)
-			cmds = append(cmds, refreshRuntimeCmd(m.comp, m.modelOverride))
+			cmds = append(cmds, refreshRuntimeCmd(m.comp, m.session, m.modelOverride))
 			break
 		}
 		m.modelOverride = msg.Selected
@@ -655,7 +694,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.syncViewport(true)
 
 	case providerBusEventMsg:
-		cmds = append(cmds, refreshRuntimeCmd(m.comp, m.modelOverride))
+		cmds = append(cmds, refreshRuntimeCmd(m.comp, m.session, m.modelOverride))
 
 	case modelsCatalogUpdatedMsg:
 		cmds = append(cmds, loadCatalogProvidersCmd(m.comp))
@@ -676,6 +715,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case turnDoneMsg:
+		// A turn completion belongs to the session it was sent for; after a
+		// /session or /new switch the old turn's reply must not leak into
+		// the new conversation's transcript or clear its busy flag.
+		if msg.session != m.session {
+			break
+		}
 		if msg.err != nil {
 			m.finishTurn("", msg.err.Error())
 		} else {

@@ -1392,6 +1392,84 @@ func TestRememberAutoApprovePersistsToStore(t *testing.T) {
 	}
 }
 
+func TestTurnDoneFromOtherSessionIgnored(t *testing.T) {
+	m := newTestModel()
+	m.session = "new"
+	m.busy = true // a turn is in flight for the session we switched away from
+
+	// The old session's turn completion must not land in the new transcript
+	// or clear the new session's busy flag.
+	updated, _ := m.Update(turnDoneMsg{session: "old", reply: "stale reply"})
+	got := updated.(model)
+	if len(got.blocks) != 0 || !got.busy {
+		t.Fatalf("foreign turn leaked into the new session: blocks=%d busy=%v", len(got.blocks), got.busy)
+	}
+
+	// The matching session's completion still finishes the turn.
+	updated, _ = got.Update(turnDoneMsg{session: "new", reply: "hello"})
+	got = updated.(model)
+	if got.busy {
+		t.Fatal("matching turn did not clear busy")
+	}
+	if len(got.blocks) != 1 || got.blocks[0].kind != blockAssistant || got.blocks[0].text != "hello" {
+		t.Fatalf("matching turn reply not rendered: %+v", got.blocks)
+	}
+}
+
+func TestSessionListMsgPopulatesSelector(t *testing.T) {
+	m := newTestModel()
+	m.mode = modeSessions
+	updated, _ := m.Update(sessionListMsg{
+		Sessions: []sessionSummary{
+			{ID: "conv-2", Title: "Second", CreatedAt: 200},
+			{ID: "conv-1", Title: "First", CreatedAt: 100},
+		},
+	})
+	got := updated.(model)
+	if got.mode != modeSessions {
+		t.Fatalf("mode = %v, want sessions selector", got.mode)
+	}
+	items := got.selector.list.Items()
+	if len(items) != 3 { // + new session entry
+		t.Fatalf("selector items = %d, want 3", len(items))
+	}
+
+	// A store error falls back to chat mode with a note.
+	got.mode = modeSessions
+	updated, _ = got.Update(sessionListMsg{Err: errors.New("store unavailable")})
+	got = updated.(model)
+	if got.mode != modeChat {
+		t.Fatalf("error mode = %v, want chat", got.mode)
+	}
+	if !strings.Contains(got.contextNote, "store unavailable") {
+		t.Fatalf("error note = %q", got.contextNote)
+	}
+}
+
+func TestSecondEscapeCancelsAndArmsStopping(t *testing.T) {
+	m := newTestModel()
+	m.busy = true
+	m.session = "game"
+
+	// First ESC arms the stop prompt; nothing is cancelled yet.
+	updated, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEsc})
+	got := updated.(model)
+	if cmd != nil || !got.stopArmed || !got.busy {
+		t.Fatalf("first esc: armed=%v busy=%v cmd=%v", got.stopArmed, got.busy, cmd != nil)
+	}
+
+	// Second ESC force-cancels: the prompt disarms, stopping is recorded on
+	// the live model (regression: cancelTurnCmd used to mutate a copy).
+	updated, cmd = got.Update(tea.KeyPressMsg{Code: tea.KeyEsc})
+	got = updated.(model)
+	if cmd == nil {
+		t.Fatal("second esc returned no cancel command")
+	}
+	if got.stopArmed || !got.stopping || !got.busy {
+		t.Fatalf("second esc: armed=%v stopping=%v busy=%v", got.stopArmed, got.stopping, got.busy)
+	}
+}
+
 func TestTranscriptCacheInvalidatedByMutations(t *testing.T) {
 	m := newTestModel()
 	m.addBlock(blockUser, "first")
@@ -1419,5 +1497,121 @@ func TestTranscriptCacheInvalidatedByMutations(t *testing.T) {
 	expanded := m.renderTranscript()
 	if expanded == collapsed {
 		t.Fatal("toggle did not invalidate the transcript cache")
+	}
+}
+
+func TestSessionSelectorEnterSwitchesOrDismisses(t *testing.T) {
+	m := newTestModel()
+	m.session = "current"
+	m.mode = modeSessions
+	m.selector = newSelector("Sessions", sessionSelectorItems("current", []sessionSummary{
+		{ID: "current", Title: "Current"},
+		{ID: "other", Title: "Other"},
+	}), 80, 20)
+	// sessionSelectorItems prepends "+ New session"; select the current
+	// session entry (index 1).
+	m.selector.list.Select(1)
+
+	// Enter on the current session just dismisses the browser: switching
+	// would wipe the live transcript.
+	updated, cmd := m.handleControlKey(tea.KeyPressMsg{Code: tea.KeyEnter})
+	got := updated.(model)
+	if got.mode != modeChat || cmd != nil {
+		t.Fatalf("enter on current session: mode=%v cmd=%v, want chat with no command", got.mode, cmd != nil)
+	}
+	if got.session != "current" || len(got.blocks) != 0 {
+		t.Fatalf("current session state was reset: session=%q blocks=%d", got.session, len(got.blocks))
+	}
+
+	// Re-open the browser (as a user navigating the list would) and select
+	// the other session; Enter switches to it and re-bootstraps.
+	got.mode = modeSessions
+	got.selector = newSelector("Sessions", sessionSelectorItems("current", []sessionSummary{
+		{ID: "current", Title: "Current"},
+		{ID: "other", Title: "Other"},
+	}), 80, 20)
+	got.selector.list.Select(2)
+	updated, cmd = got.handleControlKey(tea.KeyPressMsg{Code: tea.KeyEnter})
+	got = updated.(model)
+	if cmd == nil {
+		t.Fatal("switching sessions returned no bootstrap command")
+	}
+	if got.session != "other" {
+		t.Fatalf("enter on other session stayed on %q", got.session)
+	}
+	if got.mode != modeChat || got.historyFile != historyFilePath("other") {
+		t.Fatalf("switch did not reset session state: mode=%v file=%q", got.mode, got.historyFile)
+	}
+}
+
+func TestBootstrapMsgFromOtherSessionIgnored(t *testing.T) {
+	m := newTestModel()
+	m.session = "new"
+	m.runtime = runtimeResolution{Provider: "keep", Model: "keep", OK: true}
+	m.modelOverride = "keep"
+
+	updated, _ := m.Update(bootstrapMsg{
+		Session:      "old",
+		Conversation: conversationState{ModelOverride: "stale"},
+		Runtime:      runtimeResolution{Provider: "stale", Model: "stale"},
+	})
+	got := updated.(model)
+	if got.runtime.Provider != "keep" || got.modelOverride != "keep" {
+		t.Fatalf("stale bootstrap clobbered the new session: %#v", got.runtime)
+	}
+
+	// A matching bootstrap still populates the header state.
+	updated, _ = got.Update(bootstrapMsg{
+		Session:      "new",
+		Conversation: conversationState{ModelOverride: "chosen"},
+		Runtime:      runtimeResolution{Provider: "work", Model: "m1"},
+	})
+	got = updated.(model)
+	if got.runtime.Provider != "work" || got.modelOverride != "chosen" {
+		t.Fatalf("matching bootstrap not applied: %#v override=%q", got.runtime, got.modelOverride)
+	}
+}
+
+func TestModelActionFromOtherSessionIgnored(t *testing.T) {
+	m := newTestModel()
+	m.session = "new"
+	m.modelOverride = "old-override"
+
+	// A conversation model save fired for the old session must not touch
+	// the new session's override. (In practice a stale completion can only
+	// arrive after switchSession, which already cleared controlPending; a
+	// stale message is ignored entirely.)
+	updated, _ := m.Update(modelActionMsg{
+		Session: "old", Selected: "m2", Previous: "old-override",
+		Runtime: runtimeResolution{OK: true, Model: "m2"},
+	})
+	got := updated.(model)
+	if got.modelOverride != "old-override" {
+		t.Fatalf("stale model action changed override: %q", got.modelOverride)
+	}
+
+	// A matching save commits the override and clears the pending flag.
+	got.controlPending = true
+	updated, _ = got.Update(modelActionMsg{
+		Session: "new", Selected: "m2", Previous: "old-override",
+		Runtime: runtimeResolution{OK: true, Model: "m2"},
+	})
+	got = updated.(model)
+	if got.modelOverride != "m2" || got.controlPending {
+		t.Fatalf("matching model action not applied: override=%q pending=%v", got.modelOverride, got.controlPending)
+	}
+}
+
+func TestSessionListMsgDroppedAfterLeavingBrowser(t *testing.T) {
+	m := newTestModel()
+	m.mode = modeSessions
+	// The user leaves the browser (esc -> chat) while the list is loading.
+	m.mode = modeChat
+	updated, _ := m.Update(sessionListMsg{
+		Sessions: []sessionSummary{{ID: "x", Title: "X"}},
+	})
+	got := updated.(model)
+	if got.mode != modeChat {
+		t.Fatalf("late session list yanked mode to %v", got.mode)
 	}
 }

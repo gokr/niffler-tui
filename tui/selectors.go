@@ -232,11 +232,14 @@ func sessionSelectorItems(current string, sessions []sessionSummary) []list.Item
 		} else if marked != "" {
 			title = marked + s.ID
 		}
+		description := s.ID
+		if stamp := fmtTimeShort(s.CreatedAt); stamp != "" {
+			description += " · " + stamp
+		}
 		items = append(items, selectorItem{
 			kind: selectorSession,
-			id:   s.ID, title: title,
-			description: s.ID + "" + fmtTimeShort(s.CreatedAt),
-			payload:     s,
+			id:   s.ID, title: title, description: description,
+			payload: s,
 		})
 	}
 	return items

@@ -92,6 +92,9 @@ type conversationState struct {
 }
 
 type bootstrapMsg struct {
+	// Session is the conversation this snapshot was loaded for; a snapshot
+	// arriving after a further session switch is dropped.
+	Session          string
 	Providers        providerListResponse
 	ProviderStatus   providerStatusResponse
 	CatalogProviders []catalogProvider
@@ -101,6 +104,10 @@ type bootstrapMsg struct {
 }
 
 type runtimeRefreshedMsg struct {
+	// Session identifies the conversation whose model override fed the
+	// runtime resolution; on mismatch only the global parts (providers,
+	// status) are applied.
+	Session    string
 	Providers  providerListResponse
 	Status     providerStatusResponse
 	Runtime    runtimeResolution
@@ -130,6 +137,10 @@ type providerActionMsg struct {
 }
 
 type modelActionMsg struct {
+	// Session is the conversation the override was saved for; a completion
+	// arriving after a session switch is dropped (its runtime snapshot and
+	// rollback belong to the old conversation).
+	Session  string
 	Selected string
 	Previous string
 	Runtime  runtimeResolution
@@ -314,16 +325,18 @@ func bootstrapBackendCmd(comp *sdk.Component, session string) tea.Cmd {
 		} else {
 			msg.Runtime = resolved
 		}
+		msg.Session = session
 		return msg
 	}
 }
 
-func refreshRuntimeCmd(comp *sdk.Component, modelOverride string) tea.Cmd {
+func refreshRuntimeCmd(comp *sdk.Component, session, modelOverride string) tea.Cmd {
 	return func() tea.Msg {
 		providers, listErr := loadProviderList(comp)
 		status, statusErr := loadProviderStatus(comp)
 		resolved, resolveErr := resolveRuntime(comp, modelOverride)
 		return runtimeRefreshedMsg{
+			Session:   session,
 			Providers: providers, Status: status, Runtime: resolved,
 			ListErr: listErr, StatusErr: statusErr, ResolveErr: resolveErr,
 		}
@@ -371,6 +384,7 @@ func setConversationModelCmd(comp *sdk.Component, session, selected, previous st
 			err = fmt.Errorf("model selection failed")
 		}
 		return modelActionMsg{
+			Session:  session,
 			Selected: selected, Previous: previous,
 			Runtime: runtimeResolution{
 				OK: response.OK, Provider: response.Provider,

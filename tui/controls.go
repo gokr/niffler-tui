@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -15,29 +16,45 @@ import (
 func (m model) switchSession(id string) model {
 	m.session = id
 	m.blocks = nil
+	m.markTranscriptDirty()
 	m.assistantIdx = -1
 	m.thinkingIdx = -1
 	m.hadAssistant = false
 	m.busy = false
-	m.streaming = false
+	m.stopArmed = false
+	m.stopping = false
+	m.setStreaming(false)
 	m.roundClosed = false
+	m.renderTimerActive = false
 	m.contextNote = ""
 	m.modelOverride = ""
 	m.runtime = runtimeResolution{}
 	m.promptTokens = 0
 	m.contextUsed = 0
+	// controlPending guards the control-plane UI; a completion for the old
+	// session (e.g. a conversation model save) is dropped by its session
+	// guard, so the flag must not survive the switch.
+	m.controlPending = false
 	m.models = nil
 	m.modelsCatalog = ""
 	m.approvals = nil
 	m.searchActive = false
 	m.searchQuery = ""
 	m.mode = modeChat
+	m.providerConfirmDelete = ""
+	m.providerDeleteErr = ""
 	m.histIdx = -1
 	m.draft = ""
 	m.input.SetValue("")
 	m.historyFile = historyFilePath(id)
 	m.history = loadHistory(m.historyFile)
 	return m
+}
+
+// newSessionID generates a fresh conversation id for /new and the session
+// browser's "+ New session" entry.
+func newSessionID() string {
+	return "conv-" + strconv.FormatInt(time.Now().Unix(), 10)
 }
 
 func (m model) executeLocalCommand(command string) (tea.Model, tea.Cmd) {
@@ -129,7 +146,7 @@ func (m model) executeLocalCommand(command string) (tea.Model, tea.Cmd) {
 	case "new", "newsession":
 		id := strings.TrimSpace(argument)
 		if id == "" {
-			id = "conv-" + fmt.Sprintf("%d", time.Now().Unix())
+			id = newSessionID()
 		}
 		return m.switchSession(id), bootstrapBackendCmd(m.comp, id)
 
@@ -193,11 +210,10 @@ func (m *model) openCatalogProviderSelector() {
 	m.layout()
 }
 
-// sessionListSelecting opens the conversation browser with a placeholder
-// spinner; the selector is rebuilt with the loaded list in the sessionListMsg
-// handler.
+// sessionListSelecting opens the conversation browser with a loading
+// placeholder; the selector is rebuilt with the loaded list in the
+// sessionListMsg handler.
 func (m *model) sessionListSelecting() {
-	m.sessionsLoading = true
 	m.selector = newSelector("Sessions — loading…", nil, m.width, m.height-3)
 	m.mode = modeSessions
 	m.layout()
@@ -205,7 +221,6 @@ func (m *model) sessionListSelecting() {
 
 // openSessionSelector rebuilds the /session list with the fetched sessions.
 func (m *model) openSessionSelector(sessions []sessionSummary) {
-	m.sessionsLoading = false
 	m.selector = newSelector("Sessions",
 		sessionSelectorItems(m.session, sessions), m.width, m.height-3)
 	m.mode = modeSessions
@@ -413,6 +428,22 @@ func (m model) handleControlKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.contextNote = "saving conversation model…"
 		m.layout()
 		return m, setConversationModelCmd(m.comp, m.session, m.modelOverride, previous)
+	case modeSessions:
+		switch selected.kind {
+		case selectorNewSession:
+			id := newSessionID()
+			return m.switchSession(id), bootstrapBackendCmd(m.comp, id)
+		case selectorSession:
+			if selected.id == m.session {
+				// Re-selecting the current session just dismisses the
+				// browser; switching would wipe the transcript.
+				m.mode = modeChat
+				m.layout()
+				return m, nil
+			}
+			return m.switchSession(selected.id), bootstrapBackendCmd(m.comp, selected.id)
+		}
+		return m, nil
 	}
 	return m, nil
 }
