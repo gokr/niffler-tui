@@ -14,15 +14,15 @@ import (
 const controlTimeout = 10 * time.Second
 
 type providerSummary struct {
-	Nickname string `json:"nickname"`
-	BaseURL  string `json:"baseUrl"`
-	Model    string `json:"model"`
-	Catalog  string `json:"catalog"`
-	Context  int    `json:"context"`
-	Plugin   string `json:"plugin"`
-	Active   bool   `json:"active"`
-	HasKey   bool   `json:"hasKey"`
-	StripPrefix bool `json:"stripPrefix"`
+	Nickname    string `json:"nickname"`
+	BaseURL     string `json:"baseUrl"`
+	Model       string `json:"model"`
+	Catalog     string `json:"catalog"`
+	Context     int    `json:"context"`
+	Plugin      string `json:"plugin"`
+	Active      bool   `json:"active"`
+	HasKey      bool   `json:"hasKey"`
+	StripPrefix bool   `json:"stripPrefix"`
 }
 
 type providerListResponse struct {
@@ -247,11 +247,11 @@ type sessionListMsg struct {
 // first. Columns include the persisted model override so the selector can
 // show per-session configuration.
 type sessionRow struct {
-	ID           string `json:"id"`
-	Value        struct {
-		Title         string `json:"title"`
+	ID    string `json:"id"`
+	Value struct {
+		Title         string  `json:"title"`
 		CreatedAt     float64 `json:"createdAt"`
-		ModelOverride string `json:"modelOverride"`
+		ModelOverride string  `json:"modelOverride"`
 	} `json:"value"`
 }
 
@@ -450,5 +450,45 @@ func addProviderCmd(comp *sdk.Component, values providerFormValues) tea.Cmd {
 			err = fmt.Errorf("provider add failed")
 		}
 		return providerActionMsg{Action: "add", Nickname: values.Nickname, Err: err}
+	}
+}
+
+// updateProviderCmd edits an existing provider's non-secret settings, preserving
+// its stored API key unless a replacement is supplied. Editing never changes
+// which provider is currently active.
+func updateProviderCmd(comp *sdk.Component, values providerFormValues) tea.Cmd {
+	return func() tea.Msg {
+		var response struct {
+			OK bool `json:"ok"`
+		}
+		args := map[string]any{
+			"nickname": values.Nickname,
+			"baseUrl":  values.BaseURL,
+			"catalog":  values.Catalog,
+			"model":    values.Model, "context": values.Context,
+		}
+		if values.APIKey != "" {
+			args["apiKey"] = values.APIKey
+		}
+		err := requestInto(comp, "provider", "provider_update", args, &response)
+		if err == nil && !response.OK {
+			err = fmt.Errorf("provider update failed")
+		}
+		return providerActionMsg{Action: "update", Nickname: values.Nickname, Err: err}
+	}
+}
+
+// removeProviderCmd deletes a configured provider from the store. If it was the
+// active one, the backend falls back to another provider (or the environment).
+func removeProviderCmd(comp *sdk.Component, nickname string) tea.Cmd {
+	return func() tea.Msg {
+		var response struct {
+			OK bool `json:"ok"`
+		}
+		err := requestInto(comp, "provider", "provider_remove", map[string]any{"nickname": nickname}, &response)
+		if err == nil && !response.OK {
+			err = fmt.Errorf("provider remove failed")
+		}
+		return providerActionMsg{Action: "remove", Nickname: nickname, Err: err}
 	}
 }

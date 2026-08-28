@@ -168,20 +168,22 @@ type model struct {
 	// Provider/model control plane. Provider selection is the registry's
 	// global default; modelOverride is conversation-scoped and sent with
 	// every turn. Runtime/context values are authoritative llm/session data.
-	mode             uiMode
-	selector         selectorState
-	providerForm     providerForm
-	providers        []providerSummary
-	providerStatus   providerStatusResponse
-	catalogProviders []catalogProvider
-	models           []modelSummary
-	modelsCatalog    string
-	runtime          runtimeResolution
-	modelOverride    string
-	promptTokens     int
-	contextUsed      int
-	contextNote      string
-	controlPending   bool
+	mode                  uiMode
+	selector              selectorState
+	providerForm          providerForm
+	providerConfirmDelete string // nickname armed for two-stage delete in /provider
+	providerDeleteErr     string
+	providers             []providerSummary
+	providerStatus        providerStatusResponse
+	catalogProviders      []catalogProvider
+	models                []modelSummary
+	modelsCatalog         string
+	runtime               runtimeResolution
+	modelOverride         string
+	promptTokens          int
+	contextUsed           int
+	contextNote           string
+	controlPending        bool
 
 	// Sessions (conversation switcher). sessionsLoading shows a spinner in
 	// the /session selector while the store list is fetched.
@@ -610,8 +612,19 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case providerActionMsg:
 		m.controlPending = false
 		m.providerForm.saving = false
+		label := "provider: " + msg.Nickname
+		switch msg.Action {
+		case "add":
+			label = "provider added: " + msg.Nickname
+		case "update":
+			label = "provider updated: " + msg.Nickname
+		case "remove":
+			label = "provider removed: " + msg.Nickname
+		case "switch":
+			label = "provider selected: " + msg.Nickname
+		}
 		if msg.Err != nil {
-			if msg.Action == "add" {
+			if msg.Action == "add" || msg.Action == "update" {
 				m.providerForm.err = msg.Err.Error()
 				m.mode = modeConnectForm
 			} else {
@@ -623,7 +636,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.providerForm.clearSecret()
 		m.mode = modeChat
-		m.addBlock(blockMeta, "provider selected: "+msg.Nickname)
+		m.providerConfirmDelete = ""
+		m.providerDeleteErr = ""
+		m.addBlock(blockMeta, label)
 		m.syncViewport(true)
 		cmds = append(cmds, refreshRuntimeCmd(m.comp, m.modelOverride))
 
@@ -1260,6 +1275,15 @@ func (m model) View() tea.View {
 			control = m.selector.list.View()
 			parts = append(parts, control)
 			footer := "/: filter  •  enter: choose  •  esc: back"
+			if m.mode == modeProviders {
+				if m.providerDeleteErr != "" {
+					footer = errorStyle.Render(m.providerDeleteErr)
+				} else if m.providerConfirmDelete != "" {
+					footer = errorStyle.Render("Remove " + m.providerConfirmDelete + "? press d/x again to confirm, esc to cancel")
+				} else {
+					footer = "/: filter  •  enter: switch  •  e: edit  •  d: remove  •  esc: back"
+				}
+			}
 			if m.controlPending {
 				footer = "updating settings…"
 			} else if m.contextNote != "" {

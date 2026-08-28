@@ -25,11 +25,54 @@ type providerForm struct {
 	inputs   [providerFieldCount]textinput.Model
 	focus    int
 	template string
+	edit     bool // editing an existing provider (nickname locked, key optional)
 	err      string
 	saving   bool
 }
 
 func newProviderForm(template *catalogProvider, runtime runtimeResolution, width int) providerForm {
+	form := newProviderFormFields(width)
+	if template != nil {
+		form.template = template.Name
+		if form.template == "" {
+			form.template = template.ID
+		}
+		form.inputs[providerFieldNickname].SetValue(template.ID)
+		form.inputs[providerFieldBaseURL].SetValue(template.API)
+		form.inputs[providerFieldCatalog].SetValue(template.ID)
+		if runtime.Catalog == template.ID {
+			form.inputs[providerFieldModel].SetValue(runtime.Model)
+		}
+	} else {
+		form.template = "Custom OpenAI-compatible"
+	}
+	form.focusField(0)
+	return form
+}
+
+// newEditProviderForm builds a form pre-filled from an existing provider so the
+// user can edit its non-secret settings (and optionally rotate the key) without
+// re-typing a credential. The nickname is immutable (the backend updates by it).
+func newEditProviderForm(p providerSummary, width int) providerForm {
+	form := newProviderFormFields(width)
+	form.edit = true
+	form.template = p.Nickname
+	form.inputs[providerFieldNickname].SetValue(p.Nickname)
+	form.inputs[providerFieldBaseURL].SetValue(p.BaseURL)
+	form.inputs[providerFieldCatalog].SetValue(p.Catalog)
+	form.inputs[providerFieldModel].SetValue(p.Model)
+	if p.Context > 0 {
+		form.inputs[providerFieldContext].SetValue(strconv.Itoa(p.Context))
+	}
+	form.inputs[providerFieldAPIKey].Placeholder = "leave blank to keep"
+	form.inputs[providerFieldNickname].Prompt = "Nickname (locked) "
+	form.focusField(providerFieldBaseURL)
+	return form
+}
+
+// newProviderFormFields allocates the raw text inputs shared by the add and
+// edit forms (masked key field, width, char limits).
+func newProviderFormFields(width int) providerForm {
 	prompts := []string{
 		"Nickname   ",
 		"Base URL   ",
@@ -58,22 +101,6 @@ func newProviderForm(template *catalogProvider, runtime runtimeResolution, width
 	form.inputs[providerFieldAPIKey].EchoMode = textinput.EchoPassword
 	form.inputs[providerFieldAPIKey].EchoCharacter = '•'
 	form.inputs[providerFieldContext].CharLimit = 12
-
-	if template != nil {
-		form.template = template.Name
-		if form.template == "" {
-			form.template = template.ID
-		}
-		form.inputs[providerFieldNickname].SetValue(template.ID)
-		form.inputs[providerFieldBaseURL].SetValue(template.API)
-		form.inputs[providerFieldCatalog].SetValue(template.ID)
-		if runtime.Catalog == template.ID {
-			form.inputs[providerFieldModel].SetValue(runtime.Model)
-		}
-	} else {
-		form.template = "Custom OpenAI-compatible"
-	}
-	form.focusField(0)
 	return form
 }
 
@@ -119,10 +146,10 @@ func (f providerForm) values() (providerFormValues, error) {
 		Catalog:  strings.TrimSpace(f.inputs[providerFieldCatalog].Value()),
 		Model:    strings.TrimSpace(f.inputs[providerFieldModel].Value()),
 	}
-	if values.Nickname == "" {
+	if values.Nickname == "" && !f.edit {
 		return providerFormValues{}, fmt.Errorf("nickname is required")
 	}
-	if values.APIKey == "" {
+	if values.APIKey == "" && !f.edit {
 		return providerFormValues{}, fmt.Errorf("API key is required (use a placeholder for a keyless local endpoint)")
 	}
 	if values.BaseURL == "" {
@@ -153,9 +180,16 @@ func (f *providerForm) clearSecret() {
 func (f providerForm) view(width int) string {
 	var out strings.Builder
 	title := "Connect provider — " + f.template
+	if f.edit {
+		title = "Edit provider — " + f.template
+	}
 	out.WriteString(headerStyle.Render(title))
 	out.WriteString("\n\n")
-	out.WriteString(metaStyle.Render("OpenAI-compatible endpoint; credentials are stored by Niffler and never added to chat history."))
+	meta := "OpenAI-compatible endpoint; credentials are stored by Niffler and never added to chat history."
+	if f.edit {
+		meta = "Editing " + f.template + "; leave API key blank to keep the stored credential."
+	}
+	out.WriteString(metaStyle.Render(meta))
 	out.WriteString("\n\n")
 	for i := range f.inputs {
 		out.WriteString(f.inputs[i].View())

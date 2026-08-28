@@ -162,7 +162,7 @@ func (m model) executeLocalCommand(command string) (tea.Model, tea.Cmd) {
 	case "help", "?":
 		m.addBlock(blockMeta, strings.Join([]string{
 			"local commands:",
-			"  /provider [nickname|environment]  choose the global provider",
+			"  /provider [nickname|environment]  choose the global provider (e: edit, d: remove selected)",
 			"  /model [id|default]   choose this conversation's model",
 			"  /connect              store a provider connection",
 			"  /status               show provider/model/context details",
@@ -303,6 +303,50 @@ func (m model) handleControlKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.selector.list, cmd = m.selector.list.Update(msg)
 		return m, cmd
 	}
+	// Provider management shortcuts (modeProviders only): e = edit the selected
+	// provider, d/x = delete it. Two-stage delete: first press arms it, the second
+	// (or enter) confirms; navigating or esc disarms.
+	if m.mode == modeProviders {
+		key := msg.String()
+		if key == "esc" {
+			m.providerConfirmDelete = ""
+			m.providerDeleteErr = ""
+			m.mode = modeChat
+			m.layout()
+			return m, nil
+		}
+		selected, ok := m.selector.selected()
+		armed := m.providerConfirmDelete
+		if armed != "" && selected.id != armed {
+			// Selection moved: disarm the pending delete.
+			m.providerConfirmDelete = ""
+		}
+		if ok && selected.kind == selectorProvider && !m.busy {
+			switch key {
+			case "e":
+				if p, ok := selected.payload.(providerSummary); ok {
+					m.providerForm = newEditProviderForm(p, m.width)
+					m.mode = modeConnectForm
+					m.providerConfirmDelete = ""
+					m.layout()
+					return m, nil
+				}
+			case "d", "x", "enter":
+				if armed != "" {
+					// Confirmed: delete it.
+					m.providerConfirmDelete = ""
+					m.providerDeleteErr = ""
+					m.controlPending = true
+					return m, removeProviderCmd(m.comp, selected.id)
+				}
+				if armed == "" && key != "enter" {
+					// First press: arm the delete confirmation.
+					m.providerConfirmDelete = selected.id
+					return m, nil
+				}
+			}
+		}
+	}
 	if msg.String() == "esc" {
 		m.mode = modeChat
 		m.layout()
@@ -385,6 +429,9 @@ func (m model) submitProviderForm() (tea.Model, tea.Cmd) {
 	m.providerForm.err = ""
 	m.providerForm.saving = true
 	m.controlPending = true
+	if m.providerForm.edit {
+		return m, updateProviderCmd(m.comp, values)
+	}
 	return m, addProviderCmd(m.comp, values)
 }
 

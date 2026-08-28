@@ -697,6 +697,85 @@ func TestProviderFormMasksSecretAndValidates(t *testing.T) {
 	}
 }
 
+func TestEditProviderFormPrefillsAndAllowsEmptyKey(t *testing.T) {
+	form := newEditProviderForm(providerSummary{
+		Nickname: "deepseek", BaseURL: "https://api.deepseek.com",
+		Catalog: "deepseek", Model: "deepseek-chat", Context: 65536,
+	}, 80)
+	if form.inputs[providerFieldNickname].Value() != "deepseek" {
+		t.Fatal("nickname not prefilled")
+	}
+	if form.inputs[providerFieldBaseURL].Value() != "https://api.deepseek.com" {
+		t.Fatal("base URL not prefilled")
+	}
+	if form.inputs[providerFieldModel].Value() != "deepseek-chat" {
+		t.Fatal("model not prefilled")
+	}
+	if form.inputs[providerFieldContext].Value() != "65536" {
+		t.Fatalf("context = %q, want 65536", form.inputs[providerFieldContext].Value())
+	}
+	if !form.edit {
+		t.Fatal("edit form not flagged as edit")
+	}
+	// No API key required for an edit (stored credential is preserved).
+	values, err := form.values()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if values.Nickname != "deepseek" || values.APIKey != "" {
+		t.Fatalf("edit values = %#v", values)
+	}
+	// An explicitly-entered key is kept for rotation.
+	form.inputs[providerFieldAPIKey].SetValue("sk-new")
+	values, err = form.values()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if values.APIKey != "sk-new" {
+		t.Fatalf("rotated key = %q", values.APIKey)
+	}
+}
+
+func TestProviderSelectorEditAndDeleteKeys(t *testing.T) {
+	m := newTestModel()
+	m.providers = []providerSummary{{Nickname: "deepseek", Active: true, BaseURL: "https://api.deepseek.com", Model: "deepseek-chat"}}
+	m.openProviderSelector()
+	m.selector.list.Select(1) // deepseek (0=environment, 1=deepseek, 2=connect)
+
+	// e opens the pre-filled edit form.
+	updated, _ := m.Update(tea.KeyPressMsg{Code: 'e'})
+	got := updated.(model)
+	if got.mode != modeConnectForm {
+		t.Fatalf("after e mode = %v, want modeConnectForm", got.mode)
+	}
+	if got.providerForm.edit != true {
+		t.Fatal("after e the form is not in edit mode")
+	}
+	if got.providerForm.inputs[providerFieldNickname].Value() != "deepseek" {
+		t.Fatalf("edit form nickname = %q", got.providerForm.inputs[providerFieldNickname].Value())
+	}
+
+	// Back in the provider selector, the first d press arms the delete.
+	m.mode = modeProviders
+	m.openProviderSelector()
+	m.selector.list.Select(1)
+	updated, _ = m.Update(tea.KeyPressMsg{Code: 'd'})
+	got = updated.(model)
+	if got.providerConfirmDelete != "deepseek" {
+		t.Fatalf("first d confirm = %q, want deepseek", got.providerConfirmDelete)
+	}
+
+	// A second d on the same provider confirms and re-arms control pending.
+	updated, _ = got.Update(tea.KeyPressMsg{Code: 'd'})
+	got = updated.(model)
+	if got.providerConfirmDelete != "" {
+		t.Fatalf("confirm left armed = %q", got.providerConfirmDelete)
+	}
+	if !got.controlPending {
+		t.Fatal("confirmed delete did not set controlPending")
+	}
+}
+
 func TestPasteRoutesToProviderFormNotChatInput(t *testing.T) {
 	m := newTestModel()
 	m.mode = modeConnectForm
