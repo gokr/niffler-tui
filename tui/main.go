@@ -2,7 +2,6 @@
 package main
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -12,7 +11,6 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
-	"regexp"
 	"strings"
 	"time"
 
@@ -35,7 +33,6 @@ const (
 	reconnectDelay   = 2 * time.Second
 	maxToolText      = 4000
 	maxInputHeight   = 8
-	maxHistory       = 200
 	defaultNATSURL   = "nats://127.0.0.1:4222"
 
 	// markdownSettleDelay is how long assistant output must be quiet before
@@ -45,8 +42,6 @@ const (
 	// markdown once the model pauses (or the round ends).
 	markdownSettleDelay = 300 * time.Millisecond
 )
-
-var invalidSessionID = regexp.MustCompile(`[^A-Za-z0-9_-]`)
 
 type usageStats struct {
 	PromptTokens     int `json:"prompt_tokens"`
@@ -951,105 +946,6 @@ func (m model) inputAtBottom() bool {
 	return m.input.Line() == m.input.LineCount()-1 && info.RowOffset >= info.Height-1
 }
 
-// addHistory records a sent message, skipping empty entries and consecutive
-// duplicates, and caps the stored history. It reports whether an entry was
-// added so persistent history stays in sync with the in-memory list.
-func (m *model) addHistory(content string) bool {
-	if content == "" {
-		return false
-	}
-	if len(m.history) > 0 && m.history[len(m.history)-1] == content {
-		return false
-	}
-	m.history = append(m.history, content)
-	if len(m.history) > maxHistory {
-		m.history = m.history[len(m.history)-maxHistory:]
-	}
-	return true
-}
-
-// histPrev walks back through sent messages, snapshotting the in-progress
-// draft the first time so histNext can restore it.
-func (m *model) histPrev() {
-	if len(m.history) == 0 {
-		return
-	}
-	if m.histIdx == -1 {
-		m.draft = m.input.Value()
-		m.histIdx = len(m.history)
-	}
-	if m.histIdx > 0 {
-		m.histIdx--
-		m.input.SetValue(m.history[m.histIdx])
-	}
-}
-
-// histNext walks forward through sent messages, returning to the draft after
-// the newest entry.
-func (m *model) histNext() {
-	if m.histIdx == -1 {
-		return
-	}
-	if m.histIdx < len(m.history)-1 {
-		m.histIdx++
-		m.input.SetValue(m.history[m.histIdx])
-	} else {
-		m.histIdx = -1
-		m.input.SetValue(m.draft)
-	}
-}
-
-// searchStart enters reverse history search. Subsequent key presses are
-// handled by handleSearchKey until the search is accepted or cancelled.
-func (m *model) searchStart() {
-	m.searchActive = true
-	m.searchQuery = ""
-	m.searchIdx = len(m.history)
-	m.draft = m.input.Value()
-	m.searchFindPrev()
-}
-
-// searchFindPrev moves to the most recent history entry (older than the
-// current match, or from the end when the query just changed) containing the
-// query. Returns false when there is no (further) match.
-func (m *model) searchFindPrev() bool {
-	query := strings.ToLower(m.searchQuery)
-	if query == "" {
-		m.searchIdx = -1
-		m.input.SetValue(m.draft)
-		return false
-	}
-	for i := m.searchIdx - 1; i >= 0; i-- {
-		if strings.Contains(strings.ToLower(m.history[i]), query) {
-			m.searchIdx = i
-			m.input.SetValue(m.history[i])
-			return true
-		}
-	}
-	m.searchIdx = -1
-	m.input.SetValue(m.draft)
-	return false
-}
-
-func (m *model) searchAccept() {
-	m.searchActive = false
-	m.searchQuery = ""
-	if m.searchIdx >= 0 {
-		m.histIdx = m.searchIdx
-	} else {
-		m.histIdx = -1
-	}
-	m.searchIdx = -1
-}
-
-func (m *model) searchCancel() {
-	m.searchActive = false
-	m.searchQuery = ""
-	m.searchIdx = -1
-	m.histIdx = -1
-	m.input.SetValue(m.draft)
-}
-
 func (m *model) handleSearchKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "ctrl+c":
@@ -1250,115 +1146,6 @@ func truncate(s string, limit int) string {
 		return ""
 	}
 	return ansi.Truncate(s, limit, "…")
-}
-
-// historyFilePath returns the per-session persistent history file
-// (JSONL, one sent message per line). Empty when the user state directory
-// is unavailable.
-func historyFilePath(session string) string {
-	// Go has no os.UserStateDir; resolve $XDG_STATE_HOME ourselves with the
-	// conventional fallback.
-	dir := strings.TrimSpace(os.Getenv("XDG_STATE_HOME"))
-	if dir == "" {
-		home, err := os.UserHomeDir()
-		if err != nil {
-			return ""
-		}
-		dir = filepath.Join(home, ".local", "state")
-	}
-	return filepath.Join(dir, "niffler-tui", "history-"+sanitizeSessionID(session)+".jsonl")
-}
-
-// loadHistory reads the persistent history file, keeping at most maxHistory
-// entries. Malformed/empty lines and consecutive duplicates are dropped; a
-// changed file is rewritten trimmed. Errors are swallowed: history is best
-// effort.
-func loadHistory(path string) []string {
-	if path == "" {
-		return nil
-	}
-	f, err := os.Open(path)
-	if err != nil {
-		return nil
-	}
-	defer f.Close()
-
-	var entries []string
-	dirty := false
-	reader := bufio.NewReader(f)
-	for {
-		line, readErr := reader.ReadBytes('\n')
-		line = bytes.TrimSpace(line)
-		if len(line) > 0 {
-			var entry string
-			if err := json.Unmarshal(line, &entry); err != nil || entry == "" {
-				dirty = true
-			} else if len(entries) > 0 && entries[len(entries)-1] == entry {
-				dirty = true
-			} else {
-				entries = append(entries, entry)
-			}
-		} else if readErr == nil {
-			dirty = true
-		}
-		if readErr != nil {
-			break
-		}
-	}
-	if len(entries) > maxHistory {
-		entries = entries[len(entries)-maxHistory:]
-		dirty = true
-	}
-	if dirty {
-		writeHistory(path, entries)
-	}
-	return entries
-}
-
-// appendHistoryEntry appends one sent message to the persistent history
-// file, creating it if needed. Errors are ignored.
-func appendHistoryEntry(path, content string) {
-	if path == "" || content == "" {
-		return
-	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		return
-	}
-	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
-	if err != nil {
-		return
-	}
-	defer f.Close()
-	_ = f.Chmod(0o600)
-	line, err := json.Marshal(content)
-	if err != nil {
-		return
-	}
-	_, _ = f.Write(append(line, '\n'))
-}
-
-// writeHistory rewrites the history file with the given entries.
-func writeHistory(path string, entries []string) {
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		return
-	}
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o600)
-	if err != nil {
-		return
-	}
-	defer f.Close()
-	_ = f.Chmod(0o600)
-	for _, entry := range entries {
-		line, err := json.Marshal(entry)
-		if err != nil {
-			continue
-		}
-		_, _ = f.Write(append(line, '\n'))
-	}
-}
-
-func sanitizeSessionID(id string) string {
-	return invalidSessionID.ReplaceAllString(id, "-")
 }
 
 func resolveNATSURL() string {

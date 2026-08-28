@@ -13,6 +13,7 @@
         "tui/backend.go",
         "tui/context_status.go",
         "tui/controls.go",
+        "tui/history.go",
         "tui/provider_form.go",
         "tui/selectors.go",
         "tui/toolcard.go",
