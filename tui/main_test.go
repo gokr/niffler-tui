@@ -1054,12 +1054,12 @@ func TestApprovalResolvedDismisses(t *testing.T) {
 func TestApprovalKeysRouteWhilePending(t *testing.T) {
 	m := newTestModel()
 	// Enter with no pending approval must NOT be consumed.
-	if m.approvalKey(tea.KeyPressMsg{}) {
+	if _, consumed := m.approvalKey(tea.KeyPressMsg{}); consumed {
 		t.Fatal("empty key consumed without pending approval")
 	}
 
 	m.applyApprovalEvent(approvalEventMsg{req: approvalRequest{id: "k1", tool: "bash", sessionID: "s1"}})
-	if !m.approvalKey(tea.KeyPressMsg{Code: tea.KeyEnter}) {
+	if _, consumed := m.approvalKey(tea.KeyPressMsg{Code: tea.KeyEnter}); !consumed {
 		t.Fatal("enter not consumed by pending approval")
 	}
 	if len(m.approvals) != 0 {
@@ -1067,7 +1067,7 @@ func TestApprovalKeysRouteWhilePending(t *testing.T) {
 	}
 
 	m.applyApprovalEvent(approvalEventMsg{req: approvalRequest{id: "k2", tool: "bash", sessionID: "s1"}})
-	if !m.approvalKey(tea.KeyPressMsg{Code: tea.KeyEsc}) {
+	if _, consumed := m.approvalKey(tea.KeyPressMsg{Code: tea.KeyEsc}); !consumed {
 		t.Fatal("esc not consumed by pending approval")
 	}
 	if len(m.approvals) != 0 {
@@ -1075,7 +1075,7 @@ func TestApprovalKeysRouteWhilePending(t *testing.T) {
 	}
 
 	m.applyApprovalEvent(approvalEventMsg{req: approvalRequest{id: "k3", tool: "bash", sessionID: "s1"}})
-	if !m.approvalKey(tea.KeyPressMsg{Code: 'a'}) {
+	if _, consumed := m.approvalKey(tea.KeyPressMsg{Code: 'a'}); !consumed {
 		t.Fatal("'a' not consumed by pending approval")
 	}
 	if !m.isAutoApproved("s1", "bash") {
@@ -1367,17 +1367,21 @@ func TestRuntimeOutputLimitSurfaced(t *testing.T) {
 }
 
 func TestRememberAutoApprovePersistsToStore(t *testing.T) {
-	// With a live component, rememberAutoApprove writes the decision to the
-	// store so the core gate honors it for every client (no dialog at all).
-	// In tests comp is nil, so the write is skipped but the in-memory list
-	// still records it.
+	// With a live component, rememberAutoApprove returns the command that
+	// writes the decision to the store so the core gate honors it for every
+	// client (no dialog at all). In tests comp is nil, so no command is
+	// returned but the in-memory list still records it.
 	m := newTestModel()
-	m.rememberAutoApprove("sess-1", "bash")
+	if cmd := m.rememberAutoApprove("sess-1", "bash"); cmd != nil {
+		t.Fatal("persist command expected only with a live component")
+	}
 	if !m.isAutoApproved("sess-1", "bash") {
 		t.Fatal("in-memory auto-approve not recorded")
 	}
 	// Idempotent: a second remember does not duplicate.
-	m.rememberAutoApprove("sess-1", "bash")
+	if cmd := m.rememberAutoApprove("sess-1", "bash"); cmd != nil {
+		t.Fatal("persist command expected only with a live component")
+	}
 	if len(m.autoApproved["sess-1"]) != 1 {
 		t.Fatalf("auto-approve duplicated: %v", m.autoApproved["sess-1"])
 	}

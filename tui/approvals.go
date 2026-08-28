@@ -16,6 +16,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -65,43 +66,44 @@ func parseApprovalPayload(payload json.RawMessage) (approvalRequest, bool) {
 // applyApprovalEvent runs in Update: auto-approved tools are answered
 // immediately, directed requests are acked and queued, broadcast requests
 // are queued without an ack.
-func (m *model) applyApprovalEvent(msg approvalEventMsg) {
+func (m *model) applyApprovalEvent(msg approvalEventMsg) tea.Cmd {
 	req := msg.req
 	if m.isAutoApproved(req.sessionID, req.tool) {
 		// A decision alone resolves the gate; no ack needed.
 		m.replyApproval(req.id, false, true)
-		return
+		return nil
 	}
 	if msg.directed {
 		// Ack so the runner knows a human is being asked, then show the modal.
 		m.replyApproval(req.id, true, false)
 	}
 	m.approvals = append(m.approvals, req)
+	return nil
 }
 
 // applyApprovalResolved removes a request whose gate reached a verdict.
 func (m *model) applyApprovalResolved(id string) {
-	kept := m.approvals[:0]
-	for _, req := range m.approvals {
-		if req.id != id {
-			kept = append(kept, req)
-		}
-	}
-	m.approvals = kept
+	m.approvals = slices.DeleteFunc(m.approvals, func(req approvalRequest) bool {
+		return req.id == id
+	})
 }
 
 // answerApproval replies to the front queued request; auto also remembers
-// the tool for the rest of the session (per-conversation auto-approve).
-func (m *model) answerApproval(ok, auto bool) {
+// the tool for the rest of the session (per-conversation auto-approve). The
+// returned command persists the new auto-approve to the store off the
+// update loop; the UI must not block on it.
+func (m *model) answerApproval(ok, auto bool) tea.Cmd {
 	if len(m.approvals) == 0 {
-		return
+		return nil
 	}
 	req := m.approvals[0]
+	var persist tea.Cmd
 	if auto {
-		m.rememberAutoApprove(req.sessionID, req.tool)
+		persist = m.rememberAutoApprove(req.sessionID, req.tool)
 	}
 	m.replyApproval(req.id, false, ok)
 	m.approvals = m.approvals[1:]
+	return persist
 }
 
 // replyApproval publishes one frame of the reply protocol on
@@ -121,36 +123,36 @@ func (m *model) replyApproval(id string, ack, ok bool) {
 }
 
 func (m *model) isAutoApproved(sessionID, tool string) bool {
-	for _, t := range m.autoApproved[sessionID] {
-		if t == tool {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(m.autoApproved[sessionID], tool)
 }
 
-func (m *model) rememberAutoApprove(sessionID, tool string) {
+// rememberAutoApprove records a per-session auto-approve in memory and
+// returns a command that persists it to the store so the core's gate honors
+// it for every client (no dialog at all, not even a flash). The store put
+// must not run inside Update; the command moves it off the update loop.
+// Best effort: the in-memory list still covers this session if the store is
+// unreachable. Idempotent; nil session ids are ignored.
+func (m *model) rememberAutoApprove(sessionID, tool string) tea.Cmd {
 	if sessionID == "" {
-		return
+		return nil
 	}
-	for _, t := range m.autoApproved[sessionID] {
-		if t == tool {
-			return
-		}
+	if slices.Contains(m.autoApproved[sessionID], tool) {
+		return nil
 	}
 	if m.autoApproved == nil {
 		m.autoApproved = map[string][]string{}
 	}
 	m.autoApproved[sessionID] = append(m.autoApproved[sessionID], tool)
-	// Persist so the core's gate honors it for every client (no dialog at
-	// all, not even a flash). Best effort: the in-memory list still covers
-	// this session if the store is unreachable.
-	if m.comp != nil {
+	if m.comp == nil {
+		return nil
+	}
+	return func() tea.Msg {
 		_, _ = m.comp.Request("store", "put", map[string]any{
 			"kind":  "approval",
 			"id":    sessionID + ":" + tool,
 			"value": map[string]any{"tool": tool, "sessionId": sessionID},
 		}, 5*time.Second)
+		return nil
 	}
 }
 
@@ -206,23 +208,21 @@ func (m *model) approvalBox() string {
 }
 
 // approvalKey takes Enter/Esc/"a" while a gate prompt is pending. Returns
-// true when the key was consumed.
-func (m *model) approvalKey(msg tea.KeyPressMsg) bool {
+// the key's follow-up command (if any) and whether the key was consumed.
+func (m *model) approvalKey(msg tea.KeyPressMsg) (tea.Cmd, bool) {
 	if len(m.approvals) == 0 {
-		return false
+		return nil, false
 	}
 	switch msg.String() {
 	case "enter":
-		m.answerApproval(true, false)
-		return true
+		return m.answerApproval(true, false), true
 	case "esc":
-		m.answerApproval(false, false)
-		return true
+		return m.answerApproval(false, false), true
 	case "a":
 		if m.approvals[0].sessionID != "" {
-			m.answerApproval(true, true)
+			return m.answerApproval(true, true), true
 		}
-		return true
+		return nil, true
 	}
-	return false
+	return nil, false
 }

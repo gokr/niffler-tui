@@ -354,15 +354,18 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmds []tea.Cmd
 
 	// A pending approval is a modal gate: Enter/Esc/"a" answer it no matter
-	// which mode or control would otherwise consume them.
-	if kp, ok := msg.(tea.KeyPressMsg); ok && m.approvalKey(kp) {
-		return m, nil
+	// which mode or control would otherwise consume them. consumed reports
+	// the key was taken; cmd carries any follow-up (persisting a fresh
+	// auto-approve) that must run off the update loop.
+	if kp, ok := msg.(tea.KeyPressMsg); ok {
+		if cmd, consumed := m.approvalKey(kp); consumed {
+			return m, cmd
+		}
 	}
 
 	switch msg := msg.(type) {
 	case approvalEventMsg:
-		m.applyApprovalEvent(msg)
-		return m, nil
+		return m, m.applyApprovalEvent(msg)
 
 	case approvalResolvedMsg:
 		m.applyApprovalResolved(msg.id)
