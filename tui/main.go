@@ -48,43 +48,6 @@ const (
 
 var invalidSessionID = regexp.MustCompile(`[^A-Za-z0-9_-]`)
 
-type blockKind int
-
-const (
-	blockUser blockKind = iota
-	blockAssistant
-	blockThinking
-	blockTool
-	blockMeta
-	blockError
-)
-
-type transcriptBlock struct {
-	kind blockKind
-	text string
-
-	// run holds the grouped tool-run card data when kind == blockTool (and
-	// the block was created by the card path rather than addBlock).
-	run *toolRun
-
-	// finalized marks an assistant block as complete: its text was set by the
-	// round's final assistant event (full content). While false the block is
-	// the active streamed partial, which token frames keep appending to. The
-	// distinction lets the assistant event and late token frames coalesce
-	// into the right block even when tool-call events arrive out of order
-	// (NATS orders per subject, not across them), instead of opening a fresh
-	// duplicate block.
-	finalized bool
-
-	// rendered is the cached terminal rendering of text, used by the
-	// transcript renderer. renderedOK reports whether the cache is valid for
-	// renderedText; blocks are re-rendered when the text changes or the
-	// renderer is rebuilt (e.g. on resize).
-	rendered     string
-	renderedText string
-	renderedOK   bool
-}
-
 type usageStats struct {
 	PromptTokens     int `json:"prompt_tokens"`
 	CompletionTokens int `json:"completion_tokens"`
@@ -188,6 +151,12 @@ type model struct {
 	// Sessions (conversation switcher). sessionsLoading shows a spinner in
 	// the /session selector while the store list is fetched.
 	sessionsLoading bool
+	// transcript is the cached joined rendering of all blocks (see
+	// renderTranscript); viewportContent is the last string pushed into the
+	// viewport, so syncViewport can skip SetContent when nothing changed.
+	transcript      string
+	transcriptDirty bool
+	viewportContent string
 
 	// Markdown renderer for assistant output. Rebuilt when the viewport
 	// width changes; block render caches are invalidated on rebuild.
@@ -465,7 +434,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.hadAssistant = false
 			m.assistantIdx = -1
 			m.thinkingIdx = -1
-			m.streaming = false
+			m.setStreaming(false)
 			m.roundClosed = false
 			m.addBlock(blockUser, content)
 			m.layout()
@@ -723,7 +692,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			break
 		}
 		if time.Since(m.lastTokenAt) >= markdownSettleDelay {
-			m.streaming = false
+			m.setStreaming(false)
 			m.syncViewport(false)
 		} else {
 			// Tokens are still flowing; re-arm the settle tick.
@@ -764,7 +733,7 @@ func (m *model) applySessionEvent(msg sessionEventMsg) tea.Cmd {
 		if m.roundClosed {
 			return nil
 		}
-		m.streaming = true
+		m.setStreaming(true)
 		m.lastTokenAt = time.Now()
 		if event.Reasoning != "" {
 			m.appendStreamingText(blockThinking, &m.thinkingIdx, event.Reasoning)
@@ -776,7 +745,7 @@ func (m *model) applySessionEvent(msg sessionEventMsg) tea.Cmd {
 		renderCmd = m.scheduleRender()
 
 	case "assistant":
-		m.streaming = false
+		m.setStreaming(false)
 		m.updateRuntimeFromEvent(event)
 		if event.Content != "" {
 			// Finalize the round's streamed block: replace its partial text
@@ -791,6 +760,7 @@ func (m *model) applySessionEvent(msg sessionEventMsg) tea.Cmd {
 			}
 			m.blocks[idx].text = event.Content
 			m.blocks[idx].finalized = true
+			m.markTranscriptDirty()
 			m.assistantIdx = idx
 			m.hadAssistant = true
 		}
@@ -801,7 +771,7 @@ func (m *model) applySessionEvent(msg sessionEventMsg) tea.Cmd {
 		m.thinkingIdx = -1
 		m.roundClosed = false
 		// The assistant round ended; render its markdown immediately.
-		m.streaming = false
+		m.setStreaming(false)
 		m.appendToolCall(toolCall{
 			name:   event.Tool,
 			args:   event.Args,
@@ -864,6 +834,7 @@ func (m *model) appendStreamingText(kind blockKind, idx *int, text string) {
 		target = len(m.blocks) - 1
 	}
 	m.blocks[target].text += text
+	m.markTranscriptDirty()
 	*idx = target
 }
 
@@ -920,7 +891,7 @@ func (m *model) finishTurn(reply, errorText string) {
 	m.stopArmed = false
 	m.stopping = false
 	m.busy = false
-	m.streaming = false
+	m.setStreaming(false)
 	m.roundClosed = true
 	if errorText != "" {
 		m.addUniqueBlock(blockError, errorText)
@@ -930,6 +901,17 @@ func (m *model) finishTurn(reply, errorText string) {
 	}
 	m.assistantIdx = -1
 	m.thinkingIdx = -1
+}
+
+// setStreaming flips the streaming flag, invalidating the transcript cache
+// on transition: streaming changes how the active assistant block renders
+// (plain text while tokens flow, markdown once output settles).
+func (m *model) setStreaming(streaming bool) {
+	if m.streaming == streaming {
+		return
+	}
+	m.streaming = streaming
+	m.markTranscriptDirty()
 }
 
 // scheduleRender arms the markdown settle tick. The tick re-renders the
@@ -967,20 +949,6 @@ func (m model) inputAtTop() bool {
 func (m model) inputAtBottom() bool {
 	info := m.input.LineInfo()
 	return m.input.Line() == m.input.LineCount()-1 && info.RowOffset >= info.Height-1
-}
-
-func (m *model) addBlock(kind blockKind, text string) {
-	m.blocks = append(m.blocks, transcriptBlock{kind: kind, text: text})
-}
-
-func (m *model) addUniqueBlock(kind blockKind, text string) {
-	if len(m.blocks) > 0 {
-		last := m.blocks[len(m.blocks)-1]
-		if last.kind == kind && last.text == text {
-			return
-		}
-	}
-	m.addBlock(kind, text)
 }
 
 // addHistory records a sent message, skipping empty entries and consecutive
@@ -1133,7 +1101,11 @@ func (m *model) layout() {
 
 func (m *model) syncViewport(forceBottom bool) {
 	follow := forceBottom || m.viewport.AtBottom()
-	m.viewport.SetContent(m.renderTranscript())
+	content := m.renderTranscript()
+	if content != m.viewportContent {
+		m.viewport.SetContent(content)
+		m.viewportContent = content
+	}
 	if follow {
 		m.viewport.GotoBottom()
 	}
@@ -1149,6 +1121,7 @@ func (m *model) ensureRenderer(width int) {
 	for i := range m.blocks {
 		m.blocks[i].renderedOK = false
 	}
+	m.markTranscriptDirty()
 
 	// WithEnvironmentConfig honors GLAMOUR_STYLE (default: dark).
 	r, err := glamour.NewTermRenderer(
@@ -1163,73 +1136,6 @@ func (m *model) ensureRenderer(width int) {
 		return
 	}
 	m.renderer = r
-}
-
-// renderBlock returns the terminal rendering of block i, re-rendering only
-// when the block text changed since the cached render or the renderer was
-// rebuilt. Assistant blocks are rendered as markdown; everything else is
-// plain text.
-func (m *model) renderBlock(i int) string {
-	block := &m.blocks[i]
-	if block.kind != blockAssistant {
-		return block.text
-	}
-	if block.renderedOK && block.renderedText == block.text {
-		return block.rendered
-	}
-	// While tokens are still streaming, keep showing plain text and defer
-	// the markdown render to the settle tick: re-rendering a large block
-	// with glamour on every token would stall the UI.
-	if m.renderer != nil && m.streaming {
-		return block.text
-	}
-	out := block.text
-	if m.renderer != nil {
-		if rendered, err := m.renderer.Render(block.text); err == nil {
-			out = strings.Trim(rendered, "\n")
-		}
-	}
-	block.rendered = out
-	block.renderedText = block.text
-	block.renderedOK = true
-	return out
-}
-
-// piece returns the terminal rendering of transcript block i — the exact
-// string renderTranscript joins (one blank line between blocks). Shared with
-// blockAtContentLine so mouse hit-testing matches what is on screen.
-func (m *model) piece(i int) string {
-	block := &m.blocks[i]
-	switch block.kind {
-	case blockUser:
-		return userStyle.Render(block.text)
-	case blockAssistant:
-		return m.renderBlock(i)
-	case blockThinking:
-		// Render reasoning in Pi style: pure gray italic, no label.
-		return thinkingStyle.Render(block.text)
-	case blockTool:
-		if block.run != nil {
-			return renderToolRun(block.run)
-		}
-		return toolStyle.Render("tool> " + block.text)
-	case blockMeta:
-		return metaStyle.Render(block.text)
-	case blockError:
-		return errorStyle.Render("error> " + block.text)
-	}
-	return block.text
-}
-
-func (m *model) renderTranscript() string {
-	var out strings.Builder
-	for i := range m.blocks {
-		if i > 0 {
-			out.WriteString("\n\n")
-		}
-		out.WriteString(m.piece(i))
-	}
-	return out.String()
 }
 
 func (m model) searchView() string {
@@ -1249,12 +1155,12 @@ func (m model) View() tea.View {
 	makeView := func(content string) tea.View {
 		view := tea.NewView(content)
 		view.AltScreen = true
-		// Mouse tracking is off by default so the terminal's native
-		// click-and-drag text selection keeps working (copy/paste). With
-		// /mouse on, CellMotion captures clicks (to expand tool-run cards)
-		// and the wheel; native selection then needs Shift+drag. The
-		// transcript stays keyboard-scrollable (PgUp/PgDn, Ctrl+Up/Ctrl+Down)
-		// either way.
+		// Mouse tracking is on by default (see /mouse): the wheel scrolls
+		// the transcript and clicking a tool-run card expands it; native
+		// selection then needs Shift+drag. With /mouse off the terminal's
+		// native click-and-drag text selection works untouched. The
+		// transcript stays keyboard-scrollable (PgUp/PgDn,
+		// Ctrl+Up/Ctrl+Down) either way.
 		if m.mouse {
 			view.MouseMode = tea.MouseModeCellMotion
 		}

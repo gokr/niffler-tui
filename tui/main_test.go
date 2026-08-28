@@ -338,7 +338,11 @@ func TestMarkdownBlockCacheInvalidatedOnAppend(t *testing.T) {
 	if !m.blocks[0].renderedOK {
 		t.Fatal("block was not cached after render")
 	}
-	m.blocks[0].text += " and more"
+	// Production appends go through the streaming path, which marks the
+	// transcript cache dirty; the block cache also keys on the text itself
+	// and must re-render on the changed value.
+	idx := 0
+	m.appendStreamingText(blockAssistant, &idx, " and more")
 	m.renderTranscript()
 	if !m.blocks[0].renderedOK {
 		t.Fatal("block cache flag lost after re-render")
@@ -1381,5 +1385,35 @@ func TestRememberAutoApprovePersistsToStore(t *testing.T) {
 	m.rememberAutoApprove("", "bash")
 	if m.isAutoApproved("", "bash") {
 		t.Fatal("empty session auto-approved")
+	}
+}
+
+func TestTranscriptCacheInvalidatedByMutations(t *testing.T) {
+	m := newTestModel()
+	m.addBlock(blockUser, "first")
+	first := m.renderTranscript()
+	if first == "" {
+		t.Fatal("empty transcript for one block")
+	}
+	if m.transcriptDirty {
+		t.Fatal("render did not clear the dirty flag")
+	}
+	if again := m.renderTranscript(); again != first {
+		t.Fatal("cached transcript changed without mutation")
+	}
+
+	m.addBlock(blockMeta, "second")
+	second := m.renderTranscript()
+	if second == first || !strings.Contains(second, "second") {
+		t.Fatalf("transcript did not reflect appended block: %q", second)
+	}
+
+	// A tool-run collapse toggle mutates a middle block and must invalidate.
+	m.blocks = append(m.blocks, transcriptBlock{kind: blockTool, run: &toolRun{calls: []toolCall{{name: "bash"}}, collapsed: true}})
+	collapsed := m.renderTranscript()
+	m.toggleAllToolRuns()
+	expanded := m.renderTranscript()
+	if expanded == collapsed {
+		t.Fatal("toggle did not invalidate the transcript cache")
 	}
 }

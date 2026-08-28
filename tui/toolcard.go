@@ -57,20 +57,27 @@ func (m *model) appendToolCall(call toolCall) {
 	n := len(m.blocks)
 	if n > 0 && m.blocks[n-1].kind == blockTool && m.blocks[n-1].run != nil {
 		m.blocks[n-1].run.calls = append(m.blocks[n-1].run.calls, call)
+		m.markTranscriptDirty()
 		return
 	}
 	m.blocks = append(m.blocks, transcriptBlock{
 		kind: blockTool,
 		run:  &toolRun{calls: []toolCall{call}, collapsed: true},
 	})
+	m.markTranscriptDirty()
 }
 
 // toggleAllToolRuns flips every tool-run card between collapsed and expanded.
 func (m *model) toggleAllToolRuns() {
+	changed := false
 	for i := range m.blocks {
 		if m.blocks[i].kind == blockTool && m.blocks[i].run != nil {
 			m.blocks[i].run.collapsed = !m.blocks[i].run.collapsed
+			changed = true
 		}
+	}
+	if changed {
+		m.markTranscriptDirty()
 	}
 }
 
@@ -144,6 +151,7 @@ func (m *model) handleMouseClick(msg tea.MouseClickMsg) {
 	}
 	if b := &m.blocks[idx]; b.kind == blockTool && b.run != nil {
 		b.run.collapsed = !b.run.collapsed
+		m.markTranscriptDirty()
 		m.syncViewport(false)
 	}
 }
