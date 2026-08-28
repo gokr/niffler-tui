@@ -899,7 +899,7 @@ func TestProviderChangeRetainsConversationModelAndClearsFormSecret(t *testing.T)
 		t.Fatal("provider action retained the API key in UI state")
 	}
 
-	updated, _ = got.Update(providerBusEventMsg{Kind: "switch"})
+	updated, _ = got.Update(providerBusEventMsg{})
 	got = updated.(model)
 	if got.modelOverride != "conversation-model" {
 		t.Fatalf("provider event erased session model: %q", got.modelOverride)
@@ -911,7 +911,7 @@ func TestBootstrapFallsBackToPersistedRuntimeMetadata(t *testing.T) {
 	updated, _ := m.Update(bootstrapMsg{
 		ProviderStatus: providerStatusResponse{Source: "store", Provider: providerSummary{Nickname: "work"}},
 		Conversation: conversationState{
-			Found: true, ModelOverride: "chosen", Provider: "old-work",
+			ModelOverride: "chosen", Provider: "old-work",
 			Model: "chosen", Context: 200_000, ContextUsed: 50_000,
 		},
 		Warnings: []string{"llm.llm_resolve unavailable"},

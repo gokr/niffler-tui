@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
@@ -13,29 +14,30 @@ import (
 
 const controlTimeout = 10 * time.Second
 
+// okResponse is the minimal envelope of backend RPC results that carry only
+// a success flag.
+type okResponse struct {
+	OK bool `json:"ok"`
+}
+
 type providerSummary struct {
 	Nickname    string `json:"nickname"`
 	BaseURL     string `json:"baseUrl"`
 	Model       string `json:"model"`
 	Catalog     string `json:"catalog"`
 	Context     int    `json:"context"`
-	Plugin      string `json:"plugin"`
 	Active      bool   `json:"active"`
-	HasKey      bool   `json:"hasKey"`
 	StripPrefix bool   `json:"stripPrefix"`
 }
 
 type providerListResponse struct {
 	Providers []providerSummary `json:"providers"`
-	Active    string            `json:"active"`
-	Count     int               `json:"count"`
 }
 
 type providerStatusResponse struct {
 	OK       bool            `json:"ok"`
 	Source   string          `json:"source"`
 	Provider providerSummary `json:"provider"`
-	Error    string          `json:"error"`
 }
 
 type runtimeResolution struct {
@@ -48,24 +50,19 @@ type runtimeResolution struct {
 	ContextSource  string `json:"contextSource"`
 	Output         int    `json:"output"`
 	OutputSource   string `json:"outputSource"`
-	HasKey         bool   `json:"hasKey"`
 }
 
 type catalogProvider struct {
-	ID         string   `json:"id"`
-	Name       string   `json:"name"`
-	API        string   `json:"api"`
-	Doc        string   `json:"doc"`
-	NPM        string   `json:"npm"`
-	Env        []string `json:"env"`
-	Configured bool     `json:"configured"`
-	ModelCount int      `json:"modelCount"`
+	ID         string `json:"id"`
+	Name       string `json:"name"`
+	API        string `json:"api"`
+	NPM        string `json:"npm"`
+	Configured bool   `json:"configured"`
+	ModelCount int    `json:"modelCount"`
 }
 
 type catalogProvidersResponse struct {
 	Providers []catalogProvider `json:"providers"`
-	Count     int               `json:"count"`
-	Total     int               `json:"total"`
 }
 
 type modelLimit struct {
@@ -73,35 +70,19 @@ type modelLimit struct {
 	Output  int `json:"output"`
 }
 
-type modelCost struct {
-	Input     float64 `json:"input"`
-	Output    float64 `json:"output"`
-	Reasoning float64 `json:"reasoning"`
-}
-
 type modelSummary struct {
-	ID          string     `json:"id"`
-	Name        string     `json:"name"`
-	Description string     `json:"description"`
-	Family      string     `json:"family"`
-	Provider    string     `json:"provider"`
-	Reference   string     `json:"reference"`
-	Status      string     `json:"status"`
-	Reasoning   bool       `json:"reasoning"`
-	ToolCall    bool       `json:"tool_call"`
-	Limit       modelLimit `json:"limit"`
-	Cost        modelCost  `json:"cost"`
+	ID        string     `json:"id"`
+	Name      string     `json:"name"`
+	Reasoning bool       `json:"reasoning"`
+	ToolCall  bool       `json:"tool_call"`
+	Limit     modelLimit `json:"limit"`
 }
 
 type modelsResponse struct {
-	Models    []modelSummary `json:"models"`
-	Count     int            `json:"count"`
-	Total     int            `json:"total"`
-	Truncated bool           `json:"truncated"`
+	Models []modelSummary `json:"models"`
 }
 
 type conversationState struct {
-	Found         bool
 	ModelOverride string
 	Provider      string
 	Model         string
@@ -136,14 +117,16 @@ type catalogProvidersMsg struct {
 type modelsLoadedMsg struct {
 	Catalog string
 	Models  []modelSummary
-	Total   int
 	Err     error
 }
 
 type providerActionMsg struct {
 	Action   string
 	Nickname string
-	Err      error
+	// Detail carries action-specific context for the status label (e.g. the
+	// new strip-prefix state for the "strip" action).
+	Detail string
+	Err    error
 }
 
 type modelActionMsg struct {
@@ -154,9 +137,9 @@ type modelActionMsg struct {
 	Err      error
 }
 
-type providerBusEventMsg struct {
-	Kind string
-}
+// providerBusEventMsg signals a change on ev.provider.>; the client refreshes
+// provider and runtime state in response.
+type providerBusEventMsg struct{}
 
 type modelsCatalogUpdatedMsg struct{}
 
@@ -223,8 +206,8 @@ func loadConversationState(comp *sdk.Component, session string) (conversationSta
 		return conversationState{}, nil
 	}
 	return conversationState{
-		Found: true, ModelOverride: response.Value.ModelOverride,
-		Provider: response.Value.Provider, Model: response.Value.Model,
+		ModelOverride: response.Value.ModelOverride,
+		Provider:      response.Value.Provider, Model: response.Value.Model,
 		Context: response.Value.Context, ContextUsed: response.Value.ContextUsed,
 		PromptTokens: response.Value.PromptTokens,
 	}, nil
@@ -249,9 +232,8 @@ type sessionListMsg struct {
 type sessionRow struct {
 	ID    string `json:"id"`
 	Value struct {
-		Title         string  `json:"title"`
-		CreatedAt     float64 `json:"createdAt"`
-		ModelOverride string  `json:"modelOverride"`
+		Title     string  `json:"title"`
+		CreatedAt float64 `json:"createdAt"`
 	} `json:"value"`
 }
 
@@ -284,26 +266,41 @@ func sessionListCmd(comp *sdk.Component) tea.Cmd {
 	}
 }
 
+// bootstrapBackendCmd loads the backend state the header and controls need.
+// The three independent lookups run concurrently; the conversation state and
+// the runtime resolution are sequential because the resolution takes the
+// persisted conversation model override as its argument.
 func bootstrapBackendCmd(comp *sdk.Component, session string) tea.Cmd {
 	return func() tea.Msg {
 		var msg bootstrapMsg
-		providers, err := loadProviderList(comp)
-		if err != nil {
-			msg.Warnings = append(msg.Warnings, err.Error())
+		var (
+			providers  providerListResponse
+			status     providerStatusResponse
+			catalog    []catalogProvider
+			listErr    error
+			statusErr  error
+			catalogErr error
+		)
+		var wg sync.WaitGroup
+		wg.Add(3)
+		go func() { defer wg.Done(); providers, listErr = loadProviderList(comp) }()
+		go func() { defer wg.Done(); status, statusErr = loadProviderStatus(comp) }()
+		go func() { defer wg.Done(); catalog, catalogErr = loadCatalogProviders(comp) }()
+		wg.Wait()
+		if listErr != nil {
+			msg.Warnings = append(msg.Warnings, listErr.Error())
 		} else {
 			msg.Providers = providers
 		}
-		status, err := loadProviderStatus(comp)
-		if err != nil {
-			msg.Warnings = append(msg.Warnings, err.Error())
+		if statusErr != nil {
+			msg.Warnings = append(msg.Warnings, statusErr.Error())
 		} else {
 			msg.ProviderStatus = status
 		}
-		catalogProviders, err := loadCatalogProviders(comp)
-		if err != nil {
-			msg.Warnings = append(msg.Warnings, err.Error())
+		if catalogErr != nil {
+			msg.Warnings = append(msg.Warnings, catalogErr.Error())
 		} else {
-			msg.CatalogProviders = catalogProviders
+			msg.CatalogProviders = catalog
 		}
 		conversation, err := loadConversationState(comp, session)
 		if err != nil {
@@ -350,7 +347,7 @@ func loadModelsCmd(comp *sdk.Component, catalog string) tea.Cmd {
 			"provider": catalog, "status": "active", "input": "text",
 			"toolCall": true, "limit": 500,
 		}, &response)
-		return modelsLoadedMsg{Catalog: catalog, Models: response.Models, Total: response.Total, Err: err}
+		return modelsLoadedMsg{Catalog: catalog, Models: response.Models, Err: err}
 	}
 }
 
@@ -389,9 +386,7 @@ func setConversationModelCmd(comp *sdk.Component, session, selected, previous st
 
 func switchProviderCmd(comp *sdk.Component, nickname string) tea.Cmd {
 	return func() tea.Msg {
-		var response struct {
-			OK bool `json:"ok"`
-		}
+		var response okResponse
 		err := requestInto(comp, "provider", "provider_switch", map[string]any{"nickname": nickname}, &response)
 		if err == nil && !response.OK {
 			err = fmt.Errorf("provider switch failed")
@@ -404,16 +399,18 @@ func switchProviderCmd(comp *sdk.Component, nickname string) tea.Cmd {
 // (gateways that route on the canonical id, e.g. devpass).
 func setProviderStripCmd(comp *sdk.Component, nickname string, strip bool) tea.Cmd {
 	return func() tea.Msg {
-		var response struct {
-			OK bool `json:"ok"`
-		}
+		var response okResponse
 		err := requestInto(comp, "provider", "provider_update", map[string]any{
 			"nickname": nickname, "stripPrefix": strip,
 		}, &response)
 		if err == nil && !response.OK {
 			err = fmt.Errorf("provider update failed")
 		}
-		return providerActionMsg{Action: "strip", Nickname: nickname, Err: err}
+		detail := "off"
+		if strip {
+			detail = "on"
+		}
+		return providerActionMsg{Action: "strip", Nickname: nickname, Detail: detail, Err: err}
 	}
 }
 
@@ -438,9 +435,7 @@ type providerFormValues struct {
 
 func addProviderCmd(comp *sdk.Component, values providerFormValues) tea.Cmd {
 	return func() tea.Msg {
-		var response struct {
-			OK bool `json:"ok"`
-		}
+		var response okResponse
 		err := requestInto(comp, "provider", "provider_add", map[string]any{
 			"nickname": values.Nickname, "apiKey": values.APIKey,
 			"baseUrl": values.BaseURL, "catalog": values.Catalog,
@@ -458,9 +453,7 @@ func addProviderCmd(comp *sdk.Component, values providerFormValues) tea.Cmd {
 // which provider is currently active.
 func updateProviderCmd(comp *sdk.Component, values providerFormValues) tea.Cmd {
 	return func() tea.Msg {
-		var response struct {
-			OK bool `json:"ok"`
-		}
+		var response okResponse
 		args := map[string]any{
 			"nickname": values.Nickname,
 			"baseUrl":  values.BaseURL,
@@ -482,9 +475,7 @@ func updateProviderCmd(comp *sdk.Component, values providerFormValues) tea.Cmd {
 // active one, the backend falls back to another provider (or the environment).
 func removeProviderCmd(comp *sdk.Component, nickname string) tea.Cmd {
 	return func() tea.Msg {
-		var response struct {
-			OK bool `json:"ok"`
-		}
+		var response okResponse
 		err := requestInto(comp, "provider", "provider_remove", map[string]any{"nickname": nickname}, &response)
 		if err == nil && !response.OK {
 			err = fmt.Errorf("provider remove failed")

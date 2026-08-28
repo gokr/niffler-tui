@@ -589,6 +589,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			label = "provider removed: " + msg.Nickname
 		case "switch":
 			label = "provider selected: " + msg.Nickname
+		case "strip":
+			label = "strip model prefix: " + msg.Detail + " — " + msg.Nickname
+		case "environment":
+			label = "using environment default"
 		}
 		if msg.Err != nil {
 			if msg.Action == "add" || msg.Action == "update" {
@@ -1213,7 +1217,7 @@ func main() {
 	})
 	comp.On("ev.provider.>", func(_ *sdk.Component, subject string, _ json.RawMessage) {
 		if program != nil {
-			program.Send(providerBusEventMsg{Kind: strings.TrimPrefix(subject, "ev.provider.")})
+			program.Send(providerBusEventMsg{})
 		}
 	})
 	comp.On("ev.models.updated", func(_ *sdk.Component, _ string, _ json.RawMessage) {
