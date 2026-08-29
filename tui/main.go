@@ -1329,7 +1329,7 @@ func (m model) View() tea.View {
 	if m.slashComp.active {
 		parts = append(parts, m.slashCompletionView())
 	}
-	parts = append(parts, m.input.View(), metaStyle.Render(truncate(status, max(1, m.width-1))))
+	parts = append(parts, metaStyle.Render(truncate(status, max(1, m.width-1))))
 	return makeView(strings.Join(parts, "\n"))
 }
 
