@@ -48,6 +48,10 @@ func (m model) switchSession(id string) model {
 	m.input.SetValue("")
 	m.historyFile = historyFilePath(id)
 	m.history = loadHistory(m.historyFile)
+	// The viewport only repaints through syncViewport; without this the
+	// old conversation stays on screen after /new (or any session switch)
+	// until the next event that happens to re-sync.
+	m.syncViewport(true)
 	return m
 }
 
