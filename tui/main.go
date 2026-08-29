@@ -217,6 +217,7 @@ type model struct {
 
 var (
 	headerStyle      = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("6"))
+	inputBorderStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("6"))
 	userStyle        = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("12"))
 	assistantStyle   = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("10"))
 	thinkingStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("8")).Italic(true)
@@ -260,9 +261,7 @@ func newModel(ctx context.Context, comp *sdk.Component, session, natsURL string)
 	input.CharLimit = 0
 	input.MaxHeight = maxInputHeight
 	input.DynamicHeight = true
-	// MinHeight 3: a single-line input visually blends into the transcript
-	// above it — three rows keep the prompt clearly its own zone.
-	input.MinHeight = 3
+	input.MinHeight = 1
 	input.ShowLineNumbers = false
 	focusCmd := input.Focus()
 
@@ -1173,7 +1172,9 @@ func (m *model) layout() {
 	if m.searchActive || m.slashComp.active {
 		extra = 1
 	}
-	m.viewport.SetHeight(max(1, height-3-m.input.Height()-extra))
+	// The chat frame is header + viewport + blank spacer + rule + input +
+	// rule + status — six fixed rows besides the viewport and input.
+	m.viewport.SetHeight(max(1, height-6-m.input.Height()-extra))
 	if m.mode == modeProviders || m.mode == modeCatalogProviders || m.mode == modeModels || m.mode == modeSessions {
 		m.selector.setSize(width, max(6, height-4))
 	}
@@ -1318,7 +1319,10 @@ func (m model) View() tea.View {
 		status += " " + t(m.loc, "status.hint")
 	}
 
-	parts := []string{headerLine, m.viewport.View()}
+	// Pi-style input zone: a blank spacer keeps streamed output from
+	// crowding the input, and colored rules above/below mark it clearly.
+	rule := inputBorderStyle.Render(strings.Repeat("─", max(1, m.width)))
+	parts := []string{headerLine, m.viewport.View(), "", rule, m.input.View(), rule}
 	if m.searchActive {
 		parts = append(parts, m.searchView())
 	}
