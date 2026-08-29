@@ -48,52 +48,104 @@ Configuration:
 
 Keys:
 
-- `Enter`: send the current input
+- `Enter`: send the current input; while a turn is running, Enter steers it
+  instead — the message is folded into the live turn as a "Steer: …" line
 - `Alt+Enter` / `Ctrl+J`: insert a newline in the input (multiline messages)
 - `Up` / `Down`: move within the input; at the first/last line they walk
   sent-message history (readline-style), restoring the in-progress draft
 - `Ctrl+R`: reverse history search; type to filter, `Ctrl+R` again for older
   matches, `Enter` to accept, `Esc` to cancel
+- `Tab` / `Shift+Tab`: complete the slash command or argument under the
+  cursor — a dim candidate line appears above the input, `Tab`/`Shift+Tab`
+  cycle the highlighted candidate, `Esc` (or any other key) dismisses, and a
+  single candidate fills directly
 - `PgUp` / `PgDn`: page through the transcript
 - `Ctrl+Up` / `Ctrl+Down`: scroll the transcript one line at a time
-- `Ctrl+T`: expand/collapse all tool-run cards
-- Mouse wheel: scroll the transcript
+- `Ctrl+T`: cycle thinking visibility (`full` → `brief` → `off`)
+- `Ctrl+E`: cycle tool-card visibility (`brief` → `full` → `off`)
+- `Ctrl+G`: rotate the conversation's LLM thinking effort
+  (`auto` → `low` → `medium` → `high`)
+- `Esc`: while busy, the first press arms a "Stop?" prompt and the second
+  force-cancels the running turn
+- Mouse wheel: scroll the transcript; left click toggles a tool-run card
 - `Ctrl+C`: quit
 
 Consecutive tool calls in a turn are folded into a single collapsible
 "tool-run card" with a summary line (✓/⚠ glyph, call count, names), collapsed
-by default so long tool sequences stay unobtrusive. `Ctrl+T` expands or
-collapses every card. Mouse tracking is **on by default**: the wheel scrolls
-the transcript and a left click toggles the card under the cursor. Because
+by default so long tool sequences stay unobtrusive. `Ctrl+E` cycles every
+card between brief (collapsed), full (all expanded) and off (hidden); a left
+click toggles the card under the cursor. Mouse tracking is **on by default**:
+the wheel scrolls the transcript and clicking works as above. Because
 tracking captures clicks, copy/paste selection uses `Shift`+drag (standard
 for SGR mouse). `/mouse off` disables tracking entirely — native plain-drag
 copy comes back, but the app then receives no wheel events, so the transcript
 scrolls with `PgUp`/`PgDn`/`Ctrl+Up` and the wheel behaves as ordinary
 terminal scroll instead.
 
+### Thinking
+
+Model reasoning renders as gray italic text above each assistant reply,
+placed per round in the transcript. `Ctrl+T` cycles how much of it is shown:
+`full` (everything), `brief` (one dim `▸ thinking…` line per block) and `off`
+(hidden entirely). Reasoning is compacted for display: edge newlines are
+trimmed and interior blank-line runs collapse to a single newline, so
+paragraphs flow densely instead of stacking into walls of empty rows.
+
+`Ctrl+G` rotates the conversation's LLM thinking *effort* —
+`auto` (provider default) → `low` → `medium` → `high`. The selection is
+persisted per conversation like the model override, applies between turns,
+and is forwarded to the LLM as `reasoning_effort` only when set, so
+providers without reasoning-effort support never see it. The current
+selection shows in the header as `effort:auto|low|medium|high`.
+
 Local commands are handled by the TUI and are never sent to the model:
 
-- `/provider` — searchable global provider selector; also offers the
-  environment fallback and provider setup
+- `/provider` — searchable global provider selector (e: edit, d: remove);
+  also offers the environment fallback and provider setup
 - `/model` — searchable active-provider model catalog; selection is persisted
   immediately as this conversation's override (without an inference call)
 - `/connect` — masked provider connection form using models.dev templates or a
   custom OpenAI-compatible endpoint
 - `/status` — detailed effective provider/model/context provenance and usage
+- `/new [id]` — start a fresh conversation
+- `/session` — conversation browser; switch or resume sessions, or start a
+  new one
+- `/locale [en|zh|zh-TW]` — switch the UI language (persisted)
 - `/mouse [on|off]` — mouse tracking (default on: wheel+click work, copy is
   Shift+drag; off restores native plain-drag copy but no app wheel)
-- `/help` — command summary
+- `/help` — command summary, including registered plugin commands
+
+Tab completion works for command names and, where a command declares it, for
+argument values (inline candidates, or values fetched lazily from the
+declared source tool). Unknown commands suggest near-miss names.
 
 Selectors use `/` to filter, arrows to move, `Enter` to choose, and `Esc` to
 return to chat. The provider form masks its API-key field; slash commands and
 credentials are not written to sent-message history or the transcript.
 
-The second header line always shows the effective provider and model plus a
-context gauge. Context occupancy uses model-reported total tokens when
-available, survives session resume through Niffler's conversation metadata,
-and changes colour at the same 75% warning / 90% trimming thresholds as core.
-Provider selection changes Niffler's global default; model selection is scoped
-to the current conversation.
+The header shows the conversation id, the `think:`/`tool:`/`effort:` chips,
+and the effective provider and model plus a context gauge. Context occupancy
+uses model-reported total tokens when available, survives session resume
+through Niffler's conversation metadata, and changes colour at the same 75%
+warning / 90% trimming thresholds as core. Provider selection changes
+Niffler's global default; model selection is scoped to the current
+conversation.
+
+## Plugin slash commands
+
+Components can extend the TUI declaratively, with no UI code: a component
+registers its tools as usual and adds a `slash` section to its registration
+(`{name, description, tool, params[]}` with per-parameter completion
+sources; see `docs/WIRE.md` in the Niffler repository). Core validates the
+spec, checkpoints the merged table to the store, and announces
+`ev.catalog.updated` on every change; the TUI reads store-first and follows
+the event live.
+
+A registered command runs by parsing the command line against its declared
+params (positional values, `name=value`, bare bool flags, defaults) and
+calling the target tool; the result renders as a meta block in the
+transcript. Built-in commands shadow same-named registrations, and commands
+disappear automatically when their component departs.
 
 Assistant replies are rendered as Markdown (headings, bold, italics, lists,
 tables, and syntax-highlighted fenced code blocks via Glamour). While tokens
