@@ -191,7 +191,7 @@ var (
 func (m *model) approvalBox() string {
 	req := m.approvals[0]
 	var b strings.Builder
-	b.WriteString(approvalTitleStyle.Render("Approval required"))
+	b.WriteString(approvalTitleStyle.Render(t(m.loc, "approval.title")))
 	b.WriteString("\nA tool call with x-harness.approval is waiting for your ok:\n\n")
 	b.WriteString(toolStyle.Render(req.tool) + " " + prettyApprovalArgs(req.args))
 	if len(m.approvals) > 1 {
@@ -204,7 +204,7 @@ func (m *model) approvalBox() string {
 	if m.width > 0 {
 		width = max(24, min(72, m.width-4))
 	}
-	hint := "enter: approve   a: approve + always for this session   esc: deny"
+	hint := t(m.loc, "approval.hint")
 	return approvalBoxStyle.Width(width).Render(b.String()) + "\n" +
 		metaStyle.Render(hint)
 }

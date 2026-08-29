@@ -47,34 +47,35 @@ func contextBar(percent float64, width int) string {
 	return bar.ViewAs(max(0.0, min(1.0, percent)))
 }
 
-func runtimeStatusLine(runtime runtimeResolution, modelOverride string, used int, width int) string {
+func runtimeStatusLine(loc Locale, runtime runtimeResolution, modelOverride string, used int, width int) string {
 	provider := runtime.Provider
 	if provider == "" {
-		provider = "provider?"
+		provider = t(loc, "runtime.provider")
 	}
 	modelName := runtime.Model
 	if modelName == "" {
-		modelName = "model?"
+		modelName = t(loc, "runtime.model")
 	}
 	source := ""
 	if runtime.ProviderSource == "environment" {
-		source = " [env]"
+		source = t(loc, "runtime.env")
 	} else if runtime.ProviderSource == "store" {
-		source = " [global]"
+		source = t(loc, "runtime.global")
 	}
 	selection := provider + source + " › " + modelName
 	if modelOverride != "" {
-		selection += " [session]"
+		selection += t(loc, "runtime.session")
 	}
 
-	contextText := "ctx —"
+	contextText := t(loc, "runtime.ctxNone")
 	if runtime.Context > 0 {
 		pct := contextPercent(used, runtime.Context)
 		if used > 0 {
-			contextText = fmt.Sprintf("ctx %s %3.0f%% %s/%s",
-				contextBar(pct, 10), pct*100, formatTokens(used), formatTokens(runtime.Context))
+			contextText = t(loc, "runtime.ctxPct",
+				contextBar(pct, 10), fmt.Sprintf("%3.0f%%", pct*100),
+				formatTokens(used), formatTokens(runtime.Context))
 		} else {
-			contextText = fmt.Sprintf("ctx %s —/%s", contextBar(0, 10), formatTokens(runtime.Context))
+			contextText = t(loc, "runtime.ctxEmpty", contextBar(0, 10), formatTokens(runtime.Context))
 		}
 	}
 	return truncate(selection+"  │  "+contextText, max(1, width-1))
