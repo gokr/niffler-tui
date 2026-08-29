@@ -170,7 +170,9 @@ func prettyApprovalArgs(raw json.RawMessage) string {
 		}
 	}
 	if len(s) > maxApprovalArgs {
-		s = s[:maxApprovalArgs] + "…"
+		// Rune-aware truncation: a byte slice would split CJK characters
+		// mid-rune and produce invalid UTF-8 in the approval box.
+		s = string([]rune(s)[:maxApprovalArgs]) + "…"
 	}
 	return s
 }
