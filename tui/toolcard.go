@@ -165,7 +165,11 @@ func (m *model) handleMouseClick(msg tea.MouseClickMsg) {
 func (m *model) blockAtContentLine(contentLine int) int {
 	line := 0
 	for i := range m.blocks {
-		rows := strings.Count(m.piece(i), "\n") + 1
+		piece := m.piece(i)
+		if piece == "" {
+			continue // hidden block (thinking level off) — not rendered
+		}
+		rows := strings.Count(piece, "\n") + 1
 		if contentLine < line+rows {
 			return i
 		}

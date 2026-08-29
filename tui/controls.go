@@ -168,7 +168,7 @@ func (m model) executeLocalCommand(command string) (tea.Model, tea.Cmd) {
 		}
 		if m.mouse {
 			m.addBlock(blockMeta, "mouse on — wheel scrolls the transcript; click a tool card to expand it "+
-				"(ctrl+t toggles all); copy with shift+drag")
+				"(ctrl+e toggles all); copy with shift+drag")
 		} else {
 			m.addBlock(blockMeta, "mouse off — native plain-drag copy; wheel is terminal-scroll (transcript: "+
 				"pgup/pgdn/ctrl+up)")
@@ -464,6 +464,14 @@ func (m model) submitProviderForm() (tea.Model, tea.Cmd) {
 		return m, updateProviderCmd(m.comp, values)
 	}
 	return m, addProviderCmd(m.comp, values)
+}
+
+// cycleThinkingLevel advances the reasoning-display level (full → brief →
+// off → full). Persists across session switches: it is a display preference,
+// not per-conversation state.
+func (m *model) cycleThinkingLevel() {
+	m.thinkLevel = (m.thinkLevel + 1) % 3
+	m.markTranscriptDirty()
 }
 
 func (m model) detailedRuntimeStatus() string {

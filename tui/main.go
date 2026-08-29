@@ -179,6 +179,12 @@ type model struct {
 	renderTimerActive bool
 	lastTokenAt       time.Time
 
+	// thinkLevel controls how reasoning blocks render: full (default),
+	// brief (one collapsed line per block), or off (hidden). ctrl+t cycles.
+	// Display-side only; the transcript always receives the full reasoning
+	// from the backend — this only changes how much of it is shown.
+	thinkLevel thinkingLevel
+
 	// roundClosed marks the current LLM round as finalized: the assistant
 	// event carried the complete content, or the turn ended (done). Late
 	// token frames can arrive after that (NATS ordering across subjects
@@ -194,13 +200,14 @@ type model struct {
 }
 
 var (
-	headerStyle    = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("6"))
-	userStyle      = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("12"))
-	assistantStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("10"))
-	thinkingStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("8")).Italic(true)
-	toolStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("3"))
-	metaStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
-	errorStyle     = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("9"))
+	headerStyle      = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("6"))
+	userStyle        = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("12"))
+	assistantStyle   = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("10"))
+	thinkingStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("8")).Italic(true)
+	thinkLevelStyle  = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("5"))
+	toolStyle        = lipgloss.NewStyle().Foreground(lipgloss.Color("3"))
+	metaStyle        = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
+	errorStyle       = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("9"))
 )
 
 // configureKeymaps sets up chat-style editing bindings. The textarea owns
@@ -483,8 +490,14 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.layout()
 				return m, nil
 			}
-		case "ctrl+t":
+		case "ctrl+e":
+			// Expand/collapse every tool-run card (rebound from ctrl+t, which
+			// now cycles the thinking level).
 			m.toggleAllToolRuns()
+			m.syncViewport(false)
+			return m, nil
+		case "ctrl+t":
+			m.cycleThinkingLevel()
 			m.syncViewport(false)
 			return m, nil
 		case "esc":
@@ -811,6 +824,12 @@ func (m *model) applySessionEvent(msg sessionEventMsg) tea.Cmd {
 			m.assistantIdx = idx
 			m.hadAssistant = true
 		}
+		// Round closed: finalize the trailing thinking block too. Only
+		// assistant blocks used to be finalized, so the streamingBlock
+		// reuse scan kept appending every later round's reasoning into
+		// the first round's thinking block, stacking it all above the
+		// conversation.
+		m.finalizeThinking()
 		m.roundClosed = true
 
 	case "toolcall":
@@ -940,6 +959,11 @@ func (m *model) finishTurn(reply, errorText string) {
 	m.busy = false
 	m.setStreaming(false)
 	m.roundClosed = true
+	// Finalize any trailing thinking block here as well: a turn can end on
+	// "done" without an assistant event (errors, short replies), and an
+	// unfinalized thinking block would pull the next turn's reasoning into
+	// this one (see the assistant-event finalization in applySessionEvent).
+	m.finalizeThinking()
 	if errorText != "" {
 		m.addUniqueBlock(blockError, errorText)
 	} else if reply != "" && !m.hadAssistant {
@@ -948,6 +972,17 @@ func (m *model) finishTurn(reply, errorText string) {
 	}
 	m.assistantIdx = -1
 	m.thinkingIdx = -1
+}
+
+// finalizeThinking marks the trailing unfinalized thinking block complete.
+// Without it, streamingBlock's reuse scan would keep appending later
+// rounds' reasoning into the first round's thinking block, stacking all
+// thinking above the conversation instead of per-round.
+func (m *model) finalizeThinking() {
+	if idx := m.streamingBlock(blockThinking, m.thinkingIdx); idx >= 0 {
+		m.blocks[idx].finalized = true
+		m.markTranscriptDirty()
+	}
 }
 
 // setStreaming flips the streaming flag, invalidating the transcript cache
@@ -1098,8 +1133,12 @@ func (m model) searchView() string {
 func (m model) View() tea.View {
 	header := headerStyle.Render("Niffler") + metaStyle.Render(" / "+m.session)
 	const headerSep = "  │  "
-	runtimeLine := runtimeStatusLine(m.runtime, m.modelOverride, m.contextUsed, max(0, m.width-ansi.StringWidth(header)-ansi.StringWidth(headerSep)))
-	headerLine := header + headerSep + runtimeLine
+	// Thinking level chip: standalone color so the mode reads at a glance
+	// (ctrl+t cycles full → brief → off).
+	thinkChip := thinkLevelStyle.Render("think:" + m.thinkLevel.String())
+	runtimeLine := runtimeStatusLine(m.runtime, m.modelOverride, m.contextUsed,
+		max(0, m.width-ansi.StringWidth(header)-ansi.StringWidth(thinkChip)-2*ansi.StringWidth(headerSep)))
+	headerLine := header + headerSep + thinkChip + headerSep + runtimeLine
 	makeView := func(content string) tea.View {
 		view := tea.NewView(content)
 		view.AltScreen = true
@@ -1171,7 +1210,7 @@ func (m model) View() tea.View {
 	if m.contextNote != "" {
 		status += " | " + m.contextNote
 	} else {
-		status += " | /provider /model /connect /help | alt+enter: newline | ctrl+r: history | ctrl+t: tools | esc: stop | ctrl+c: quit"
+		status += " | /provider /model /connect /help | alt+enter: newline | ctrl+r: history | ctrl+e: tools | ctrl+t: think | esc: stop | ctrl+c: quit"
 	}
 
 	parts := []string{headerLine, m.viewport.View()}

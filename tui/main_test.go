@@ -1202,6 +1202,100 @@ func TestToggleAllToolRuns(t *testing.T) {
 	}
 }
 
+// TestThinkingBlocksDoNotStackAcrossRounds covers the bug where every
+// later round's reasoning was appended to the first round's never-finalized
+// thinking block, stacking all thinking above the conversation. Each round
+// must own its thinking block.
+func TestThinkingBlocksDoNotStackAcrossRounds(t *testing.T) {
+	m := newTestModel()
+
+	// Round 1: reasoning streamed, then the assistant event closes the round.
+	m.applySessionEvent(sessionEventMsg{kind: "token", event: sessionEvent{
+		SessionID: "game", Reasoning: "first thoughts", Content: "one"}})
+	m.applySessionEvent(sessionEventMsg{kind: "assistant", event: sessionEvent{
+		SessionID: "game", Content: "one"}})
+
+	// Round 2 opens after a tool call.
+	m.applySessionEvent(sessionEventMsg{kind: "toolcall", event: sessionEvent{
+		SessionID: "game", Tool: "bash", Args: json.RawMessage(`{"cmd":"ls"}`)}})
+	m.applySessionEvent(sessionEventMsg{kind: "token", event: sessionEvent{
+		SessionID: "game", Reasoning: "second thoughts", Content: "two"}})
+	m.applySessionEvent(sessionEventMsg{kind: "assistant", event: sessionEvent{
+		SessionID: "game", Content: "two"}})
+
+	var thinkTexts []string
+	for _, b := range m.blocks {
+		if b.kind == blockThinking {
+			thinkTexts = append(thinkTexts, b.text)
+		}
+	}
+	if len(thinkTexts) != 2 {
+		t.Fatalf("got %d thinking blocks (%q), want 2 separate", len(thinkTexts), thinkTexts)
+	}
+	if thinkTexts[0] != "first thoughts" || thinkTexts[1] != "second thoughts" {
+		t.Fatalf("thinking stacked across rounds: %q", thinkTexts)
+	}
+}
+
+// TestTurnDoneFinalizesThinking covers the done-without-assistant path: an
+// error turn must not leave an unfinalized thinking block behind for the
+// next turn to append into.
+func TestTurnDoneFinalizesThinking(t *testing.T) {
+	m := newTestModel()
+	m.applySessionEvent(sessionEventMsg{kind: "token", event: sessionEvent{
+		SessionID: "game", Reasoning: "doomed thoughts"}})
+	m.finishTurn("", "backend exploded")
+
+	// New turn (like the enter handler): roundClosed must be false before
+	// the next round's tokens arrive or they are dropped as stragglers.
+	m.roundClosed = false
+	m.applySessionEvent(sessionEventMsg{kind: "token", event: sessionEvent{
+		SessionID: "game", Reasoning: "fresh thoughts"}})
+	var thinkTexts []string
+	for _, b := range m.blocks {
+		if b.kind == blockThinking {
+			thinkTexts = append(thinkTexts, b.text)
+		}
+	}
+	if len(thinkTexts) != 2 {
+		t.Fatalf("got %d thinking blocks (%q), want 2 separate", len(thinkTexts), thinkTexts)
+	}
+}
+
+func TestThinkingLevelRendering(t *testing.T) {
+	m := newTestModel()
+	m.addBlock(blockThinking, "deep reasoning")
+	m.addBlock(blockUser, "hello")
+	m.addBlock(blockAssistant, "hi")
+
+	full := m.renderTranscript()
+	if !strings.Contains(full, "deep reasoning") {
+		t.Fatalf("full level hides reasoning: %q", full)
+	}
+
+	m.thinkLevel = thinkBrief
+	m.markTranscriptDirty()
+	brief := m.renderTranscript()
+	if strings.Contains(brief, "deep reasoning") {
+		t.Fatalf("brief level shows full reasoning: %q", brief)
+	}
+	if !strings.Contains(brief, "thinking") {
+		t.Fatalf("brief level lost its collapsed marker: %q", brief)
+	}
+
+	m.thinkLevel = thinkOff
+	m.markTranscriptDirty()
+	off := m.renderTranscript()
+	if strings.Contains(off, "reasoning") || strings.Contains(off, "thinking") {
+		t.Fatalf("off level still renders thinking: %q", off)
+	}
+	// Hidden blocks must not shift mouse hit-testing: the user block is the
+	// first rendered piece and owns content line 0.
+	if idx := m.blockAtContentLine(0); idx != 1 {
+		t.Fatalf("hit-test line 0 = block %d, want the user block (1)", idx)
+	}
+}
+
 func TestLateTokenAfterAssistantDoesNotDuplicate(t *testing.T) {
 	m := newTestModel()
 	// Stream the full reply, then the final assistant event with the complete
