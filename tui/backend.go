@@ -101,6 +101,12 @@ type bootstrapMsg struct {
 	Conversation     conversationState
 	Runtime          runtimeResolution
 	Warnings         []string
+	// Slash is the merged slash-command registry (store checkpoint first,
+	// catalog snapshot fallback); SlashErr reports a load failure. The
+	// registry is global (not per-session), so these survive a stale
+	// session drop and are applied regardless.
+	SlashCommands []slashCommand
+	SlashErr      error
 }
 
 type runtimeRefreshedMsg struct {
@@ -278,8 +284,8 @@ func sessionListCmd(comp *sdk.Component) tea.Cmd {
 }
 
 // bootstrapBackendCmd loads the backend state the header and controls need.
-// The three independent lookups run concurrently; the conversation state and
-// the runtime resolution are sequential because the resolution takes the
+// The independent lookups run concurrently; the conversation state and the
+// runtime resolution are sequential because the resolution takes the
 // persisted conversation model override as its argument.
 func bootstrapBackendCmd(comp *sdk.Component, session string) tea.Cmd {
 	return func() tea.Msg {
@@ -288,15 +294,18 @@ func bootstrapBackendCmd(comp *sdk.Component, session string) tea.Cmd {
 			providers  providerListResponse
 			status     providerStatusResponse
 			catalog    []catalogProvider
+			slashCmds  []slashCommand
 			listErr    error
 			statusErr  error
 			catalogErr error
+			slashErr   error
 		)
 		var wg sync.WaitGroup
-		wg.Add(3)
+		wg.Add(4)
 		go func() { defer wg.Done(); providers, listErr = loadProviderList(comp) }()
 		go func() { defer wg.Done(); status, statusErr = loadProviderStatus(comp) }()
 		go func() { defer wg.Done(); catalog, catalogErr = loadCatalogProviders(comp) }()
+		go func() { defer wg.Done(); slashCmds, slashErr = loadSlashTable(comp) }()
 		wg.Wait()
 		if listErr != nil {
 			msg.Warnings = append(msg.Warnings, listErr.Error())
@@ -313,6 +322,8 @@ func bootstrapBackendCmd(comp *sdk.Component, session string) tea.Cmd {
 		} else {
 			msg.CatalogProviders = catalog
 		}
+		msg.SlashCommands = slashCmds
+		msg.SlashErr = slashErr
 		conversation, err := loadConversationState(comp, session)
 		if err != nil {
 			msg.Warnings = append(msg.Warnings, err.Error())

@@ -46,6 +46,9 @@ func (m model) switchSession(id string) model {
 	m.histIdx = -1
 	m.draft = ""
 	m.input.SetValue("")
+	// Completion state is per-input, not per-session: the cleared input
+	// invalidates any active candidate list.
+	m.slashComp = slashCompleteState{}
 	m.historyFile = historyFilePath(id)
 	m.history = loadHistory(m.historyFile)
 	return m
@@ -177,7 +180,7 @@ func (m model) executeLocalCommand(command string) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case "help", "?":
-		m.addBlock(blockMeta, strings.Join([]string{
+		lines := []string{
 			"local commands:",
 			"  /provider [nickname|environment]  choose the global provider (e: edit, d: remove selected)",
 			"  /model [id|default]   choose this conversation's model",
@@ -185,12 +188,30 @@ func (m model) executeLocalCommand(command string) (tea.Model, tea.Cmd) {
 			"  /status               show provider/model/context details",
 			"  /mouse [on|off]       tool-card click expansion (off = native copy)",
 			"  /help                 show this help",
-		}, "\n"))
+			"keys: ctrl+t thinking level (full → brief → off)  •  ctrl+e tool cards  •  tab completes /commands",
+		}
+		if plugins := m.slash.pluginCommands(); len(plugins) > 0 {
+			lines = append(lines, "", "plugin commands:")
+			for _, cmd := range plugins {
+				line := "  /" + cmd.Name
+				if cmd.Description != "" {
+					line += " — " + cmd.Description
+				}
+				lines = append(lines, line+" ("+cmd.Component+")")
+			}
+		}
+		m.addBlock(blockMeta, strings.Join(lines, "\n"))
 		m.syncViewport(true)
 		return m, nil
 
 	default:
-		m.addBlock(blockError, "unknown local command /"+name+" (try /help)")
+		// Registered commands (docs/WIRE.md): parse against the declared
+		// params and issue the target tool call. Built-ins shadow any
+		// same-named registration, so only non-builtins reach this.
+		if cmd, ok := m.slash.lookup(name); ok && !cmd.builtin {
+			return m.executeSlashCommand(cmd, argument)
+		}
+		m.addBlock(blockError, "unknown local command /"+name+suggestSlash(m.slash, name))
 		m.syncViewport(true)
 		return m, nil
 	}

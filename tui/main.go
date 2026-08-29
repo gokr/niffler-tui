@@ -185,6 +185,11 @@ type model struct {
 	// from the backend — this only changes how much of it is shown.
 	thinkLevel thinkingLevel
 
+	// slash is the merged slash-command registry (built-ins + component
+	// registrations); slashComp is the live Tab-completion state.
+	slash     slashRegistry
+	slashComp slashCompleteState
+
 	// roundClosed marks the current LLM round as finalized: the assistant
 	// event carried the complete content, or the turn ended (done). Late
 	// token frames can arrive after that (NATS ordering across subjects
@@ -205,6 +210,7 @@ var (
 	assistantStyle   = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("10"))
 	thinkingStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("8")).Italic(true)
 	thinkLevelStyle  = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("5"))
+	activeSlashStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("0")).Background(lipgloss.Color("7"))
 	toolStyle        = lipgloss.NewStyle().Foreground(lipgloss.Color("3"))
 	metaStyle        = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
 	errorStyle       = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("9"))
@@ -271,6 +277,7 @@ func newModel(ctx context.Context, comp *sdk.Component, session, natsURL string)
 		focusCmd:     focusCmd,
 		history:      history,
 		historyFile:  historyFile,
+		slash:        newSlashRegistry(),
 		// Mouse tracking on by default: the wheel scrolls the transcript and
 		// click expands tool cards; copy uses Shift+drag. See /mouse off for
 		// a pure-native mode (plain-drag copy, no app wheel).
@@ -427,9 +434,39 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.searchActive {
 			return m.handleSearchKey(msg)
 		}
-		switch msg.String() {
+		keyName := msg.String()
+		// An active slash completion owns Tab (cycling) and is dismissed by
+		// any other key, which then falls through to normal handling.
+		if m.slashComp.active {
+			switch keyName {
+			case "tab":
+				var cmd tea.Cmd
+				m, cmd = m.handleSlashTab(false)
+				return m, cmd
+			case "shift+tab":
+				var cmd tea.Cmd
+				m, cmd = m.handleSlashTab(true)
+				return m, cmd
+			case "enter":
+				m.dismissSlashComplete()
+				// Fall through: the command line is already filled in.
+			case "esc", "ctrl+c":
+				if keyName == "ctrl+c" {
+					return m, tea.Quit
+				}
+				m.dismissSlashComplete()
+				return m, nil
+			default:
+				m.dismissSlashComplete()
+			}
+		}
+		switch keyName {
 		case "ctrl+c":
 			return m, tea.Quit
+		case "tab", "shift+tab":
+			var cmd tea.Cmd
+			m, cmd = m.handleSlashTab(keyName == "shift+tab")
+			return m, cmd
 		case "enter":
 			content := strings.TrimSpace(m.input.Value())
 			if content == "" {
@@ -569,6 +606,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.contextUsed = msg.Conversation.ContextUsed
 		m.promptTokens = msg.Conversation.PromptTokens
+		// The slash registry is global; apply it even though the rest of the
+		// snapshot is session-scoped.
+		if msg.SlashErr == nil {
+			m.mergeSlashRegistry(msg.SlashCommands)
+		} else if len(m.slash.order) == 0 {
+			m.contextNote = "slash registry unavailable: " + msg.SlashErr.Error()
+		}
 		if m.runtime.Catalog != "" {
 			cmds = append(cmds, loadModelsCmd(m.comp, m.runtime.Catalog))
 		}
@@ -600,6 +644,24 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				break
 			}
 		}
+
+	case catalogUpdatedMsg:
+		// Components registered or departed: the slash registry changed.
+		// Reload store-first (core checkpoints before announcing).
+		return m, loadSlashTableCmd(m.comp)
+
+	case slashTableMsg:
+		if msg.Err == nil {
+			m.mergeSlashRegistry(msg.Commands)
+		} else if len(m.slash.order) == 0 {
+			m.contextNote = "slash registry unavailable: " + msg.Err.Error()
+		}
+
+	case slashSourceMsg:
+		m.applySlashSource(msg)
+
+	case slashResultMsg:
+		m.applySlashResult(msg)
 
 	case catalogProvidersMsg:
 		if msg.Err == nil {
@@ -1069,7 +1131,7 @@ func (m *model) layout() {
 	// MaxHeight), so the viewport height below sees the settled input size.
 	m.input.SetWidth(max(1, width-2))
 	extra := 0
-	if m.searchActive {
+	if m.searchActive || m.slashComp.active {
 		extra = 1
 	}
 	m.viewport.SetHeight(max(1, height-3-m.input.Height()-extra))
@@ -1217,6 +1279,9 @@ func (m model) View() tea.View {
 	if m.searchActive {
 		parts = append(parts, m.searchView())
 	}
+	if m.slashComp.active {
+		parts = append(parts, m.slashCompletionView())
+	}
 	parts = append(parts, m.input.View(), metaStyle.Render(truncate(status, max(1, m.width-1))))
 	return makeView(strings.Join(parts, "\n"))
 }
@@ -1307,6 +1372,14 @@ func main() {
 	comp.On("ev.models.updated", func(_ *sdk.Component, _ string, _ json.RawMessage) {
 		if program != nil {
 			program.Send(modelsCatalogUpdatedMsg{})
+		}
+	})
+	// Catalog changes (components registering/departing) refresh the slash
+	// registry: core checkpoints the merged table to the store before this
+	// event goes out, so a store-first reload is consistent.
+	comp.On("ev.catalog.updated", func(_ *sdk.Component, _ string, _ json.RawMessage) {
+		if program != nil {
+			program.Send(catalogUpdatedMsg{})
 		}
 	})
 	// Human approval gate: directed requests arrive on this component's own

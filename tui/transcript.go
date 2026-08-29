@@ -17,9 +17,9 @@ type blockKind int
 type thinkingLevel int
 
 const (
-	thinkFull thinkingLevel = iota // render reasoning blocks in full
-	thinkBrief                     // one dim collapsed line per block
-	thinkOff                       // hide reasoning blocks entirely
+	thinkFull  thinkingLevel = iota // render reasoning blocks in full
+	thinkBrief                      // one dim collapsed line per block
+	thinkOff                        // hide reasoning blocks entirely
 )
 
 func (l thinkingLevel) String() string {

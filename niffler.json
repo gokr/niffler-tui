@@ -16,6 +16,7 @@
         "tui/history.go",
         "tui/provider_form.go",
         "tui/selectors.go",
+        "tui/slash.go",
         "tui/toolcard.go",
         "tui/transcript.go"
       ],
