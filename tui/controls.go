@@ -28,6 +28,7 @@ func (m model) switchSession(id string) model {
 	m.renderTimerActive = false
 	m.contextNote = ""
 	m.modelOverride = ""
+	m.thinkingEffort = ""
 	m.runtime = runtimeResolution{}
 	m.promptTokens = 0
 	m.contextUsed = 0
@@ -171,7 +172,7 @@ func (m model) executeLocalCommand(command string) (tea.Model, tea.Cmd) {
 		}
 		if m.mouse {
 			m.addBlock(blockMeta, "mouse on — wheel scrolls the transcript; click a tool card to expand it "+
-				"(ctrl+e toggles all); copy with shift+drag")
+				"(ctrl+e cycles brief/full/off); copy with shift+drag")
 		} else {
 			m.addBlock(blockMeta, "mouse off — native plain-drag copy; wheel is terminal-scroll (transcript: "+
 				"pgup/pgdn/ctrl+up)")
@@ -188,7 +189,7 @@ func (m model) executeLocalCommand(command string) (tea.Model, tea.Cmd) {
 			"  /status               show provider/model/context details",
 			"  /mouse [on|off]       tool-card click expansion (off = native copy)",
 			"  /help                 show this help",
-			"keys: ctrl+t thinking level (full → brief → off)  •  ctrl+e tool cards  •  tab completes /commands",
+			"keys: ctrl+t thinking level (full → brief → off)  •  ctrl+e tool cards  •  ctrl+g thinking effort  •  tab completes /commands",
 		}
 		if plugins := m.slash.pluginCommands(); len(plugins) > 0 {
 			lines = append(lines, "", "plugin commands:")
@@ -493,6 +494,51 @@ func (m model) submitProviderForm() (tea.Model, tea.Cmd) {
 func (m *model) cycleThinkingLevel() {
 	m.thinkLevel = (m.thinkLevel + 1) % 3
 	m.markTranscriptDirty()
+}
+
+// effortCycle is the LLM thinking-effort rotation for ctrl+g: empty means
+// the provider default (no reasoning_effort sent).
+var effortCycle = []string{"", "low", "medium", "high"}
+
+// nextThinkingEffort returns the effort level following the current
+// per-conversation selection.
+func (m model) nextThinkingEffort() string {
+	idx := -1
+	for i, level := range effortCycle {
+		if level == m.thinkingEffort {
+			idx = i
+			break
+		}
+	}
+	return effortCycle[(idx+1)%len(effortCycle)]
+}
+
+// effortLabel renders the current effort for the header chip; the empty
+// selection (provider default) reads as "auto".
+func (m model) effortLabel() string {
+	if m.thinkingEffort == "" {
+		return "auto"
+	}
+	return m.thinkingEffort
+}
+
+// applyThinkingEffort folds a persisted thinking-effort save into the model.
+// Like modelActionMsg, a completion for the old session is dropped.
+func (m *model) applyThinkingEffort(msg thinkingEffortMsg) {
+	if msg.Session != m.session {
+		return
+	}
+	m.controlPending = false
+	if msg.Err != nil {
+		m.contextNote = msg.Err.Error()
+		m.addBlock(blockError, msg.Err.Error())
+		m.syncViewport(true)
+		return
+	}
+	m.thinkingEffort = msg.Effort
+	m.contextNote = ""
+	m.addBlock(blockMeta, "thinking effort: "+m.effortLabel())
+	m.syncViewport(true)
 }
 
 func (m model) detailedRuntimeStatus() string {

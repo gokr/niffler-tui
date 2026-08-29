@@ -1126,7 +1126,7 @@ func TestToolRunRenderingCollapsedAndExpanded(t *testing.T) {
 		{name: "core.spawn", args: json.RawMessage(`{"name":"x"}`), err: "denied"},
 	}}
 	// Collapsed: one summary line with count + chips.
-	got := renderToolRun(run)
+	got := renderToolRun(run, false)
 	if strings.Contains(got, "\n") {
 		t.Fatalf("collapsed card should be one line:\n%q", got)
 	}
@@ -1138,19 +1138,18 @@ func TestToolRunRenderingCollapsedAndExpanded(t *testing.T) {
 	}
 
 	// Expanded: per-call args + error.
-	run.collapsed = false
-	got = renderToolRun(run)
+	got = renderToolRun(run, true)
 	if !strings.Contains(got, "make") || !strings.Contains(got, "denied") {
 		t.Fatalf("expanded card missing detail: %q", got)
 	}
 }
 
 func TestToolRunSingleCallAndGlyph(t *testing.T) {
-	ok := renderToolRun(&toolRun{collapsed: true, calls: []toolCall{{name: "bash"}}})
+	ok := renderToolRun(&toolRun{collapsed: true, calls: []toolCall{{name: "bash"}}}, false)
 	if !strings.Contains(ok, "bash") || strings.Contains(ok, "tool calls") {
 		t.Fatalf("single-call summary wrong: %q", ok)
 	}
-	bad := renderToolRun(&toolRun{collapsed: false, calls: []toolCall{{name: "bash", err: "boom"}}})
+	bad := renderToolRun(&toolRun{collapsed: true, calls: []toolCall{{name: "bash", err: "boom"}}}, true)
 	if strings.Contains(bad, "✓") {
 		t.Fatal("errored call rendered the ok glyph")
 	}
@@ -1189,16 +1188,85 @@ func TestToolCardHitTestAndToggle(t *testing.T) {
 	}
 }
 
-func TestToggleAllToolRuns(t *testing.T) {
+// TestThinkingEffortCycle covers the ctrl+g rotation and its persistence
+// message handling: a save for the current session applies; a stale one
+// (session switched) is dropped.
+func TestThinkingEffortCycle(t *testing.T) {
+	m := newTestModel()
+	m.session = "game"
+	if got := m.effortLabel(); got != "auto" {
+		t.Fatalf("empty effort label = %q, want auto", got)
+	}
+	want := []string{"low", "medium", "high", ""}
+	for i, level := range want {
+		next := m.nextThinkingEffort()
+		if next != level {
+			t.Fatalf("nextThinkingEffort step %d = %q, want %q", i, next, level)
+		}
+		m.thinkingEffort = next
+	}
+	if got := m.effortLabel(); got != "auto" {
+		t.Fatalf("back at empty effort label = %q, want auto", got)
+	}
+	m.thinkingEffort = "high"
+	if got := m.effortLabel(); got != "high" {
+		t.Fatalf("high effort label = %q", got)
+	}
+}
+
+func TestThinkingEffortMessageAppliesOrDrops(t *testing.T) {
+	m := newTestModel()
+	m.session = "game"
+	m.controlPending = true
+	m.applyThinkingEffort(thinkingEffortMsg{Session: "game", Effort: "high"})
+	if m.thinkingEffort != "high" || m.controlPending {
+		t.Fatalf("effort save not applied: effort=%q pending=%v", m.thinkingEffort, m.controlPending)
+	}
+	if len(m.blocks) != 1 || m.blocks[0].kind != blockMeta ||
+		!strings.Contains(m.blocks[0].text, "thinking effort: high") {
+		t.Fatalf("blocks = %+v, want a meta confirmation", m.blocks)
+	}
+
+	// A completion for the old session must not leak into the new one.
+	m.session = "other"
+	m.thinkingEffort = ""
+	m.applyThinkingEffort(thinkingEffortMsg{Session: "game", Effort: "high"})
+	if m.thinkingEffort != "" {
+		t.Fatalf("stale effort save applied: %q", m.thinkingEffort)
+	}
+}
+
+func TestToolVisibilityCycle(t *testing.T) {
 	m := newTestModel()
 	m.appendToolCall(toolCall{name: "a"})
 	m.addBlock(blockUser, "x")
 	m.appendToolCall(toolCall{name: "b"})
-	m.toggleAllToolRuns()
-	for i := range m.blocks {
-		if m.blocks[i].run != nil && m.blocks[i].run.collapsed {
-			t.Fatalf("block %d card still collapsed after toggle all", i)
-		}
+
+	brief := m.renderTranscript()
+	if !strings.Contains(brief, "▸") {
+		t.Fatalf("brief level should render collapsed cards: %q", brief)
+	}
+
+	m.cycleToolVisibility() // brief → full
+	full := m.renderTranscript()
+	if !strings.Contains(full, "▾") || strings.Contains(full, "▸") {
+		t.Fatalf("full level should expand every card: %q", full)
+	}
+
+	m.cycleToolVisibility() // full → off
+	off := m.renderTranscript()
+	if strings.Contains(off, "tool") || strings.Contains(off, "▸") || strings.Contains(off, "▾") {
+		t.Fatalf("off level should hide cards: %q", off)
+	}
+	// Hidden cards must not shift mouse hit-testing: the user block owns
+	// content line 0 now.
+	if idx := m.blockAtContentLine(0); idx != 1 {
+		t.Fatalf("hit-test line 0 = block %d, want the user block (1)", idx)
+	}
+
+	m.cycleToolVisibility() // off → brief
+	if got := m.renderTranscript(); got != brief {
+		t.Fatalf("cycle back to brief changed rendering: %q", got)
 	}
 }
 
@@ -1584,13 +1652,13 @@ func TestTranscriptCacheInvalidatedByMutations(t *testing.T) {
 		t.Fatalf("transcript did not reflect appended block: %q", second)
 	}
 
-	// A tool-run collapse toggle mutates a middle block and must invalidate.
+	// A tool-visibility change must invalidate the cached transcript.
 	m.blocks = append(m.blocks, transcriptBlock{kind: blockTool, run: &toolRun{calls: []toolCall{{name: "bash"}}, collapsed: true}})
 	collapsed := m.renderTranscript()
-	m.toggleAllToolRuns()
+	m.cycleToolVisibility()
 	expanded := m.renderTranscript()
 	if expanded == collapsed {
-		t.Fatal("toggle did not invalidate the transcript cache")
+		t.Fatal("visibility cycle did not invalidate the transcript cache")
 	}
 }
 

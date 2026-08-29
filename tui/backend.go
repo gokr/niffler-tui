@@ -83,12 +83,13 @@ type modelsResponse struct {
 }
 
 type conversationState struct {
-	ModelOverride string
-	Provider      string
-	Model         string
-	Context       int
-	ContextUsed   int
-	PromptTokens  int
+	ModelOverride  string
+	ThinkingEffort string
+	Provider       string
+	Model          string
+	Context        int
+	ContextUsed    int
+	PromptTokens   int
 }
 
 type bootstrapMsg struct {
@@ -205,12 +206,13 @@ func loadConversationState(comp *sdk.Component, session string) (conversationSta
 	var response struct {
 		OK    bool `json:"ok"`
 		Value struct {
-			ModelOverride string `json:"modelOverride"`
-			Provider      string `json:"provider"`
-			Model         string `json:"model"`
-			Context       int    `json:"context"`
-			ContextUsed   int    `json:"contextUsed"`
-			PromptTokens  int    `json:"promptTokens"`
+			ModelOverride  string `json:"modelOverride"`
+			ThinkingEffort string `json:"thinkingEffort"`
+			Provider       string `json:"provider"`
+			Model          string `json:"model"`
+			Context        int    `json:"context"`
+			ContextUsed    int    `json:"contextUsed"`
+			PromptTokens   int    `json:"promptTokens"`
 		} `json:"value"`
 		Code string `json:"code"`
 	}
@@ -223,8 +225,9 @@ func loadConversationState(comp *sdk.Component, session string) (conversationSta
 		return conversationState{}, nil
 	}
 	return conversationState{
-		ModelOverride: response.Value.ModelOverride,
-		Provider:      response.Value.Provider, Model: response.Value.Model,
+		ModelOverride:  response.Value.ModelOverride,
+		ThinkingEffort: response.Value.ThinkingEffort,
+		Provider:       response.Value.Provider, Model: response.Value.Model,
 		Context: response.Value.Context, ContextUsed: response.Value.ContextUsed,
 		PromptTokens: response.Value.PromptTokens,
 	}, nil
@@ -372,6 +375,33 @@ func loadModelsCmd(comp *sdk.Component, catalog string) tea.Cmd {
 			"toolCall": true, "limit": 500,
 		}, &response)
 		return modelsLoadedMsg{Catalog: catalog, Models: response.Models, Err: err}
+	}
+}
+
+// thinkingEffortMsg reports the result of persisting a per-conversation
+// thinking-effort selection; like modelActionMsg, a completion for the old
+// session is dropped.
+type thinkingEffortMsg struct {
+	Session string
+	Effort  string
+	Err     error
+}
+
+// setConversationThinkingCmd persists the conversation's thinking-effort
+// selection through the session runner (model-only call: no inference).
+func setConversationThinkingCmd(comp *sdk.Component, session, effort string) tea.Cmd {
+	return func() tea.Msg {
+		var response struct {
+			OK             bool   `json:"ok"`
+			ThinkingEffort string `json:"thinkingEffort"`
+		}
+		err := requestInto(comp, "core", "session", map[string]any{
+			"sessionId": session, "thinking": effort,
+		}, &response)
+		if err == nil && !response.OK {
+			err = fmt.Errorf("thinking effort selection failed")
+		}
+		return thinkingEffortMsg{Session: session, Effort: effort, Err: err}
 	}
 }
 

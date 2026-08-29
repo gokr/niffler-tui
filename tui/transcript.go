@@ -142,7 +142,13 @@ func (m *model) piece(i int) string {
 		return thinkingStyle.Render(block.text)
 	case blockTool:
 		if block.run != nil {
-			return renderToolRun(block.run)
+			switch m.toolLevel {
+			case toolOff:
+				return "" // hidden (tool level off) — not rendered
+			case toolFull:
+				return renderToolRun(block.run, true)
+			}
+			return renderToolRun(block.run, false)
 		}
 		return toolStyle.Render("tool> " + block.text)
 	case blockMeta:

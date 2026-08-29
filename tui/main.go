@@ -185,6 +185,16 @@ type model struct {
 	// from the backend — this only changes how much of it is shown.
 	thinkLevel thinkingLevel
 
+	// toolLevel controls how tool-run cards render: brief (collapsed,
+	// default), full (all expanded), or off (hidden). ctrl+e cycles.
+	// Display-side only, like thinkLevel.
+	toolLevel toolLevel
+
+	// thinkingEffort is the per-conversation LLM thinking-effort selection
+	// ("" = provider default | low | medium | high), persisted via
+	// core.session {thinking} like the model override. ctrl+g cycles it.
+	thinkingEffort string
+
 	// slash is the merged slash-command registry (built-ins + component
 	// registrations); slashComp is the live Tab-completion state.
 	slash     slashRegistry
@@ -210,6 +220,8 @@ var (
 	assistantStyle   = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("10"))
 	thinkingStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("8")).Italic(true)
 	thinkLevelStyle  = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("5"))
+	toolLevelStyle   = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("3"))
+	effortStyle      = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("4"))
 	activeSlashStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("0")).Background(lipgloss.Color("7"))
 	toolStyle        = lipgloss.NewStyle().Foreground(lipgloss.Color("3"))
 	metaStyle        = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
@@ -528,15 +540,33 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 		case "ctrl+e":
-			// Expand/collapse every tool-run card (rebound from ctrl+t, which
-			// now cycles the thinking level).
-			m.toggleAllToolRuns()
+			// Tool-card visibility cycle (brief → full → off).
+			m.cycleToolVisibility()
 			m.syncViewport(false)
 			return m, nil
 		case "ctrl+t":
 			m.cycleThinkingLevel()
 			m.syncViewport(false)
 			return m, nil
+		case "ctrl+g":
+			// Rotate the conversation's LLM thinking effort (auto → low →
+			// medium → high); persisted like the model override and applied
+			// by the session runner on the next turn.
+			if !m.connected {
+				m.contextNote = "not connected"
+				return m, nil
+			}
+			if m.busy {
+				m.contextNote = "thinking effort changes apply between turns"
+				return m, nil
+			}
+			if m.controlPending {
+				return m, nil
+			}
+			next := m.nextThinkingEffort()
+			m.controlPending = true
+			m.contextNote = "saving thinking effort…"
+			return m, setConversationThinkingCmd(m.comp, m.session, next)
 		case "esc":
 			// Two-stage stop: first ESC arms the Stop? prompt, second ESC
 			// force-cancels the running turn. Outside a busy turn ESC is left
@@ -583,6 +613,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.providerStatus = msg.ProviderStatus
 		m.catalogProviders = msg.CatalogProviders
 		m.modelOverride = msg.Conversation.ModelOverride
+		m.thinkingEffort = msg.Conversation.ThinkingEffort
 		m.runtime = msg.Runtime
 		// Conversation/provider metadata keeps the header useful during a
 		// partial or rolling backend upgrade where llm_resolve is unavailable.
@@ -721,6 +752,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.addBlock(blockMeta, label)
 		m.syncViewport(true)
 		cmds = append(cmds, refreshRuntimeCmd(m.comp, m.session, m.modelOverride))
+
+	case thinkingEffortMsg:
+		m.applyThinkingEffort(msg)
 
 	case modelActionMsg:
 		// A conversation-scoped save belongs to the session it was fired for;
@@ -1198,9 +1232,13 @@ func (m model) View() tea.View {
 	// Thinking level chip: standalone color so the mode reads at a glance
 	// (ctrl+t cycles full → brief → off).
 	thinkChip := thinkLevelStyle.Render("think:" + m.thinkLevel.String())
+	// Tool-card and thinking-effort chips share the same standalone-color
+	// treatment (ctrl+e cycles tool cards; ctrl+g cycles the LLM effort).
+	toolChip := toolLevelStyle.Render("tool:" + m.toolLevel.String())
+	effortChip := effortStyle.Render("effort:" + m.effortLabel())
 	runtimeLine := runtimeStatusLine(m.runtime, m.modelOverride, m.contextUsed,
-		max(0, m.width-ansi.StringWidth(header)-ansi.StringWidth(thinkChip)-2*ansi.StringWidth(headerSep)))
-	headerLine := header + headerSep + thinkChip + headerSep + runtimeLine
+		max(0, m.width-ansi.StringWidth(header)-ansi.StringWidth(thinkChip)-ansi.StringWidth(toolChip)-ansi.StringWidth(effortChip)-3*ansi.StringWidth(headerSep)))
+	headerLine := header + headerSep + thinkChip + headerSep + toolChip + headerSep + effortChip + headerSep + runtimeLine
 	makeView := func(content string) tea.View {
 		view := tea.NewView(content)
 		view.AltScreen = true
@@ -1272,7 +1310,7 @@ func (m model) View() tea.View {
 	if m.contextNote != "" {
 		status += " | " + m.contextNote
 	} else {
-		status += " | /provider /model /connect /help | alt+enter: newline | ctrl+r: history | ctrl+e: tools | ctrl+t: think | esc: stop | ctrl+c: quit"
+		status += " | /provider /model /connect /help | alt+enter: newline | ctrl+r: history | ctrl+e: tools | ctrl+t: think | ctrl+g: effort | esc: stop | ctrl+c: quit"
 	}
 
 	parts := []string{headerLine, m.viewport.View()}
