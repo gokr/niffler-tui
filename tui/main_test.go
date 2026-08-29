@@ -13,7 +13,12 @@ import (
 	"charm.land/bubbles/v2/viewport"
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
+	"regexp"
 )
+
+// blankLineRe matches whitespace-only lines (lipgloss pads empty lines
+// inside styled blocks with spaces) so structural tests can normalize them.
+var blankLineRe = regexp.MustCompile(`(?m)^[ \t]+$`)
 
 func TestPluginManifestIncludesAllProductionGoSources(t *testing.T) {
 	raw, err := os.ReadFile(filepath.Join("..", "niffler.json"))
@@ -1721,6 +1726,50 @@ func TestSwitchSessionClearsViewport(t *testing.T) {
 	}
 	if got.viewportContent != "" {
 		t.Fatalf("viewport still shows the old transcript after switch: %q", got.viewportContent)
+	}
+}
+
+func TestThinkingRenderingTrimsEdgeNewlines(t *testing.T) {
+	m := newTestModel()
+	m.addBlock(blockUser, "hi there")
+	// DeepSeek-style reasoning deltas: reasoning opens with blank lines,
+	// has interior paragraph breaks, and closes with blank lines before
+	// the content starts (which itself opens with blank lines).
+	for _, delta := range []string{"\n\nOkay, let's think", " about this.\n\n", "First step.\n\nSecond step.\n\n"} {
+		m.appendStreamingText(blockThinking, &m.thinkingIdx, delta)
+	}
+	m.appendStreamingText(blockAssistant, &m.assistantIdx, "\n\nHere is the answer.")
+
+	// Strip ANSI so structural assertions don't trip over style codes
+	// (lipgloss wraps each block, inserting resets around newlines).
+	out := ansi.Strip(m.renderTranscript())
+	// lipgloss pads interior empty lines with spaces; normalize them back
+	// to truly empty lines for the structure checks.
+	out = blankLineRe.ReplaceAllString(out, "")
+	// No wall of blank rows: at most one blank line between blocks.
+	if strings.Contains(out, "\n\n\n") {
+		t.Fatalf("rendered transcript stacks blank lines:\n%q", out)
+	}
+	// Interior paragraph breaks are model formatting and must survive
+	// (lines may carry trailing padding spaces).
+	if !regexp.MustCompile(`First step\. +\n\nSecond step\.`).MatchString(out) {
+		t.Fatalf("interior paragraph break lost:\n%q", out)
+	}
+	if !strings.Contains(out, "Here is the answer.") {
+		t.Fatalf("assistant content lost:\n%q", out)
+	}
+
+	// Hidden levels: brief collapses to a single dim line, off drops the
+	// block entirely.
+	m.thinkLevel = thinkBrief
+	m.markTranscriptDirty()
+	if out := ansi.Strip(m.renderTranscript()); !strings.Contains(out, "thinking…") || strings.Contains(out, "Second step.") {
+		t.Fatalf("brief level should collapse reasoning:\n%q", out)
+	}
+	m.thinkLevel = thinkOff
+	m.markTranscriptDirty()
+	if out := ansi.Strip(m.renderTranscript()); strings.Contains(out, "thinking…") {
+		t.Fatalf("off level should hide reasoning:\n%q", out)
 	}
 }
 

@@ -104,11 +104,14 @@ func (m *model) renderBlock(i int) string {
 	}
 	// While tokens are still streaming, keep showing plain text and defer
 	// the markdown render to the settle tick: re-rendering a large block
-	// with glamour on every token would stall the UI.
+	// with glamour on every token would stall the UI. Edge newlines are
+	// trimmed (models open content with blank lines, and reasoning-adjacent
+	// answers start with them); they would stack onto the block separator
+	// into walls of empty space.
 	if m.renderer != nil && m.streaming {
-		return block.text
+		return strings.Trim(block.text, "\n\r")
 	}
-	out := block.text
+	out := strings.Trim(block.text, "\n\r")
 	if m.renderer != nil {
 		if rendered, err := m.renderer.Render(block.text); err == nil {
 			out = strings.Trim(rendered, "\n")
@@ -138,8 +141,12 @@ func (m *model) piece(i int) string {
 			// Collapsed reasoning: a single dim line, like a tool card head.
 			return thinkingStyle.Render("▸ thinking…")
 		}
+		// Reasoning deltas carry the model's raw edge newlines: reasoning
+		// opens with blank lines and closes the same way. Rendering them
+		// stacks onto the "\n\n" block separator into walls of empty space,
+		// so trim the edges and keep the interior paragraph breaks.
 		// Render reasoning in Pi style: pure gray italic, no label.
-		return thinkingStyle.Render(block.text)
+		return thinkingStyle.Render(strings.Trim(block.text, "\n\r"))
 	case blockTool:
 		if block.run != nil {
 			switch m.toolLevel {
