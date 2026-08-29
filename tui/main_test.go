@@ -1732,10 +1732,12 @@ func TestSwitchSessionClearsViewport(t *testing.T) {
 func TestThinkingRenderingTrimsEdgeNewlines(t *testing.T) {
 	m := newTestModel()
 	m.addBlock(blockUser, "hi there")
-	// DeepSeek-style reasoning deltas: reasoning opens with blank lines,
-	// has interior paragraph breaks, and closes with blank lines before
-	// the content starts (which itself opens with blank lines).
-	for _, delta := range []string{"\n\nOkay, let's think", " about this.\n\n", "First step.\n\nSecond step.\n\n"} {
+	// Gateway-style reasoning deltas: reasoning opens with blank lines,
+	// paragraphs are separated by runs of newlines (often several, since
+	// each delta carries its own trailing breaks), and it closes with
+	// blank lines before the content starts.
+	for _, delta := range []string{"\n\nOkay, let's think", " about this.\n\n\n",
+		"First step.\n\n\n\n\n\n\nSecond step.\n\n"} {
 		m.appendStreamingText(blockThinking, &m.thinkingIdx, delta)
 	}
 	m.appendStreamingText(blockAssistant, &m.assistantIdx, "\n\nHere is the answer.")
@@ -1746,14 +1748,15 @@ func TestThinkingRenderingTrimsEdgeNewlines(t *testing.T) {
 	// lipgloss pads interior empty lines with spaces; normalize them back
 	// to truly empty lines for the structure checks.
 	out = blankLineRe.ReplaceAllString(out, "")
-	// No wall of blank rows: at most one blank line between blocks.
+	// Interior blank-line runs collapse to a single newline: paragraphs
+	// flow directly after one another. Only the block separator's single
+	// blank line (\n\n) may appear anywhere.
 	if strings.Contains(out, "\n\n\n") {
-		t.Fatalf("rendered transcript stacks blank lines:\n%q", out)
+		t.Fatalf("rendered transcript kept blank lines:\n%q", out)
 	}
-	// Interior paragraph breaks are model formatting and must survive
-	// (lines may carry trailing padding spaces).
-	if !regexp.MustCompile(`First step\. +\n\nSecond step\.`).MatchString(out) {
-		t.Fatalf("interior paragraph break lost:\n%q", out)
+	// The paragraph flow survives (lines may carry trailing padding spaces).
+	if !regexp.MustCompile(`First step\. +\nSecond step\.`).MatchString(out) {
+		t.Fatalf("paragraph flow lost:\n%q", out)
 	}
 	if !strings.Contains(out, "Here is the answer.") {
 		t.Fatalf("assistant content lost:\n%q", out)
