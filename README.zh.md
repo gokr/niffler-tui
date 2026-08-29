@@ -1,6 +1,6 @@
 # niffler-tui
 
-[English](README.md) · 简体中文
+[English](README.md) · [简体中文](README.zh.md) · 繁體中文 · [Discord](https://discord.gg/ThJFEAJUAk)
 
 Niffler 的 Bubble Tea 终端客户端。和桌面 UI 一样，它是个总线客户端：
 经 `svc.core.call` 驱动 `session` 调用，并渲染 `ev.session.*` 的 token、
