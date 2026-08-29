@@ -260,7 +260,9 @@ func newModel(ctx context.Context, comp *sdk.Component, session, natsURL string)
 	input.CharLimit = 0
 	input.MaxHeight = maxInputHeight
 	input.DynamicHeight = true
-	input.MinHeight = 1
+	// MinHeight 3: a single-line input visually blends into the transcript
+	// above it — three rows keep the prompt clearly its own zone.
+	input.MinHeight = 3
 	input.ShowLineNumbers = false
 	focusCmd := input.Focus()
 
