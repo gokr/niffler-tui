@@ -66,14 +66,32 @@ func (m model) executeLocalCommand(command string) (tea.Model, tea.Cmd) {
 	}
 
 	switch name {
+	case "locale":
+		arg := strings.TrimSpace(argument)
+		if arg == "" {
+			arg = string(m.loc)
+		}
+		loc, ok := validLocale(arg)
+		if !ok {
+			m.addBlock(blockError, t(m.loc, "locale.invalid", arg))
+			m.syncViewport(true)
+			return m, nil
+		}
+		m.loc = loc
+		m.input.Placeholder = t(loc, "input.placeholder")
+		persistLocale(loc)
+		m.addBlock(blockMeta, t(m.loc, "locale.switched", arg))
+		m.syncViewport(true)
+		return m, nil
+
 	case "provider", "providers":
 		if !m.connected {
-			m.contextNote = "not connected"
+			m.contextNote = t(m.loc, "note.notConnected")
 			return m, nil
 		}
 		if argument != "" {
 			if m.busy {
-				m.contextNote = "provider changes apply between turns"
+				m.contextNote = t(m.loc, "note.betweenTurnsProvider")
 				return m, nil
 			}
 			m.controlPending = true
@@ -100,11 +118,11 @@ func (m model) executeLocalCommand(command string) (tea.Model, tea.Cmd) {
 
 	case "connect":
 		if !m.connected {
-			m.contextNote = "not connected"
+			m.contextNote = t(m.loc, "note.notConnected")
 			return m, nil
 		}
 		if m.busy {
-			m.contextNote = "provider changes apply between turns"
+			m.contextNote = t(m.loc, "note.betweenTurnsProvider")
 			return m, nil
 		}
 		m.openCatalogProviderSelector()
@@ -112,11 +130,11 @@ func (m model) executeLocalCommand(command string) (tea.Model, tea.Cmd) {
 
 	case "model", "models":
 		if !m.connected {
-			m.contextNote = "not connected"
+			m.contextNote = t(m.loc, "note.notConnected")
 			return m, nil
 		}
 		if m.busy {
-			m.contextNote = "model changes apply between turns"
+			m.contextNote = t(m.loc, "note.betweenTurnsModel")
 			return m, nil
 		}
 		if argument != "" {
@@ -128,7 +146,7 @@ func (m model) executeLocalCommand(command string) (tea.Model, tea.Cmd) {
 				m.runtime.Model = argument
 			}
 			m.controlPending = true
-			m.contextNote = "saving conversation model…"
+			m.contextNote = t(m.loc, "note.savingModel")
 			return m, setConversationModelCmd(m.comp, m.session, m.modelOverride, previous)
 		}
 		m.openModelSelector()
@@ -167,45 +185,44 @@ func (m model) executeLocalCommand(command string) (tea.Model, tea.Cmd) {
 			m.mouse = argument == "on"
 		}
 		if m.mouse {
-			m.addBlock(blockMeta, "mouse on — wheel scrolls the transcript; click a tool card to expand it "+
-				"(ctrl+t toggles all); copy with shift+drag")
+			m.addBlock(blockMeta, t(m.loc, "chat.mouseOn"))
 		} else {
-			m.addBlock(blockMeta, "mouse off — native plain-drag copy; wheel is terminal-scroll (transcript: "+
-				"pgup/pgdn/ctrl+up)")
+			m.addBlock(blockMeta, t(m.loc, "chat.mouseOff"))
 		}
 		m.syncViewport(true)
 		return m, nil
 
 	case "help", "?":
 		m.addBlock(blockMeta, strings.Join([]string{
-			"local commands:",
-			"  /provider [nickname|environment]  choose the global provider (e: edit, d: remove selected)",
-			"  /model [id|default]   choose this conversation's model",
-			"  /connect              store a provider connection",
-			"  /status               show provider/model/context details",
-			"  /mouse [on|off]       tool-card click expansion (off = native copy)",
-			"  /help                 show this help",
+			t(m.loc, "help.title"),
+			t(m.loc, "help.provider"),
+			t(m.loc, "help.model"),
+			t(m.loc, "help.connect"),
+			t(m.loc, "help.status"),
+			t(m.loc, "help.mouse"),
+			t(m.loc, "help.locale"),
+			t(m.loc, "help.help"),
 		}, "\n"))
 		m.syncViewport(true)
 		return m, nil
 
 	default:
-		m.addBlock(blockError, "unknown local command /"+name+" (try /help)")
+		m.addBlock(blockError, t(m.loc, "chat.unknownCommand", name))
 		m.syncViewport(true)
 		return m, nil
 	}
 }
 
 func (m *model) openProviderSelector() {
-	m.selector = newSelector("Providers — global default",
-		providerSelectorItems(m.providers, m.providerStatus), m.width, m.height-3)
+	m.selector = newSelector(t(m.loc, "selector.providers"),
+		providerSelectorItems(m.loc, m.providers, m.providerStatus), m.width, m.height-3)
 	m.mode = modeProviders
 	m.layout()
 }
 
 func (m *model) openCatalogProviderSelector() {
-	m.selector = newSelector("Connect provider — choose a catalog template",
-		catalogProviderItems(m.configuredCatalogProviders()), m.width, m.height-3)
+	m.selector = newSelector(t(m.loc, "selector.connectCatalog"),
+		catalogProviderItems(m.loc, m.configuredCatalogProviders()), m.width, m.height-3)
 	m.mode = modeCatalogProviders
 	m.layout()
 }
@@ -214,15 +231,15 @@ func (m *model) openCatalogProviderSelector() {
 // placeholder; the selector is rebuilt with the loaded list in the
 // sessionListMsg handler.
 func (m *model) sessionListSelecting() {
-	m.selector = newSelector("Sessions — loading…", nil, m.width, m.height-3)
+	m.selector = newSelector(t(m.loc, "selector.sessionsLoading"), nil, m.width, m.height-3)
 	m.mode = modeSessions
 	m.layout()
 }
 
 // openSessionSelector rebuilds the /session list with the fetched sessions.
 func (m *model) openSessionSelector(sessions []sessionSummary) {
-	m.selector = newSelector("Sessions",
-		sessionSelectorItems(m.session, sessions), m.width, m.height-3)
+	m.selector = newSelector(t(m.loc, "selector.sessions"),
+		sessionSelectorItems(m.loc, m.session, sessions), m.width, m.height-3)
 	m.mode = modeSessions
 	m.layout()
 }
@@ -248,7 +265,7 @@ func (m model) configuredCatalogProviders() []catalogProvider {
 }
 
 func (m *model) openModelSelector() {
-	title := "Models"
+	title := t(m.loc, "selector.models")
 	if m.runtime.Provider != "" {
 		title += " — " + m.runtime.Provider
 	}
@@ -263,7 +280,7 @@ func (m *model) openModelSelector() {
 		title += fmt.Sprintf(" (%d)", len(models))
 	}
 	m.selector = newSelector(title,
-		modelSelectorItems(models, m.runtime, m.modelOverride, m.providerDefaultModel()), m.width, m.height-3)
+		modelSelectorItems(m.loc, models, m.runtime, m.modelOverride, m.providerDefaultModel()), m.width, m.height-3)
 	m.mode = modeModels
 	m.layout()
 }
@@ -340,7 +357,7 @@ func (m model) handleControlKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			switch key {
 			case "e":
 				if p, ok := selected.payload.(providerSummary); ok {
-					m.providerForm = newEditProviderForm(p, m.width)
+					m.providerForm = newEditProviderForm(p, m.width, m.loc)
 					m.mode = modeConnectForm
 					m.providerConfirmDelete = ""
 					m.layout()
@@ -380,7 +397,7 @@ func (m model) handleControlKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	switch m.mode {
 	case modeProviders:
 		if m.busy {
-			m.contextNote = "provider changes apply between turns"
+			m.contextNote = t(m.loc, "note.betweenTurnsProvider")
 			m.mode = modeChat
 			return m, nil
 		}
@@ -404,7 +421,7 @@ func (m model) handleControlKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			value := selected.payload.(catalogProvider)
 			template = &value
 		}
-		m.providerForm = newProviderForm(template, m.runtime, m.width)
+		m.providerForm = newProviderForm(template, m.runtime, m.width, m.loc)
 		m.mode = modeConnectForm
 		m.layout()
 		return m, nil
@@ -425,7 +442,7 @@ func (m model) handleControlKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		}
 		m.mode = modeChat
 		m.controlPending = true
-		m.contextNote = "saving conversation model…"
+		m.contextNote = t(m.loc, "note.savingModel")
 		m.layout()
 		return m, setConversationModelCmd(m.comp, m.session, m.modelOverride, previous)
 	case modeSessions:
@@ -468,18 +485,18 @@ func (m model) submitProviderForm() (tea.Model, tea.Cmd) {
 
 func (m model) detailedRuntimeStatus() string {
 	lines := []string{
-		"provider: " + valueOr(m.runtime.Provider, "unknown") + " (" + valueOr(m.runtime.ProviderSource, "unknown source") + ")",
-		"model: " + valueOr(m.runtime.Model, "unknown"),
-		"catalog: " + valueOr(m.runtime.Catalog, "none"),
-		"context: " + formatTokens(m.runtime.Context) + " (" + valueOr(m.runtime.ContextSource, "unknown source") + ")",
-		"output: " + formatTokens(m.runtime.Output) + " (" + valueOr(m.runtime.OutputSource, "unknown source") + ")",
-		"used: " + formatTokens(m.contextUsed) + fmt.Sprintf(" (%.1f%%)", contextPercent(m.contextUsed, m.runtime.Context)*100),
+		t(m.loc, "status.detailProvider", valueOr(m.runtime.Provider, t(m.loc, "status.unknown")), valueOr(m.runtime.ProviderSource, t(m.loc, "status.unknownSource"))),
+		t(m.loc, "status.detailModel", valueOr(m.runtime.Model, t(m.loc, "status.unknown"))),
+		t(m.loc, "status.detailCatalog", valueOr(m.runtime.Catalog, t(m.loc, "status.none"))),
+		t(m.loc, "status.detailContext", formatTokens(m.runtime.Context), valueOr(m.runtime.ContextSource, t(m.loc, "status.unknownSource"))),
+		t(m.loc, "status.detailOutput", formatTokens(m.runtime.Output), valueOr(m.runtime.OutputSource, t(m.loc, "status.unknownSource"))),
+		t(m.loc, "status.detailUsed", formatTokens(m.contextUsed), fmt.Sprintf("%.1f%%", contextPercent(m.contextUsed, m.runtime.Context)*100)),
 	}
 	if m.providerStatus.Provider.StripPrefix {
-		lines = append(lines, "strip model prefix: on")
+		lines = append(lines, t(m.loc, "status.detailStrip"))
 	}
 	if m.modelOverride != "" {
-		lines = append(lines, "session model override: "+m.modelOverride)
+		lines = append(lines, t(m.loc, "status.detailOverride", m.modelOverride))
 	}
 	return strings.Join(lines, "\n")
 }

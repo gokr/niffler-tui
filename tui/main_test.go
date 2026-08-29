@@ -669,7 +669,7 @@ func TestRuntimeStatusAndContextUsage(t *testing.T) {
 	if m.contextUsed != 250_000 || contextPercent(m.contextUsed, m.runtime.Context) != 0.25 {
 		t.Fatalf("context = used:%d limit:%d", m.contextUsed, m.runtime.Context)
 	}
-	line := runtimeStatusLine(m.runtime, "deepseek-v4-pro", m.contextUsed, 80)
+	line := runtimeStatusLine(LocaleEN, m.runtime, "deepseek-v4-pro", m.contextUsed, 80)
 	if ansi.StringWidth(line) > 79 || !strings.Contains(ansi.Strip(line), "25%") {
 		t.Fatalf("runtime line width/content = %d %q", ansi.StringWidth(line), ansi.Strip(line))
 	}
@@ -686,7 +686,7 @@ func TestRuntimeStatusAndContextUsage(t *testing.T) {
 
 func TestProviderFormMasksSecretAndValidates(t *testing.T) {
 	template := catalogProvider{ID: "deepseek", Name: "DeepSeek", API: "https://api.deepseek.com"}
-	form := newProviderForm(&template, runtimeResolution{Catalog: "deepseek", Model: "deepseek-chat"}, 80)
+	form := newProviderForm(&template, runtimeResolution{Catalog: "deepseek", Model: "deepseek-chat"}, 80, LocaleEN)
 	form.inputs[providerFieldAPIKey].SetValue("sk-super-secret")
 	view := form.view(80)
 	if strings.Contains(view, "sk-super-secret") {
@@ -705,7 +705,7 @@ func TestEditProviderFormPrefillsAndAllowsEmptyKey(t *testing.T) {
 	form := newEditProviderForm(providerSummary{
 		Nickname: "deepseek", BaseURL: "https://api.deepseek.com",
 		Catalog: "deepseek", Model: "deepseek-chat", Context: 65536,
-	}, 80)
+	}, 80, LocaleEN)
 	if form.inputs[providerFieldNickname].Value() != "deepseek" {
 		t.Fatal("nickname not prefilled")
 	}
@@ -783,7 +783,7 @@ func TestProviderSelectorEditAndDeleteKeys(t *testing.T) {
 func TestPasteRoutesToProviderFormNotChatInput(t *testing.T) {
 	m := newTestModel()
 	m.mode = modeConnectForm
-	m.providerForm = newProviderForm(nil, runtimeResolution{}, 80)
+	m.providerForm = newProviderForm(nil, runtimeResolution{}, 80, LocaleEN)
 	m.providerForm.focusField(providerFieldAPIKey)
 
 	updated, _ := m.Update(tea.PasteMsg{Content: "sk-pasted-key"})
@@ -818,7 +818,7 @@ func TestPasteIgnoredInSelectorMode(t *testing.T) {
 }
 
 func TestCatalogProviderSelectorOnlyOffersCompatibleTemplates(t *testing.T) {
-	items := catalogProviderItems([]catalogProvider{
+	items := catalogProviderItems(LocaleEN, []catalogProvider{
 		{ID: "deepseek", Name: "DeepSeek", NPM: "@ai-sdk/openai-compatible"},
 		{ID: "anthropic", Name: "Anthropic", NPM: "@ai-sdk/anthropic"},
 		{ID: "openrouter", Name: "OpenRouter", NPM: "@openrouter/ai-sdk-provider"},
@@ -834,7 +834,7 @@ func TestCatalogProviderSelectorOnlyOffersCompatibleTemplates(t *testing.T) {
 
 	// Internal actions are typed, so even an awkward but valid provider
 	// nickname cannot be mistaken for the environment action.
-	providerItems := providerSelectorItems([]providerSummary{{Nickname: "__environment__"}}, providerStatusResponse{})
+	providerItems := providerSelectorItems(LocaleEN, []providerSummary{{Nickname: "__environment__"}}, providerStatusResponse{})
 	foundProviderCollision := false
 	for _, raw := range providerItems {
 		item := raw.(selectorItem)
@@ -888,7 +888,7 @@ func TestRuntimeRefreshKeepsSuccessfulResolutionOnOptionalFailure(t *testing.T) 
 func TestProviderChangeRetainsConversationModelAndClearsFormSecret(t *testing.T) {
 	m := newTestModel()
 	m.modelOverride = "conversation-model"
-	m.providerForm = newProviderForm(nil, runtimeResolution{}, 80)
+	m.providerForm = newProviderForm(nil, runtimeResolution{}, 80, LocaleEN)
 	m.providerForm.inputs[providerFieldAPIKey].SetValue("sk-never-retain")
 	updated, _ := m.Update(providerActionMsg{Action: "switch", Nickname: "work"})
 	got := updated.(model)
@@ -1360,7 +1360,7 @@ func TestRuntimeOutputLimitSurfaced(t *testing.T) {
 	if !strings.Contains(status, "output: 32.8k (fallback)") {
 		t.Fatalf("detailed status missing output limit: %q", status)
 	}
-	line := runtimeStatusLine(m.runtime, "", 0, 80)
+	line := runtimeStatusLine(LocaleEN, m.runtime, "", 0, 80)
 	if ansi.StringWidth(line) > 79 {
 		t.Fatalf("runtime line too wide: %d", ansi.StringWidth(line))
 	}
@@ -1504,7 +1504,7 @@ func TestSessionSelectorEnterSwitchesOrDismisses(t *testing.T) {
 	m := newTestModel()
 	m.session = "current"
 	m.mode = modeSessions
-	m.selector = newSelector("Sessions", sessionSelectorItems("current", []sessionSummary{
+	m.selector = newSelector("Sessions", sessionSelectorItems(LocaleEN, "current", []sessionSummary{
 		{ID: "current", Title: "Current"},
 		{ID: "other", Title: "Other"},
 	}), 80, 20)
@@ -1526,7 +1526,7 @@ func TestSessionSelectorEnterSwitchesOrDismisses(t *testing.T) {
 	// Re-open the browser (as a user navigating the list would) and select
 	// the other session; Enter switches to it and re-bootstraps.
 	got.mode = modeSessions
-	got.selector = newSelector("Sessions", sessionSelectorItems("current", []sessionSummary{
+	got.selector = newSelector("Sessions", sessionSelectorItems(LocaleEN, "current", []sessionSummary{
 		{ID: "current", Title: "Current"},
 		{ID: "other", Title: "Other"},
 	}), 80, 20)

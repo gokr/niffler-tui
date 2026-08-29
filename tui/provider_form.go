@@ -28,10 +28,11 @@ type providerForm struct {
 	edit     bool // editing an existing provider (nickname locked, key optional)
 	err      string
 	saving   bool
+	loc      Locale
 }
 
-func newProviderForm(template *catalogProvider, runtime runtimeResolution, width int) providerForm {
-	form := newProviderFormFields(width)
+func newProviderForm(template *catalogProvider, runtime runtimeResolution, width int, loc Locale) providerForm {
+	form := newProviderFormFields(width, loc)
 	if template != nil {
 		form.template = template.Name
 		if form.template == "" {
@@ -44,7 +45,7 @@ func newProviderForm(template *catalogProvider, runtime runtimeResolution, width
 			form.inputs[providerFieldModel].SetValue(runtime.Model)
 		}
 	} else {
-		form.template = "Custom OpenAI-compatible"
+		form.template = t(loc, "selector.customProvider")
 	}
 	form.focusField(0)
 	return form
@@ -53,8 +54,8 @@ func newProviderForm(template *catalogProvider, runtime runtimeResolution, width
 // newEditProviderForm builds a form pre-filled from an existing provider so the
 // user can edit its non-secret settings (and optionally rotate the key) without
 // re-typing a credential. The nickname is immutable (the backend updates by it).
-func newEditProviderForm(p providerSummary, width int) providerForm {
-	form := newProviderFormFields(width)
+func newEditProviderForm(p providerSummary, width int, loc Locale) providerForm {
+	form := newProviderFormFields(width, loc)
 	form.edit = true
 	form.template = p.Nickname
 	form.inputs[providerFieldNickname].SetValue(p.Nickname)
@@ -64,32 +65,33 @@ func newEditProviderForm(p providerSummary, width int) providerForm {
 	if p.Context > 0 {
 		form.inputs[providerFieldContext].SetValue(strconv.Itoa(p.Context))
 	}
-	form.inputs[providerFieldAPIKey].Placeholder = "leave blank to keep"
-	form.inputs[providerFieldNickname].Prompt = "Nickname (locked) "
+	form.inputs[providerFieldAPIKey].Placeholder = t(loc, "form.leaveBlankToKeep")
+	form.inputs[providerFieldNickname].Prompt = t(loc, "form.prompt.nickname") + " "
 	form.focusField(providerFieldBaseURL)
 	return form
 }
 
 // newProviderFormFields allocates the raw text inputs shared by the add and
 // edit forms (masked key field, width, char limits).
-func newProviderFormFields(width int) providerForm {
+func newProviderFormFields(width int, loc Locale) providerForm {
 	prompts := []string{
-		"Nickname   ",
-		"Base URL   ",
-		"API key    ",
-		"Catalog ID ",
-		"Model       ",
-		"Context     ",
+		t(loc, "form.prompt.nickname"),
+		t(loc, "form.prompt.baseUrl"),
+		t(loc, "form.prompt.apiKey"),
+		t(loc, "form.prompt.catalog"),
+		t(loc, "form.prompt.model"),
+		t(loc, "form.prompt.context"),
 	}
 	placeholders := []string{
 		"work-openrouter",
 		"https://openrouter.ai/api/v1",
-		"required",
-		"models.dev provider id (optional)",
-		"provider-specific model id",
-		"0 = auto",
+		t(loc, "form.placeholder.apiKey"),
+		t(loc, "form.placeholder.catalog"),
+		t(loc, "form.placeholder.model"),
+		t(loc, "form.placeholder.context"),
 	}
 	var form providerForm
+	form.loc = loc
 	for i := range form.inputs {
 		input := textinput.New()
 		input.Prompt = prompts[i]
@@ -147,26 +149,26 @@ func (f providerForm) values() (providerFormValues, error) {
 		Model:    strings.TrimSpace(f.inputs[providerFieldModel].Value()),
 	}
 	if values.Nickname == "" && !f.edit {
-		return providerFormValues{}, fmt.Errorf("nickname is required")
+		return providerFormValues{}, fmt.Errorf("%s", t(f.loc, "form.nicknameRequired"))
 	}
 	if values.APIKey == "" && !f.edit {
-		return providerFormValues{}, fmt.Errorf("API key is required (use a placeholder for a keyless local endpoint)")
+		return providerFormValues{}, fmt.Errorf("%s", t(f.loc, "form.apiKeyRequired"))
 	}
 	if values.BaseURL == "" {
-		return providerFormValues{}, fmt.Errorf("base URL is required")
+		return providerFormValues{}, fmt.Errorf("%s", t(f.loc, "form.baseUrlRequired"))
 	}
 	parsed, err := url.Parse(values.BaseURL)
 	if err != nil || parsed.Host == "" || (parsed.Scheme != "http" && parsed.Scheme != "https") {
-		return providerFormValues{}, fmt.Errorf("base URL must be an http(s) URL")
+		return providerFormValues{}, fmt.Errorf("%s", t(f.loc, "form.baseUrlInvalid"))
 	}
 	if values.Model == "" {
-		return providerFormValues{}, fmt.Errorf("model is required")
+		return providerFormValues{}, fmt.Errorf("%s", t(f.loc, "form.modelRequired"))
 	}
 	contextText := strings.TrimSpace(f.inputs[providerFieldContext].Value())
 	if contextText != "" && contextText != "0" {
 		contextSize, err := strconv.Atoi(contextText)
 		if err != nil || contextSize < 0 {
-			return providerFormValues{}, fmt.Errorf("context must be a non-negative integer")
+			return providerFormValues{}, fmt.Errorf("%s", t(f.loc, "form.contextInvalid"))
 		}
 		values.Context = contextSize
 	}
@@ -179,15 +181,15 @@ func (f *providerForm) clearSecret() {
 
 func (f providerForm) view(width int) string {
 	var out strings.Builder
-	title := "Connect provider — " + f.template
+	title := t(f.loc, "form.connectTitle", f.template)
 	if f.edit {
-		title = "Edit provider — " + f.template
+		title = t(f.loc, "form.editTitle", f.template)
 	}
 	out.WriteString(headerStyle.Render(title))
 	out.WriteString("\n\n")
-	meta := "OpenAI-compatible endpoint; credentials are stored by Niffler and never added to chat history."
+	meta := t(f.loc, "form.connectMeta")
 	if f.edit {
-		meta = "Editing " + f.template + "; leave API key blank to keep the stored credential."
+		meta = t(f.loc, "form.editMeta", f.template)
 	}
 	out.WriteString(metaStyle.Render(meta))
 	out.WriteString("\n\n")
@@ -201,9 +203,9 @@ func (f providerForm) view(width int) string {
 		out.WriteByte('\n')
 	}
 	if f.saving {
-		out.WriteString(metaStyle.Render("saving provider…"))
+		out.WriteString(metaStyle.Render(t(f.loc, "form.saving")))
 	} else {
-		out.WriteString(metaStyle.Render("tab/shift+tab: field  •  enter: next/save  •  ctrl+s: save  •  esc: cancel"))
+		out.WriteString(metaStyle.Render(t(f.loc, "form.keys")))
 	}
 	panel := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).

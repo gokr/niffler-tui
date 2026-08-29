@@ -98,6 +98,7 @@ type model struct {
 	comp     *sdk.Component
 	session  string
 	natsURL  string
+	loc      Locale
 	viewport viewport.Model
 	input    textarea.Model
 	spinner  spinner.Model
@@ -229,7 +230,8 @@ func configureKeymaps(input *textarea.Model, view *viewport.Model) {
 func newModel(ctx context.Context, comp *sdk.Component, session, natsURL string) model {
 	input := textarea.New()
 	input.Prompt = "> "
-	input.Placeholder = "message (alt+enter: newline)"
+	loc := detectLocale()
+	input.Placeholder = t(loc, "input.placeholder")
 	input.CharLimit = 0
 	input.MaxHeight = maxInputHeight
 	input.DynamicHeight = true
@@ -254,6 +256,7 @@ func newModel(ctx context.Context, comp *sdk.Component, session, natsURL string)
 		comp:         comp,
 		session:      session,
 		natsURL:      natsURL,
+		loc:          loc,
 		viewport:     view,
 		input:        input,
 		spinner:      spin,
@@ -386,7 +389,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case connectedMsg:
 		m.connected = true
-		m.addBlock(blockMeta, "connected to "+m.natsURL+"; session "+m.session)
+		m.addBlock(blockMeta, t(m.loc, "note.connected", m.natsURL, m.session))
 		m.syncViewport(true)
 		cmds = append(cmds, bootstrapBackendCmd(m.comp, m.session))
 
@@ -626,7 +629,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "strip":
 			label = "strip model prefix: " + msg.Detail + " — " + msg.Nickname
 		case "environment":
-			label = "using environment default"
+			label = t(m.loc, "chat.usingEnvironment")
 		}
 		if msg.Err != nil {
 			if msg.Action == "add" || msg.Action == "update" {
@@ -688,9 +691,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.contextNote = msg.Warning
 		label := msg.Selected
 		if label == "" {
-			label = "provider default"
+			label = t(m.loc, "selector.providerDefault")
 		}
-		m.addBlock(blockMeta, "conversation model: "+label)
+		m.addBlock(blockMeta, t(m.loc, "chat.conversationModel", label))
 		m.syncViewport(true)
 
 	case providerBusEventMsg:
@@ -810,6 +813,15 @@ func (m *model) applySessionEvent(msg sessionEventMsg) tea.Cmd {
 			m.markTranscriptDirty()
 			m.assistantIdx = idx
 			m.hadAssistant = true
+		}
+		// Round closed: finalize the trailing thinking block too. Only
+		// assistant blocks used to be finalized, so the streamingBlock
+		// reuse scan kept appending every later round's reasoning into
+		// the first round's thinking block, stacking it all above the
+		// conversation.
+		if idx := m.streamingBlock(blockThinking, m.thinkingIdx); idx >= 0 {
+			m.blocks[idx].finalized = true
+			m.markTranscriptDirty()
 		}
 		m.roundClosed = true
 
@@ -1087,18 +1099,18 @@ func (m *model) ensureRenderer(width int) {
 }
 
 func (m model) searchView() string {
-	preview := "(no match)"
+	preview := t(m.loc, "search.noMatch")
 	if m.searchIdx >= 0 && m.searchIdx < len(m.history) {
 		preview = strings.NewReplacer("\r\n", " ↵ ", "\n", " ↵ ", "\r", " ↵ ").Replace(m.history[m.searchIdx])
 	}
-	line := "(reverse-i-search)`" + m.searchQuery + "`: " + preview
+	line := t(m.loc, "search.prompt", m.searchQuery, preview)
 	return metaStyle.Render(truncate(line, max(1, m.width-1)))
 }
 
 func (m model) View() tea.View {
 	header := headerStyle.Render("Niffler") + metaStyle.Render(" / "+m.session)
 	const headerSep = "  │  "
-	runtimeLine := runtimeStatusLine(m.runtime, m.modelOverride, m.contextUsed, max(0, m.width-ansi.StringWidth(header)-ansi.StringWidth(headerSep)))
+	runtimeLine := runtimeStatusLine(m.loc, m.runtime, m.modelOverride, m.contextUsed, max(0, m.width-ansi.StringWidth(header)-ansi.StringWidth(headerSep)))
 	headerLine := header + headerSep + runtimeLine
 	makeView := func(content string) tea.View {
 		view := tea.NewView(content)
@@ -1128,18 +1140,18 @@ func (m model) View() tea.View {
 		case modeProviders, modeCatalogProviders, modeModels, modeSessions:
 			control = m.selector.list.View()
 			parts = append(parts, control)
-			footer := "/: filter  •  enter: choose  •  esc: back"
+			footer := t(m.loc, "footer.filterChoose")
 			if m.mode == modeProviders {
 				if m.providerDeleteErr != "" {
 					footer = errorStyle.Render(m.providerDeleteErr)
 				} else if m.providerConfirmDelete != "" {
-					footer = errorStyle.Render("Remove " + m.providerConfirmDelete + "? press d/x again to confirm, esc to cancel")
+					footer = errorStyle.Render(t(m.loc, "footer.confirmRemove", m.providerConfirmDelete))
 				} else {
-					footer = "/: filter  •  enter: switch  •  e: edit  •  d: remove  •  esc: back"
+					footer = t(m.loc, "footer.filterSwitch")
 				}
 			}
 			if m.controlPending {
-				footer = "updating settings…"
+				footer = t(m.loc, "status.updating") + "…"
 			} else if m.contextNote != "" {
 				footer = m.contextNote
 			}
@@ -1150,28 +1162,28 @@ func (m model) View() tea.View {
 		return makeView(strings.Join(parts, "\n"))
 	}
 
-	status := "ready"
+	status := t(m.loc, "status.ready")
 	if !m.connected {
-		status = m.spinner.View() + " connecting to " + m.natsURL
+		status = m.spinner.View() + " " + t(m.loc, "status.connecting", m.natsURL)
 	} else if m.busy {
 		// While busy, the status line carries the two-stage stop prompt:
 		// first ESC arms Stop?, second ESC force-cancels the turn.
 		switch {
 		case m.stopping:
-			status = m.spinner.View() + " stopping…"
+			status = m.spinner.View() + " " + t(m.loc, "status.stopping")
 		case m.stopArmed:
-			status = errorStyle.Render("Stop?") + "  (press esc again to cancel)"
+			status = errorStyle.Render(t(m.loc, "status.stopArmed"))
 		default:
-			status = m.spinner.View() + " working"
+			status = m.spinner.View() + " " + t(m.loc, "status.working")
 		}
 	} else if m.controlPending {
-		status = "updating settings"
+		status = t(m.loc, "status.updating")
 	}
 
 	if m.contextNote != "" {
 		status += " | " + m.contextNote
 	} else {
-		status += " | /provider /model /connect /help | alt+enter: newline | ctrl+r: history | ctrl+t: tools | esc: stop | ctrl+c: quit"
+		status += " " + t(m.loc, "status.hint")
 	}
 
 	parts := []string{headerLine, m.viewport.View()}

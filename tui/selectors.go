@@ -1,8 +1,8 @@
 package main
 
 import (
-	"fmt"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -72,10 +72,10 @@ func (s selectorState) selected() (selectorItem, bool) {
 	return item, ok
 }
 
-func providerSelectorItems(providers []providerSummary, status providerStatusResponse) []list.Item {
+func providerSelectorItems(loc Locale, providers []providerSummary, status providerStatusResponse) []list.Item {
 	items := make([]list.Item, 0, len(providers)+2)
-	envTitle := "Environment default (NIF_OPENAI_*)"
-	envDescription := "fallback"
+	envTitle := t(loc, "selector.envDefault")
+	envDescription := t(loc, "selector.fallback")
 	if status.Source == "environment" {
 		envTitle = "● " + envTitle
 		if status.Provider.Model != "" {
@@ -96,7 +96,7 @@ func providerSelectorItems(providers []providerSummary, status providerStatusRes
 			description += " · " + host
 		}
 		if provider.Catalog != "" && provider.Catalog != provider.Nickname {
-			description += " · catalog " + provider.Catalog
+			description += " · " + t(loc, "selector.catalog", provider.Catalog)
 		}
 		items = append(items, selectorItem{
 			kind: selectorProvider,
@@ -106,18 +106,18 @@ func providerSelectorItems(providers []providerSummary, status providerStatusRes
 	}
 	items = append(items, selectorItem{
 		kind: selectorConnect,
-		id:   "__connect__", title: "+ Connect provider",
-		description: "store an API key and OpenAI-compatible endpoint",
+		id:   "__connect__", title: t(loc, "selector.connectProvider"),
+		description: t(loc, "selector.connectProviderDesc"),
 	})
 	return items
 }
 
-func catalogProviderItems(providers []catalogProvider) []list.Item {
+func catalogProviderItems(loc Locale, providers []catalogProvider) []list.Item {
 	items := make([]list.Item, 0, len(providers)+1)
 	items = append(items, selectorItem{
 		kind: selectorCustomProvider,
-		id:   "__custom__", title: "Custom OpenAI-compatible",
-		description: "configure nickname, endpoint, catalog and model manually",
+		id:   "__custom__", title: t(loc, "selector.customProvider"),
+		description: t(loc, "selector.customProviderDesc"),
 	})
 	for _, provider := range providers {
 		if !openAICompatibleProvider(provider) {
@@ -134,9 +134,9 @@ func catalogProviderItems(providers []catalogProvider) []list.Item {
 		if host := endpointHost(provider.API); host != "" {
 			description += " · " + host
 		}
-		description += fmt.Sprintf(" · %d models", provider.ModelCount)
+		description += " · " + t(loc, "selector.modelsCount", strconv.Itoa(provider.ModelCount))
 		if provider.Configured {
-			description += " · connected"
+			description += " · " + t(loc, "selector.connected")
 		}
 		items = append(items, selectorItem{
 			kind: selectorCatalogProvider,
@@ -146,18 +146,18 @@ func catalogProviderItems(providers []catalogProvider) []list.Item {
 	return items
 }
 
-func modelSelectorItems(models []modelSummary, runtime runtimeResolution, modelOverride, providerDefault string) []list.Item {
+func modelSelectorItems(loc Locale, models []modelSummary, runtime runtimeResolution, modelOverride, providerDefault string) []list.Item {
 	items := make([]list.Item, 0, len(models)+1)
 	defaultModel := providerDefault
 	if defaultModel == "" && modelOverride == "" {
 		defaultModel = runtime.Model
 	}
 	if defaultModel == "" {
-		defaultModel = "provider default"
+		defaultModel = t(loc, "selector.providerDefault")
 	}
 	items = append(items, selectorItem{
 		kind: selectorProviderDefaultModel,
-		id:   "__default__", title: "Use provider default",
+		id:   "__default__", title: t(loc, "selector.useProviderDefault"),
 		description: defaultModel,
 	})
 	for _, candidate := range models {
@@ -170,13 +170,13 @@ func modelSelectorItems(models []modelSummary, runtime runtimeResolution, modelO
 		}
 		flags := make([]string, 0, 3)
 		if candidate.Reasoning {
-			flags = append(flags, "reasoning")
+			flags = append(flags, t(loc, "selector.reasoning"))
 		}
 		if candidate.ToolCall {
-			flags = append(flags, "tools")
+			flags = append(flags, t(loc, "selector.tools"))
 		}
 		if candidate.Limit.Context > 0 {
-			flags = append(flags, "ctx "+formatTokens(candidate.Limit.Context))
+			flags = append(flags, t(loc, "selector.ctx", formatTokens(candidate.Limit.Context)))
 		}
 		description := candidate.ID
 		if len(flags) > 0 {
@@ -211,12 +211,12 @@ func endpointHost(raw string) string {
 
 // sessionSelectorItems builds the /session list: the current session first,
 // then every stored conversation (newest first), plus a "new session" entry.
-func sessionSelectorItems(current string, sessions []sessionSummary) []list.Item {
+func sessionSelectorItems(loc Locale, current string, sessions []sessionSummary) []list.Item {
 	items := make([]list.Item, 0, len(sessions)+2)
 	items = append(items, selectorItem{
 		kind: selectorNewSession,
-		id:   "__new__", title: "+ New session",
-		description: "start a fresh conversation",
+		id:   "__new__", title: t(loc, "selector.newSession"),
+		description: t(loc, "selector.newSessionDesc"),
 	})
 	for _, s := range sessions {
 		title := s.ID
