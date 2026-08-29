@@ -1706,6 +1706,24 @@ func TestSessionSelectorEnterSwitchesOrDismisses(t *testing.T) {
 	}
 }
 
+func TestSwitchSessionClearsViewport(t *testing.T) {
+	m := newTestModel()
+	m.session = "old"
+	m.addBlock(blockUser, "previous conversation")
+	m.syncViewport(true)
+	if m.viewportContent == "" {
+		t.Fatal("precondition: viewport should hold the old transcript")
+	}
+
+	got := m.switchSession("conv-new")
+	if len(got.blocks) != 0 {
+		t.Fatalf("blocks not cleared after switch: %d", len(got.blocks))
+	}
+	if got.viewportContent != "" {
+		t.Fatalf("viewport still shows the old transcript after switch: %q", got.viewportContent)
+	}
+}
+
 func TestBootstrapMsgFromOtherSessionIgnored(t *testing.T) {
 	m := newTestModel()
 	m.session = "new"
