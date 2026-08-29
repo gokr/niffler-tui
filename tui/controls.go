@@ -28,6 +28,7 @@ func (m model) switchSession(id string) model {
 	m.renderTimerActive = false
 	m.contextNote = ""
 	m.modelOverride = ""
+	m.thinkingEffort = ""
 	m.runtime = runtimeResolution{}
 	m.promptTokens = 0
 	m.contextUsed = 0
@@ -46,6 +47,9 @@ func (m model) switchSession(id string) model {
 	m.histIdx = -1
 	m.draft = ""
 	m.input.SetValue("")
+	// Completion state is per-input, not per-session: the cleared input
+	// invalidates any active candidate list.
+	m.slashComp = slashCompleteState{}
 	m.historyFile = historyFilePath(id)
 	m.history = loadHistory(m.historyFile)
 	// The viewport only repaints through syncViewport; without this the
@@ -197,8 +201,10 @@ func (m model) executeLocalCommand(command string) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case "help", "?":
-		m.addBlock(blockMeta, strings.Join([]string{
+		lines := []string{
 			t(m.loc, "help.title"),
+			t(m.loc, "help.new"),
+			t(m.loc, "help.session"),
 			t(m.loc, "help.provider"),
 			t(m.loc, "help.model"),
 			t(m.loc, "help.connect"),
@@ -206,12 +212,31 @@ func (m model) executeLocalCommand(command string) (tea.Model, tea.Cmd) {
 			t(m.loc, "help.mouse"),
 			t(m.loc, "help.locale"),
 			t(m.loc, "help.help"),
-		}, "\n"))
+			"",
+			t(m.loc, "help.keys"),
+		}
+		if plugins := m.slash.pluginCommands(); len(plugins) > 0 {
+			lines = append(lines, "", t(m.loc, "help.pluginTitle"))
+			for _, cmd := range plugins {
+				line := "  /" + cmd.Name
+				if cmd.Description != "" {
+					line += " — " + cmd.Description
+				}
+				lines = append(lines, line+" ("+cmd.Component+")")
+			}
+		}
+		m.addBlock(blockMeta, strings.Join(lines, "\n"))
 		m.syncViewport(true)
 		return m, nil
 
 	default:
-		m.addBlock(blockError, t(m.loc, "chat.unknownCommand", name))
+		// Registered commands (docs/WIRE.md): parse against the declared
+		// params and issue the target tool call. Built-ins shadow any
+		// same-named registration, so only non-builtins reach this.
+		if cmd, ok := m.slash.lookup(name); ok && !cmd.builtin {
+			return m.executeSlashCommand(cmd, argument)
+		}
+		m.addBlock(blockError, t(m.loc, "chat.unknownCommand", name)+suggestSlash(m.slash, name))
 		m.syncViewport(true)
 		return m, nil
 	}
@@ -485,6 +510,59 @@ func (m model) submitProviderForm() (tea.Model, tea.Cmd) {
 		return m, updateProviderCmd(m.comp, values)
 	}
 	return m, addProviderCmd(m.comp, values)
+}
+
+// cycleThinkingLevel advances the reasoning-display level (full → brief →
+// off → full). Persists across session switches: it is a display preference,
+// not per-conversation state.
+func (m *model) cycleThinkingLevel() {
+	m.thinkLevel = (m.thinkLevel + 1) % 3
+	m.markTranscriptDirty()
+}
+
+// effortCycle is the LLM thinking-effort rotation for ctrl+g: empty means
+// the provider default (no reasoning_effort sent).
+var effortCycle = []string{"", "low", "medium", "high"}
+
+// nextThinkingEffort returns the effort level following the current
+// per-conversation selection.
+func (m model) nextThinkingEffort() string {
+	idx := -1
+	for i, level := range effortCycle {
+		if level == m.thinkingEffort {
+			idx = i
+			break
+		}
+	}
+	return effortCycle[(idx+1)%len(effortCycle)]
+}
+
+// effortLabel renders the current effort for the header chip; the empty
+// selection (provider default) reads as "auto".
+func (m model) effortLabel() string {
+	if m.thinkingEffort == "" {
+		return "auto"
+	}
+	return m.thinkingEffort
+}
+
+// applyThinkingEffort folds a persisted thinking-effort save into the model.
+// Like modelActionMsg, a completion for the old session is dropped.
+func (m *model) applyThinkingEffort(msg thinkingEffortMsg) {
+	if msg.Session != m.session {
+		return
+	}
+	m.controlPending = false
+	if msg.Err != nil {
+		m.contextNote = msg.Err.Error()
+		m.addBlock(blockError, msg.Err.Error())
+		m.syncViewport(true)
+		return
+	}
+	m.thinkingEffort = msg.Effort
+	m.contextNote = ""
+	m.addBlock(blockMeta, t(m.loc, "chat.thinkingEffort", t(m.loc, "level."+m.effortLabel())))
+	m.syncViewport(true)
 }
 
 func (m model) detailedRuntimeStatus() string {

@@ -10,6 +10,28 @@ import (
 
 type blockKind int
 
+// thinkingLevel controls how reasoning blocks render (ctrl+t cycles).
+// Display-side only: the backend has no thinking-level knob, so the
+// transcript always receives the full reasoning and the UI decides how
+// much of it to show.
+type thinkingLevel int
+
+const (
+	thinkFull  thinkingLevel = iota // render reasoning blocks in full
+	thinkBrief                      // one dim collapsed line per block
+	thinkOff                        // hide reasoning blocks entirely
+)
+
+func (l thinkingLevel) String() string {
+	switch l {
+	case thinkBrief:
+		return "brief"
+	case thinkOff:
+		return "off"
+	}
+	return "full"
+}
+
 const (
 	blockUser blockKind = iota
 	blockAssistant
@@ -109,11 +131,24 @@ func (m *model) piece(i int) string {
 	case blockAssistant:
 		return m.renderBlock(i)
 	case blockThinking:
+		switch m.thinkLevel {
+		case thinkOff:
+			return ""
+		case thinkBrief:
+			// Collapsed reasoning: a single dim line, like a tool card head.
+			return thinkingStyle.Render("▸ thinking…")
+		}
 		// Render reasoning in Pi style: pure gray italic, no label.
 		return thinkingStyle.Render(block.text)
 	case blockTool:
 		if block.run != nil {
-			return renderToolRun(block.run)
+			switch m.toolLevel {
+			case toolOff:
+				return "" // hidden (tool level off) — not rendered
+			case toolFull:
+				return renderToolRun(block.run, true)
+			}
+			return renderToolRun(block.run, false)
 		}
 		return toolStyle.Render("tool> " + block.text)
 	case blockMeta:
@@ -126,16 +161,24 @@ func (m *model) piece(i int) string {
 
 // renderTranscript joins all block renderings, caching the result until a
 // block mutation or a render-affecting flag change marks the model dirty.
+// Hidden thinking blocks (level off) are skipped entirely; the separator
+// logic tracks whether anything was written so no stray blank lines remain.
 func (m *model) renderTranscript() string {
 	if !m.transcriptDirty && m.transcript != "" {
 		return m.transcript
 	}
 	var out strings.Builder
+	wrote := false
 	for i := range m.blocks {
-		if i > 0 {
+		piece := m.piece(i)
+		if piece == "" {
+			continue
+		}
+		if wrote {
 			out.WriteString("\n\n")
 		}
-		out.WriteString(m.piece(i))
+		out.WriteString(piece)
+		wrote = true
 	}
 	m.transcript = out.String()
 	m.transcriptDirty = false

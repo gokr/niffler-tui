@@ -83,12 +83,13 @@ type modelsResponse struct {
 }
 
 type conversationState struct {
-	ModelOverride string
-	Provider      string
-	Model         string
-	Context       int
-	ContextUsed   int
-	PromptTokens  int
+	ModelOverride  string
+	ThinkingEffort string
+	Provider       string
+	Model          string
+	Context        int
+	ContextUsed    int
+	PromptTokens   int
 }
 
 type bootstrapMsg struct {
@@ -101,6 +102,12 @@ type bootstrapMsg struct {
 	Conversation     conversationState
 	Runtime          runtimeResolution
 	Warnings         []string
+	// Slash is the merged slash-command registry (store checkpoint first,
+	// catalog snapshot fallback); SlashErr reports a load failure. The
+	// registry is global (not per-session), so these survive a stale
+	// session drop and are applied regardless.
+	SlashCommands []slashCommand
+	SlashErr      error
 }
 
 type runtimeRefreshedMsg struct {
@@ -199,12 +206,13 @@ func loadConversationState(comp *sdk.Component, session string) (conversationSta
 	var response struct {
 		OK    bool `json:"ok"`
 		Value struct {
-			ModelOverride string `json:"modelOverride"`
-			Provider      string `json:"provider"`
-			Model         string `json:"model"`
-			Context       int    `json:"context"`
-			ContextUsed   int    `json:"contextUsed"`
-			PromptTokens  int    `json:"promptTokens"`
+			ModelOverride  string `json:"modelOverride"`
+			ThinkingEffort string `json:"thinkingEffort"`
+			Provider       string `json:"provider"`
+			Model          string `json:"model"`
+			Context        int    `json:"context"`
+			ContextUsed    int    `json:"contextUsed"`
+			PromptTokens   int    `json:"promptTokens"`
 		} `json:"value"`
 		Code string `json:"code"`
 	}
@@ -217,8 +225,9 @@ func loadConversationState(comp *sdk.Component, session string) (conversationSta
 		return conversationState{}, nil
 	}
 	return conversationState{
-		ModelOverride: response.Value.ModelOverride,
-		Provider:      response.Value.Provider, Model: response.Value.Model,
+		ModelOverride:  response.Value.ModelOverride,
+		ThinkingEffort: response.Value.ThinkingEffort,
+		Provider:       response.Value.Provider, Model: response.Value.Model,
 		Context: response.Value.Context, ContextUsed: response.Value.ContextUsed,
 		PromptTokens: response.Value.PromptTokens,
 	}, nil
@@ -278,8 +287,8 @@ func sessionListCmd(comp *sdk.Component) tea.Cmd {
 }
 
 // bootstrapBackendCmd loads the backend state the header and controls need.
-// The three independent lookups run concurrently; the conversation state and
-// the runtime resolution are sequential because the resolution takes the
+// The independent lookups run concurrently; the conversation state and the
+// runtime resolution are sequential because the resolution takes the
 // persisted conversation model override as its argument.
 func bootstrapBackendCmd(comp *sdk.Component, session string) tea.Cmd {
 	return func() tea.Msg {
@@ -288,15 +297,18 @@ func bootstrapBackendCmd(comp *sdk.Component, session string) tea.Cmd {
 			providers  providerListResponse
 			status     providerStatusResponse
 			catalog    []catalogProvider
+			slashCmds  []slashCommand
 			listErr    error
 			statusErr  error
 			catalogErr error
+			slashErr   error
 		)
 		var wg sync.WaitGroup
-		wg.Add(3)
+		wg.Add(4)
 		go func() { defer wg.Done(); providers, listErr = loadProviderList(comp) }()
 		go func() { defer wg.Done(); status, statusErr = loadProviderStatus(comp) }()
 		go func() { defer wg.Done(); catalog, catalogErr = loadCatalogProviders(comp) }()
+		go func() { defer wg.Done(); slashCmds, slashErr = loadSlashTable(comp) }()
 		wg.Wait()
 		if listErr != nil {
 			msg.Warnings = append(msg.Warnings, listErr.Error())
@@ -313,6 +325,8 @@ func bootstrapBackendCmd(comp *sdk.Component, session string) tea.Cmd {
 		} else {
 			msg.CatalogProviders = catalog
 		}
+		msg.SlashCommands = slashCmds
+		msg.SlashErr = slashErr
 		conversation, err := loadConversationState(comp, session)
 		if err != nil {
 			msg.Warnings = append(msg.Warnings, err.Error())
@@ -361,6 +375,33 @@ func loadModelsCmd(comp *sdk.Component, catalog string) tea.Cmd {
 			"toolCall": true, "limit": 500,
 		}, &response)
 		return modelsLoadedMsg{Catalog: catalog, Models: response.Models, Err: err}
+	}
+}
+
+// thinkingEffortMsg reports the result of persisting a per-conversation
+// thinking-effort selection; like modelActionMsg, a completion for the old
+// session is dropped.
+type thinkingEffortMsg struct {
+	Session string
+	Effort  string
+	Err     error
+}
+
+// setConversationThinkingCmd persists the conversation's thinking-effort
+// selection through the session runner (model-only call: no inference).
+func setConversationThinkingCmd(comp *sdk.Component, session, effort string) tea.Cmd {
+	return func() tea.Msg {
+		var response struct {
+			OK             bool   `json:"ok"`
+			ThinkingEffort string `json:"thinkingEffort"`
+		}
+		err := requestInto(comp, "core", "session", map[string]any{
+			"sessionId": session, "thinking": effort,
+		}, &response)
+		if err == nil && !response.OK {
+			err = fmt.Errorf("thinking effort selection failed")
+		}
+		return thinkingEffortMsg{Session: session, Effort: effort, Err: err}
 	}
 }
 

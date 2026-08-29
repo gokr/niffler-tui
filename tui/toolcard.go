@@ -67,27 +67,42 @@ func (m *model) appendToolCall(call toolCall) {
 	m.markTranscriptDirty()
 }
 
-// toggleAllToolRuns flips every tool-run card between collapsed and expanded.
-func (m *model) toggleAllToolRuns() {
-	changed := false
-	for i := range m.blocks {
-		if m.blocks[i].kind == blockTool && m.blocks[i].run != nil {
-			m.blocks[i].run.collapsed = !m.blocks[i].run.collapsed
-			changed = true
-		}
+// toolLevel controls how tool-run cards render (ctrl+e cycles). Display
+// only: cards always arrive, the level decides how much of them shows.
+type toolLevel int
+
+const (
+	toolBrief toolLevel = iota // collapsed cards (default)
+	toolFull                   // every card expanded
+	toolOff                    // hide tool cards entirely
+)
+
+func (l toolLevel) String() string {
+	switch l {
+	case toolFull:
+		return "full"
+	case toolOff:
+		return "off"
 	}
-	if changed {
-		m.markTranscriptDirty()
-	}
+	return "brief"
 }
 
-// renderToolRun renders one card. Collapsed: a single summary line. Expanded:
-// one line per call (glyph + name + compact args) followed by its result or
-// error, indented.
-func renderToolRun(run *toolRun) string {
+// cycleToolVisibility advances the tool-card display level
+// (brief → full → off → brief). Per-card clicks still toggle collapse,
+// visible while the level is brief.
+func (m *model) cycleToolVisibility() {
+	m.toolLevel = (m.toolLevel + 1) % 3
+	m.markTranscriptDirty()
+}
+
+// renderToolRun renders one card. expanded forces the expanded form
+// (tool level full); otherwise the card's own collapsed state decides.
+// Collapsed: a single summary line. Expanded: one line per call (glyph +
+// name + compact args) followed by its result or error, indented.
+func renderToolRun(run *toolRun, expanded bool) string {
 	var b strings.Builder
 	chevron := "▸"
-	if !run.collapsed {
+	if expanded || !run.collapsed {
 		chevron = "▾"
 	}
 	head := chevron + " " + runGlyph(run)
@@ -105,7 +120,7 @@ func renderToolRun(run *toolRun) string {
 	}
 	b.WriteString(toolStyle.Render(head))
 
-	if run.collapsed {
+	if !expanded && run.collapsed {
 		return b.String()
 	}
 
@@ -165,7 +180,11 @@ func (m *model) handleMouseClick(msg tea.MouseClickMsg) {
 func (m *model) blockAtContentLine(contentLine int) int {
 	line := 0
 	for i := range m.blocks {
-		rows := strings.Count(m.piece(i), "\n") + 1
+		piece := m.piece(i)
+		if piece == "" {
+			continue // hidden block (thinking level off) — not rendered
+		}
+		rows := strings.Count(piece, "\n") + 1
 		if contentLine < line+rows {
 			return i
 		}

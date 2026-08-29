@@ -180,6 +180,27 @@ type model struct {
 	renderTimerActive bool
 	lastTokenAt       time.Time
 
+	// thinkLevel controls how reasoning blocks render: full (default),
+	// brief (one collapsed line per block), or off (hidden). ctrl+t cycles.
+	// Display-side only; the transcript always receives the full reasoning
+	// from the backend — this only changes how much of it is shown.
+	thinkLevel thinkingLevel
+
+	// toolLevel controls how tool-run cards render: brief (collapsed,
+	// default), full (all expanded), or off (hidden). ctrl+e cycles.
+	// Display-side only, like thinkLevel.
+	toolLevel toolLevel
+
+	// thinkingEffort is the per-conversation LLM thinking-effort selection
+	// ("" = provider default | low | medium | high), persisted via
+	// core.session {thinking} like the model override. ctrl+g cycles it.
+	thinkingEffort string
+
+	// slash is the merged slash-command registry (built-ins + component
+	// registrations); slashComp is the live Tab-completion state.
+	slash     slashRegistry
+	slashComp slashCompleteState
+
 	// roundClosed marks the current LLM round as finalized: the assistant
 	// event carried the complete content, or the turn ended (done). Late
 	// token frames can arrive after that (NATS ordering across subjects
@@ -195,13 +216,17 @@ type model struct {
 }
 
 var (
-	headerStyle    = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("6"))
-	userStyle      = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("12"))
-	assistantStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("10"))
-	thinkingStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("8")).Italic(true)
-	toolStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("3"))
-	metaStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
-	errorStyle     = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("9"))
+	headerStyle      = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("6"))
+	userStyle        = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("12"))
+	assistantStyle   = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("10"))
+	thinkingStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("8")).Italic(true)
+	thinkLevelStyle  = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("5"))
+	toolLevelStyle   = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("3"))
+	effortStyle      = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("4"))
+	activeSlashStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("0")).Background(lipgloss.Color("7"))
+	toolStyle        = lipgloss.NewStyle().Foreground(lipgloss.Color("3"))
+	metaStyle        = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
+	errorStyle       = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("9"))
 )
 
 // configureKeymaps sets up chat-style editing bindings. The textarea owns
@@ -267,6 +292,7 @@ func newModel(ctx context.Context, comp *sdk.Component, session, natsURL string)
 		focusCmd:     focusCmd,
 		history:      history,
 		historyFile:  historyFile,
+		slash:        newSlashRegistry(),
 		// Mouse tracking on by default: the wheel scrolls the transcript and
 		// click expands tool cards; copy uses Shift+drag. See /mouse off for
 		// a pure-native mode (plain-drag copy, no app wheel).
@@ -423,9 +449,39 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.searchActive {
 			return m.handleSearchKey(msg)
 		}
-		switch msg.String() {
+		keyName := msg.String()
+		// An active slash completion owns Tab (cycling) and is dismissed by
+		// any other key, which then falls through to normal handling.
+		if m.slashComp.active {
+			switch keyName {
+			case "tab":
+				var cmd tea.Cmd
+				m, cmd = m.handleSlashTab(false)
+				return m, cmd
+			case "shift+tab":
+				var cmd tea.Cmd
+				m, cmd = m.handleSlashTab(true)
+				return m, cmd
+			case "enter":
+				m.dismissSlashComplete()
+				// Fall through: the command line is already filled in.
+			case "esc", "ctrl+c":
+				if keyName == "ctrl+c" {
+					return m, tea.Quit
+				}
+				m.dismissSlashComplete()
+				return m, nil
+			default:
+				m.dismissSlashComplete()
+			}
+		}
+		switch keyName {
 		case "ctrl+c":
 			return m, tea.Quit
+		case "tab", "shift+tab":
+			var cmd tea.Cmd
+			m, cmd = m.handleSlashTab(keyName == "shift+tab")
+			return m, cmd
 		case "enter":
 			content := strings.TrimSpace(m.input.Value())
 			if content == "" {
@@ -486,10 +542,34 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.layout()
 				return m, nil
 			}
-		case "ctrl+t":
-			m.toggleAllToolRuns()
+		case "ctrl+e":
+			// Tool-card visibility cycle (brief → full → off).
+			m.cycleToolVisibility()
 			m.syncViewport(false)
 			return m, nil
+		case "ctrl+t":
+			m.cycleThinkingLevel()
+			m.syncViewport(false)
+			return m, nil
+		case "ctrl+g":
+			// Rotate the conversation's LLM thinking effort (auto → low →
+			// medium → high); persisted like the model override and applied
+			// by the session runner on the next turn.
+			if !m.connected {
+				m.contextNote = t(m.loc, "note.notConnected")
+				return m, nil
+			}
+			if m.busy {
+				m.contextNote = t(m.loc, "note.betweenTurnsEffort")
+				return m, nil
+			}
+			if m.controlPending {
+				return m, nil
+			}
+			next := m.nextThinkingEffort()
+			m.controlPending = true
+			m.contextNote = t(m.loc, "note.savingEffort")
+			return m, setConversationThinkingCmd(m.comp, m.session, next)
 		case "esc":
 			// Two-stage stop: first ESC arms the Stop? prompt, second ESC
 			// force-cancels the running turn. Outside a busy turn ESC is left
@@ -536,6 +616,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.providerStatus = msg.ProviderStatus
 		m.catalogProviders = msg.CatalogProviders
 		m.modelOverride = msg.Conversation.ModelOverride
+		m.thinkingEffort = msg.Conversation.ThinkingEffort
 		m.runtime = msg.Runtime
 		// Conversation/provider metadata keeps the header useful during a
 		// partial or rolling backend upgrade where llm_resolve is unavailable.
@@ -559,6 +640,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.contextUsed = msg.Conversation.ContextUsed
 		m.promptTokens = msg.Conversation.PromptTokens
+		// The slash registry is global; apply it even though the rest of the
+		// snapshot is session-scoped.
+		if msg.SlashErr == nil {
+			m.mergeSlashRegistry(msg.SlashCommands)
+		} else if len(m.slash.order) == 0 {
+			m.contextNote = "slash registry unavailable: " + msg.SlashErr.Error()
+		}
 		if m.runtime.Catalog != "" {
 			cmds = append(cmds, loadModelsCmd(m.comp, m.runtime.Catalog))
 		}
@@ -590,6 +678,24 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				break
 			}
 		}
+
+	case catalogUpdatedMsg:
+		// Components registered or departed: the slash registry changed.
+		// Reload store-first (core checkpoints before announcing).
+		return m, loadSlashTableCmd(m.comp)
+
+	case slashTableMsg:
+		if msg.Err == nil {
+			m.mergeSlashRegistry(msg.Commands)
+		} else if len(m.slash.order) == 0 {
+			m.contextNote = "slash registry unavailable: " + msg.Err.Error()
+		}
+
+	case slashSourceMsg:
+		m.applySlashSource(msg)
+
+	case slashResultMsg:
+		m.applySlashResult(msg)
 
 	case catalogProvidersMsg:
 		if msg.Err == nil {
@@ -649,6 +755,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.addBlock(blockMeta, label)
 		m.syncViewport(true)
 		cmds = append(cmds, refreshRuntimeCmd(m.comp, m.session, m.modelOverride))
+
+	case thinkingEffortMsg:
+		m.applyThinkingEffort(msg)
 
 	case modelActionMsg:
 		// A conversation-scoped save belongs to the session it was fired for;
@@ -819,10 +928,7 @@ func (m *model) applySessionEvent(msg sessionEventMsg) tea.Cmd {
 		// reuse scan kept appending every later round's reasoning into
 		// the first round's thinking block, stacking it all above the
 		// conversation.
-		if idx := m.streamingBlock(blockThinking, m.thinkingIdx); idx >= 0 {
-			m.blocks[idx].finalized = true
-			m.markTranscriptDirty()
-		}
+		m.finalizeThinking()
 		m.roundClosed = true
 
 	case "toolcall":
@@ -952,6 +1058,11 @@ func (m *model) finishTurn(reply, errorText string) {
 	m.busy = false
 	m.setStreaming(false)
 	m.roundClosed = true
+	// Finalize any trailing thinking block here as well: a turn can end on
+	// "done" without an assistant event (errors, short replies), and an
+	// unfinalized thinking block would pull the next turn's reasoning into
+	// this one (see the assistant-event finalization in applySessionEvent).
+	m.finalizeThinking()
 	if errorText != "" {
 		m.addUniqueBlock(blockError, errorText)
 	} else if reply != "" && !m.hadAssistant {
@@ -960,6 +1071,17 @@ func (m *model) finishTurn(reply, errorText string) {
 	}
 	m.assistantIdx = -1
 	m.thinkingIdx = -1
+}
+
+// finalizeThinking marks the trailing unfinalized thinking block complete.
+// Without it, streamingBlock's reuse scan would keep appending later
+// rounds' reasoning into the first round's thinking block, stacking all
+// thinking above the conversation instead of per-round.
+func (m *model) finalizeThinking() {
+	if idx := m.streamingBlock(blockThinking, m.thinkingIdx); idx >= 0 {
+		m.blocks[idx].finalized = true
+		m.markTranscriptDirty()
+	}
 }
 
 // setStreaming flips the streaming flag, invalidating the transcript cache
@@ -1046,7 +1168,7 @@ func (m *model) layout() {
 	// MaxHeight), so the viewport height below sees the settled input size.
 	m.input.SetWidth(max(1, width-2))
 	extra := 0
-	if m.searchActive {
+	if m.searchActive || m.slashComp.active {
 		extra = 1
 	}
 	m.viewport.SetHeight(max(1, height-3-m.input.Height()-extra))
@@ -1110,8 +1232,16 @@ func (m model) searchView() string {
 func (m model) View() tea.View {
 	header := headerStyle.Render("Niffler") + metaStyle.Render(" / "+m.session)
 	const headerSep = "  │  "
-	runtimeLine := runtimeStatusLine(m.loc, m.runtime, m.modelOverride, m.contextUsed, max(0, m.width-ansi.StringWidth(header)-ansi.StringWidth(headerSep)))
-	headerLine := header + headerSep + runtimeLine
+	// Thinking level chip: standalone color so the mode reads at a glance
+	// (ctrl+t cycles full → brief → off).
+	thinkChip := thinkLevelStyle.Render(t(m.loc, "chip.think", t(m.loc, "level."+m.thinkLevel.String())))
+	// Tool-card and thinking-effort chips share the same standalone-color
+	// treatment (ctrl+e cycles tool cards; ctrl+g cycles the LLM effort).
+	toolChip := toolLevelStyle.Render(t(m.loc, "chip.tool", t(m.loc, "level."+m.toolLevel.String())))
+	effortChip := effortStyle.Render(t(m.loc, "chip.effort", t(m.loc, "level."+m.effortLabel())))
+	runtimeLine := runtimeStatusLine(m.loc, m.runtime, m.modelOverride, m.contextUsed,
+		max(0, m.width-ansi.StringWidth(header)-ansi.StringWidth(thinkChip)-ansi.StringWidth(toolChip)-ansi.StringWidth(effortChip)-3*ansi.StringWidth(headerSep)))
+	headerLine := header + headerSep + thinkChip + headerSep + toolChip + headerSep + effortChip + headerSep + runtimeLine
 	makeView := func(content string) tea.View {
 		view := tea.NewView(content)
 		view.AltScreen = true
@@ -1189,6 +1319,9 @@ func (m model) View() tea.View {
 	parts := []string{headerLine, m.viewport.View()}
 	if m.searchActive {
 		parts = append(parts, m.searchView())
+	}
+	if m.slashComp.active {
+		parts = append(parts, m.slashCompletionView())
 	}
 	parts = append(parts, m.input.View(), metaStyle.Render(truncate(status, max(1, m.width-1))))
 	return makeView(strings.Join(parts, "\n"))
@@ -1280,6 +1413,14 @@ func main() {
 	comp.On("ev.models.updated", func(_ *sdk.Component, _ string, _ json.RawMessage) {
 		if program != nil {
 			program.Send(modelsCatalogUpdatedMsg{})
+		}
+	})
+	// Catalog changes (components registering/departing) refresh the slash
+	// registry: core checkpoints the merged table to the store before this
+	// event goes out, so a store-first reload is consistent.
+	comp.On("ev.catalog.updated", func(_ *sdk.Component, _ string, _ json.RawMessage) {
+		if program != nil {
+			program.Send(catalogUpdatedMsg{})
 		}
 	})
 	// Human approval gate: directed requests arrive on this component's own
