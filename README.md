@@ -1,5 +1,7 @@
 # niffler-tui
 
+[简体中文](README.zh.md)
+
 A Bubble Tea terminal client for Niffler. It is a bus client like the desktop
 UI: it drives `session` calls through `svc.core.call` and renders
 `ev.session.*` token, tool-call, assistant, and completion events.
