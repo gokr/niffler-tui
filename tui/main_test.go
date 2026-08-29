@@ -1847,3 +1847,29 @@ func TestSessionListMsgDroppedAfterLeavingBrowser(t *testing.T) {
 		t.Fatalf("late session list yanked mode to %v", got.mode)
 	}
 }
+
+// TestThinkingToggleDoesNotAccumulateNewlines guards the ctrl+t path:
+// cycling the display level must never mutate block text or grow the
+// rendered transcript — toggling re-renders the same blocks, it cannot
+// add newlines.
+func TestThinkingToggleDoesNotAccumulateNewlines(t *testing.T) {
+	m := newTestModel()
+	m.addBlock(blockUser, "hi")
+	m.addBlock(blockThinking, "\n\nStep one.\n\n\nStep two.\n\n")
+	m.addBlock(blockAssistant, "answer")
+
+	first := ansi.Strip(m.renderTranscript())
+	for i := 0; i < 9; i++ { // three full cycles
+		m.cycleThinkingLevel()
+		rendered := ansi.Strip(m.renderTranscript())
+		if (i+1)%3 == 0 { // back at full (full → brief → off → full)
+			if rendered != first {
+				t.Fatalf("toggle %d changed the full rendering:\n%q\nvs\n%q", i, first, rendered)
+			}
+		}
+	}
+	// The block text itself must be untouched by any number of toggles.
+	if m.blocks[1].text != "\n\nStep one.\n\n\nStep two.\n\n" {
+		t.Fatalf("toggling mutated block text: %q", m.blocks[1].text)
+	}
+}
