@@ -15,6 +15,7 @@
         "tui/controls.go",
         "tui/history.go",
         "tui/i18n.go",
+        "tui/oauth.go",
         "tui/provider_form.go",
         "tui/selectors.go",
         "tui/slash.go",

@@ -101,7 +101,11 @@ selection shows in the header as `effort:auto|low|medium|high`.
 Local commands are handled by the TUI and are never sent to the model:
 
 - `/provider` — searchable global provider selector (e: edit, d: remove);
-  also offers the environment fallback and provider setup
+  also offers the environment fallback, provider setup, and subscription
+  logins (ChatGPT Plus/Pro via browser or device code, Claude Pro/Max via
+  browser). OAuth flows open the authorization URL, poll until Niffler's
+  provider component stores the tokens, and accept a pasted code/redirect
+  URL when the local callback port is unavailable; esc cancels
 - `/model` — searchable active-provider model catalog; selection is persisted
   immediately as this conversation's override (without an inference call)
 - `/connect` — masked provider connection form using models.dev templates or a

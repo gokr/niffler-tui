@@ -18,6 +18,7 @@ const (
 	modeModels
 	modeSessions
 	modeConnectForm
+	modeOAuth
 )
 
 type selectorItemKind int
@@ -28,6 +29,9 @@ const (
 	selectorConnect
 	selectorCatalogProvider
 	selectorCustomProvider
+	selectorOAuthOpenAIBrowser
+	selectorOAuthOpenAIDevice
+	selectorOAuthAnthropic
 	selectorModel
 	selectorProviderDefaultModel
 	selectorSession
@@ -92,6 +96,9 @@ func providerSelectorItems(loc Locale, providers []providerSummary, status provi
 			title = "● " + title
 		}
 		description := provider.Model
+		if provider.AuthType == "oauth" {
+			description += " · OAuth"
+		}
 		if host := endpointHost(provider.BaseURL); host != "" {
 			description += " · " + host
 		}
@@ -108,6 +115,21 @@ func providerSelectorItems(loc Locale, providers []providerSummary, status provi
 		kind: selectorConnect,
 		id:   "__connect__", title: t(loc, "selector.connectProvider"),
 		description: t(loc, "selector.connectProviderDesc"),
+	})
+	items = append(items, selectorItem{
+		kind: selectorOAuthOpenAIBrowser,
+		id:   "__oauth_openai_browser__", title: t(loc, "oauth.option.openai.browser"),
+		description: t(loc, "oauth.option.openai.desc"),
+	})
+	items = append(items, selectorItem{
+		kind: selectorOAuthOpenAIDevice,
+		id:   "__oauth_openai_device__", title: t(loc, "oauth.option.openai.device"),
+		description: t(loc, "oauth.option.openai.deviceDesc"),
+	})
+	items = append(items, selectorItem{
+		kind: selectorOAuthAnthropic,
+		id:   "__oauth_anthropic__", title: t(loc, "oauth.option.anthropic"),
+		description: t(loc, "oauth.option.anthropic.desc"),
 	})
 	return items
 }

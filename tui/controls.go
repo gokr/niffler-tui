@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"charm.land/bubbles/v2/textinput"
 	tea "charm.land/bubbletea/v2"
 )
 
@@ -334,6 +335,35 @@ func (m model) handleControlKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
+	if m.mode == modeOAuth {
+		if m.oauthLogin == nil {
+			m.mode = modeChat
+			m.layout()
+			return m, nil
+		}
+		switch msg.String() {
+		case "esc":
+			flowID := m.oauthLogin.flowID
+			m.oauthLogin = nil
+			m.mode = modeChat
+			m.layout()
+			return m, cancelOAuthCmd(m.comp, flowID)
+		case "enter":
+			if m.oauthLogin.submitManual() {
+				state := *m.oauthLogin
+				state.seq++ // invalidate results from the sleeping chain
+				m.oauthLogin = &state
+				return m, pollOAuthCmd(m.comp, state)
+			}
+			return m, nil
+		}
+		var cmd tea.Cmd
+		var input textinput.Model
+		input, cmd = m.oauthLogin.input.Update(msg)
+		m.oauthLogin.input = input
+		return m, cmd
+	}
+
 	if m.mode == modeConnectForm {
 		switch msg.String() {
 		case "esc":
@@ -434,6 +464,15 @@ func (m model) handleControlKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		case selectorConnect:
 			m.openCatalogProviderSelector()
 			return m, nil
+		case selectorOAuthOpenAIBrowser:
+			m.controlPending = true
+			return m, startOAuthCmd(m.comp, m.loc, oauthProtocolCodex, oauthMethodBrowser)
+		case selectorOAuthOpenAIDevice:
+			m.controlPending = true
+			return m, startOAuthCmd(m.comp, m.loc, oauthProtocolCodex, oauthMethodDevice)
+		case selectorOAuthAnthropic:
+			m.controlPending = true
+			return m, startOAuthCmd(m.comp, m.loc, oauthProtocolAnthropic, oauthMethodBrowser)
 		case selectorEnvironment:
 			m.controlPending = true
 			return m, useEnvironmentProviderCmd(m.comp)

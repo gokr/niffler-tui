@@ -22,6 +22,7 @@ type okResponse struct {
 
 type providerSummary struct {
 	Nickname    string `json:"nickname"`
+	AuthType    string `json:"authType"`
 	BaseURL     string `json:"baseUrl"`
 	Model       string `json:"model"`
 	Catalog     string `json:"catalog"`

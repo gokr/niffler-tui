@@ -17,6 +17,7 @@ import (
 	"charm.land/bubbles/v2/key"
 	"charm.land/bubbles/v2/spinner"
 	"charm.land/bubbles/v2/textarea"
+	"charm.land/bubbles/v2/textinput"
 	"charm.land/bubbles/v2/viewport"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/glamour/v2"
@@ -196,6 +197,11 @@ type model struct {
 	// core.session {thinking} like the model override. ctrl+g cycles it.
 	thinkingEffort string
 
+	// oauthLogin is the active subscription login (ChatGPT / Claude): a nil
+	// pointer means no flow is running. modeOAuth renders its panel and the
+	// poll chain continues until the credential is stored or the flow fails.
+	oauthLogin *oauthLoginState
+
 	// slash is the merged slash-command registry (built-ins + component
 	// registrations); slashComp is the live Tab-completion state.
 	slash     slashRegistry
@@ -224,6 +230,8 @@ var (
 	thinkLevelStyle  = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("5"))
 	toolLevelStyle   = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("3"))
 	effortStyle      = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("4"))
+	linkStyle        = lipgloss.NewStyle().Foreground(lipgloss.Color("12")).Underline(true)
+	codeStyle        = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("2"))
 	activeSlashStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("0")).Background(lipgloss.Color("7"))
 	toolStyle        = lipgloss.NewStyle().Foreground(lipgloss.Color("3"))
 	metaStyle        = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
@@ -601,6 +609,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.providerForm, cmd = m.providerForm.update(msg)
 			return m, cmd
 		}
+		if m.mode == modeOAuth && m.oauthLogin != nil {
+			var cmd tea.Cmd
+			var input textinput.Model
+			input, cmd = m.oauthLogin.input.Update(msg)
+			m.oauthLogin.input = input
+			return m, cmd
+		}
 		if m.mode != modeChat {
 			return m, nil
 		}
@@ -719,6 +734,51 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.openModelSelector()
 			}
 		}
+
+	case oauthStartMsg:
+		m.controlPending = false
+		if msg.err != nil {
+			m.oauthLogin = nil
+			m.mode = modeChat
+			m.addBlock(blockError, msg.err.Error())
+			m.syncViewport(true)
+			break
+		}
+		state := msg.state
+		state.setWidth(m.width)
+		m.oauthLogin = &state
+		m.mode = modeOAuth
+		m.layout()
+		cmds = append(cmds, pollOAuthCmd(m.comp, state))
+
+	case oauthPollMsg:
+		// Drop stale polls: cancelled flows (m.oauthLogin nil or flowID
+		// mismatch) and results from a superseded poll chain (seq mismatch —
+		// e.g. a manual submit started a fresh chain while this one slept).
+		if m.oauthLogin == nil || m.oauthLogin.flowID != msg.state.flowID || m.oauthLogin.seq != msg.state.seq {
+			break
+		}
+		state := msg.state
+		if msg.err != nil {
+			state.err = msg.err.Error()
+			state.status = ""
+			m.oauthLogin = &state
+			break // panel stays for the manual retry; poll chain ends
+		}
+		if msg.done {
+			m.oauthLogin = nil
+			m.mode = modeChat
+			m.layout()
+			m.addBlock(blockMeta, t(m.loc, "oauth.signedIn", msg.provider.Nickname))
+			m.syncViewport(true)
+			cmds = append(cmds, refreshRuntimeCmd(m.comp, m.session, m.modelOverride))
+			break
+		}
+		if state.manualPending != "" || state.status != m.oauthLogin.status {
+			state.err = ""
+		}
+		m.oauthLogin = &state
+		cmds = append(cmds, pollOAuthCmd(m.comp, state))
 
 	case providerActionMsg:
 		m.controlPending = false
@@ -1181,6 +1241,9 @@ func (m *model) layout() {
 	if m.mode == modeConnectForm {
 		m.providerForm.setWidth(width)
 	}
+	if m.mode == modeOAuth && m.oauthLogin != nil {
+		m.oauthLogin.setWidth(width)
+	}
 	m.ensureRenderer(width)
 }
 
@@ -1291,6 +1354,12 @@ func (m model) View() tea.View {
 			parts = append(parts, metaStyle.Render(truncate(footer, max(1, m.width-1))))
 		case modeConnectForm:
 			parts = append(parts, m.providerForm.view(m.width))
+		case modeOAuth:
+			if m.oauthLogin != nil {
+				parts = append(parts, m.oauthLogin.view(m.width))
+			}
+			footer := t(m.loc, "oauth.esc")
+			parts = append(parts, metaStyle.Render(truncate(footer, max(1, m.width-1))))
 		}
 		return makeView(strings.Join(parts, "\n"))
 	}

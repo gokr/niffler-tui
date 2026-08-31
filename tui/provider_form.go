@@ -65,7 +65,11 @@ func newEditProviderForm(p providerSummary, width int, loc Locale) providerForm 
 	if p.Context > 0 {
 		form.inputs[providerFieldContext].SetValue(strconv.Itoa(p.Context))
 	}
-	form.inputs[providerFieldAPIKey].Placeholder = t(loc, "form.leaveBlankToKeep")
+	if p.AuthType == "oauth" {
+		form.inputs[providerFieldAPIKey].Placeholder = t(loc, "form.oauthLeaveBlank")
+	} else {
+		form.inputs[providerFieldAPIKey].Placeholder = t(loc, "form.leaveBlankToKeep")
+	}
 	form.inputs[providerFieldNickname].Prompt = t(loc, "form.prompt.nickname") + " "
 	form.focusField(providerFieldBaseURL)
 	return form

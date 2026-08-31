@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -1871,5 +1872,205 @@ func TestThinkingToggleDoesNotAccumulateNewlines(t *testing.T) {
 	// The block text itself must be untouched by any number of toggles.
 	if m.blocks[1].text != "\n\nStep one.\n\n\nStep two.\n\n" {
 		t.Fatalf("toggling mutated block text: %q", m.blocks[1].text)
+	}
+}
+
+func TestProviderSelectorOffersSubscriptionLogins(tt *testing.T) {
+	m := newTestModel()
+	m.openProviderSelector()
+	titles := map[string]bool{}
+	for _, item := range m.selector.list.Items() {
+		si := item.(selectorItem)
+		titles[si.title] = true
+		if si.kind == selectorOAuthOpenAIBrowser || si.kind == selectorOAuthOpenAIDevice ||
+			si.kind == selectorOAuthAnthropic {
+			continue
+		}
+		if strings.HasPrefix(si.id, "__oauth_") {
+			tt.Fatalf("unexpected oauth item %q", si.id)
+		}
+	}
+	for _, want := range []string{
+		t(LocaleEN, "oauth.option.openai.browser"),
+		t(LocaleEN, "oauth.option.openai.device"),
+		t(LocaleEN, "oauth.option.anthropic"),
+	} {
+		if !titles[want] {
+			tt.Fatalf("provider selector missing %q", want)
+		}
+	}
+	// Choosing the Anthropic entry (last item) dispatches the start command:
+	// the mode only changes once oauthStartMsg returns, but the control
+	// roundtrip is flagged immediately.
+	m.selector.list.Select(len(m.selector.list.Items()) - 1)
+	updated, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	got := updated.(model)
+	if cmd == nil {
+		tt.Fatal("OAuth entry produced no start command")
+	}
+	if !got.controlPending {
+		tt.Fatal("OAuth start did not set controlPending")
+	}
+}
+
+func TestOAuthStartMessageOpensLoginPanel(tt *testing.T) {
+	m := newTestModel()
+	m.width = 100
+	msg := oauthStartMsg{state: func() oauthLoginState {
+		state := newOAuthLoginState(LocaleEN)
+		state.flowID = "flow-1"
+		state.provider = "OpenAI Codex (ChatGPT Plus/Pro)"
+		state.url = "https://auth.openai.com/oauth/authorize?x=1"
+		state.callbackAvailable = true
+		state.status = t(LocaleEN, "oauth.waiting")
+		return state
+	}()}
+	updated, _ := m.Update(msg)
+	got := updated.(model)
+	if got.mode != modeOAuth || got.oauthLogin == nil {
+		tt.Fatalf("mode = %v, oauthLogin = %#v", got.mode, got.oauthLogin)
+	}
+	view := ansi.Strip(got.View().Content)
+	if !strings.Contains(view, "Sign in to OpenAI Codex") || !strings.Contains(view, "auth.openai.com") {
+		tt.Fatalf("login panel missing provider/URL:\n%s", view)
+	}
+}
+
+func TestOAuthManualCodeSubmitsAndPolls(t *testing.T) {
+	m := newTestModel()
+	m.width = 100
+	m.mode = modeOAuth
+	state := newOAuthLoginState(LocaleEN)
+	state.flowID = "flow-2"
+	state.provider = "Anthropic (Claude Pro/Max)"
+	state.url = "https://claude.ai/oauth/authorize?x=1"
+	state.retryAfterMs = 0
+	m.oauthLogin = &state
+
+	// Typing lands in the manual input (Text mirrors real terminal input).
+	updated, _ := m.Update(tea.KeyPressMsg{Code: 'a', Text: "a"})
+	got := updated.(model)
+	if got.oauthLogin.input.Value() != "a" {
+		t.Fatalf("manual input = %q", got.oauthLogin.input.Value())
+	}
+	// Enter with a code present submits it and restarts the poll chain.
+	got.oauthLogin.input.SetValue("abc#state")
+	updated, cmd := got.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	got = updated.(model)
+	if cmd == nil {
+		t.Fatal("manual submit produced no poll command")
+	}
+	if got.oauthLogin.manualPending != "abc#state" {
+		t.Fatalf("manualPending = %q", got.oauthLogin.manualPending)
+	}
+}
+
+func TestOAuthPollCompletionSwitchesToChatAndRefreshes(t *testing.T) {
+	m := newTestModel()
+	m.width = 100
+	m.mode = modeOAuth
+	state := newOAuthLoginState(LocaleEN)
+	state.flowID = "flow-3"
+	state.provider = "OpenAI Codex (ChatGPT Plus/Pro)"
+	state.url = "https://auth.openai.com/oauth/authorize?x=1"
+	m.oauthLogin = &state
+
+	updated, _ := m.Update(oauthPollMsg{
+		state:    state,
+		done:     true,
+		provider: providerSummary{Nickname: "openai-codex", AuthType: "oauth"},
+	})
+	got := updated.(model)
+	if got.mode != modeChat || got.oauthLogin != nil {
+		t.Fatalf("after completion mode = %v, oauthLogin = %#v", got.mode, got.oauthLogin)
+	}
+	// The View renders the transcript; assert via it like other tests do.
+	if !strings.Contains(ansi.Strip(got.View().Content), "signed in: openai-codex") {
+		t.Fatalf("transcript missing signed-in note:\n%s", ansi.Strip(got.renderTranscript()))
+	}
+}
+
+func TestOAuthPollFromStaleFlowIsDropped(t *testing.T) {
+	m := newTestModel()
+	m.mode = modeOAuth
+	state := newOAuthLoginState(LocaleEN)
+	state.flowID = "flow-old"
+	m.oauthLogin = &state
+	late := state
+	late.flowID = "flow-other"
+
+	updated, _ := m.Update(oauthPollMsg{state: late})
+	got := updated.(model)
+	if got.oauthLogin == nil || got.oauthLogin.flowID != "flow-old" {
+		t.Fatalf("stale poll replaced the live flow: %#v", got.oauthLogin)
+	}
+}
+
+func TestProviderSummaryShowsOAuthBadge(t *testing.T) {
+	items := providerSelectorItems(LocaleEN, []providerSummary{
+		{Nickname: "claude", AuthType: "oauth", Active: true, BaseURL: "https://api.anthropic.com", Model: "claude-sonnet-4-6"},
+		{Nickname: "deepseek", BaseURL: "https://api.deepseek.com", Model: "deepseek-chat"},
+	}, providerStatusResponse{Source: "store"})
+	var oauthDescription, apiKeyDescription string
+	for _, item := range items {
+		si := item.(selectorItem)
+		if si.id == "claude" {
+			oauthDescription = si.description
+		}
+		if si.id == "deepseek" {
+			apiKeyDescription = si.description
+		}
+	}
+	if !strings.Contains(oauthDescription, "OAuth") {
+		t.Fatalf("oauth provider description = %q", oauthDescription)
+	}
+	if strings.Contains(apiKeyDescription, "OAuth") {
+		t.Fatalf("api-key provider description = %q", apiKeyDescription)
+	}
+}
+
+func TestOAuthPollFromSupersededChainIsDropped(t *testing.T) {
+	m := newTestModel()
+	m.mode = modeOAuth
+	state := newOAuthLoginState(LocaleEN)
+	state.flowID = "flow-4"
+	state.seq = 2 // a manual submit bumped the chain
+	m.oauthLogin = &state
+
+	late := state
+	late.seq = 1 // result from the chain that was sleeping before the submit
+	updated, cmd := m.Update(oauthPollMsg{state: late})
+	got := updated.(model)
+	if got.oauthLogin == nil || got.oauthLogin.seq != 2 {
+		t.Fatalf("superseded poll mutated the live chain: %#v", got.oauthLogin)
+	}
+	if cmd != nil {
+		t.Fatal("superseded poll rescheduled a chain")
+	}
+}
+
+func TestOAuthPollErrorKeepsPanelForRetry(tt *testing.T) {
+	m := newTestModel()
+	m.width = 100
+	m.mode = modeOAuth
+	state := newOAuthLoginState(LocaleEN)
+	state.flowID = "flow-5"
+	state.url = "https://claude.ai/oauth/authorize"
+	state.status = t(LocaleEN, "oauth.waiting")
+	m.oauthLogin = &state
+
+	updated, cmd := m.Update(oauthPollMsg{state: state, done: true, err: fmt.Errorf("flow expired")})
+	got := updated.(model)
+	if got.mode != modeOAuth || got.oauthLogin == nil {
+		tt.Fatalf("error path left the login panel: mode=%v oauth=%#v", got.mode, got.oauthLogin)
+	}
+	if got.oauthLogin.err == "" || got.oauthLogin.status != "" {
+		tt.Fatalf("error not surfaced: err=%q status=%q", got.oauthLogin.err, got.oauthLogin.status)
+	}
+	if cmd != nil {
+		tt.Fatal("terminal error rescheduled the poll chain")
+	}
+	if !strings.Contains(ansi.Strip(got.View().Content), "flow expired") {
+		tt.Fatal("error text missing from the login panel")
 	}
 }

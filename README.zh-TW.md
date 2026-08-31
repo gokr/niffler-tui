@@ -94,7 +94,10 @@ Niffler 的 builder 不使用這個 `go.mod`；它建立隔離的模組，replac
 本地指令由 TUI 處理，絕不發給模型：
 
 - `/provider` —— 可搜尋的全域供應商選擇器（e：編輯，d：移除）；也提供
-  環境回退與供應商設定
+  環境回退、供應商設定與訂閱登入（ChatGPT Plus/Pro 支援瀏覽器或裝置碼，
+  Claude Pro/Max 支援瀏覽器）。OAuth 流程會開啟授權 URL，輪詢直到
+  Niffler 的 provider 元件存入權杖，本機回呼連接埠不可用時可貼上
+  授權碼/重新導向 URL；esc 取消
 - `/model` —— 可搜尋的目前供應商模型目錄；選中立即持久化為本對話的
   覆寫（無需推理呼叫）
 - `/connect` —— 遮罩的供應商連線表單，使用 models.dev 範本或自訂
