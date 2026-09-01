@@ -193,6 +193,7 @@ func (m model) executeLocalCommand(command string) (tea.Model, tea.Cmd) {
 		} else {
 			m.mouse = argument == "on"
 		}
+		m.clearMouseSelection()
 		if m.mouse {
 			m.addBlock(blockMeta, t(m.loc, "chat.mouseOn"))
 		} else {

@@ -25,13 +25,16 @@ const (
 )
 
 // toolCall is one invocation of a tool with its final outcome. Core emits a
-// toolcall event with the result (or error) already baked in, so a call is
-// complete the moment it is added.
+// two-phase toolcall protocol: a start event (args, no result) opens the
+// call and a done event (result/error) completes it. A call stays pending
+// between the two; legacy single-phase events arrive already complete.
 type toolCall struct {
-	name   string
-	args   json.RawMessage
-	result json.RawMessage
-	err    string
+	name    string
+	callID  string
+	args    json.RawMessage
+	result  json.RawMessage
+	err     string
+	pending bool
 }
 
 // toolRun is a group of consecutive tool calls rendered as one card.
@@ -42,11 +45,52 @@ type toolRun struct {
 
 func runGlyph(run *toolRun) string {
 	for i := range run.calls {
+		if run.calls[i].pending {
+			return "⚙ "
+		}
+	}
+	for i := range run.calls {
 		if run.calls[i].err != "" {
 			return "⚠ "
 		}
 	}
 	return "✓ "
+}
+
+// completeToolCall fills in the outcome of the pending call opened by the
+// start phase of core's two-phase toolcall protocol. Blocks are walked from
+// the end so the pending entry is found even if other rounds have appended
+// blocks; matching is by call id (by name for legacy events without one).
+// Returns false when nothing pending matches — the caller appends the
+// finished call directly instead.
+func (m *model) completeToolCall(callID, name string, args, result json.RawMessage, err string) bool {
+	for i := len(m.blocks) - 1; i >= 0; i-- {
+		b := &m.blocks[i]
+		if b.kind != blockTool || b.run == nil {
+			continue
+		}
+		for j := range b.run.calls {
+			c := &b.run.calls[j]
+			if !c.pending {
+				continue
+			}
+			if c.callID != "" && callID != "" && c.callID != callID {
+				continue
+			}
+			if callID == "" && c.name != name {
+				continue
+			}
+			c.pending = false
+			c.callID = callID
+			if len(args) > 0 {
+				c.args = args
+			}
+			c.result = result
+			c.err = err
+			return true
+		}
+	}
+	return false
 }
 
 // appendToolCall folds a call into a card already in progress when the last
@@ -108,6 +152,9 @@ func renderToolRun(run *toolRun, expanded bool) string {
 	head := chevron + " " + runGlyph(run)
 	if len(run.calls) == 1 {
 		head += run.calls[0].name
+		if run.calls[0].pending {
+			head += "…"
+		}
 	} else {
 		head += fmt.Sprintf("%d tool calls", len(run.calls))
 		for i := range run.calls {
@@ -116,6 +163,9 @@ func renderToolRun(run *toolRun, expanded bool) string {
 				break
 			}
 			head += "  " + run.calls[i].name
+			if run.calls[i].pending {
+				head += "…"
+			}
 		}
 	}
 	b.WriteString(toolStyle.Render(head))
@@ -128,7 +178,9 @@ func renderToolRun(run *toolRun, expanded bool) string {
 		c := &run.calls[i]
 		b.WriteString("\n")
 		b.WriteString(toolStyle.Render("  "))
-		if c.err != "" {
+		if c.pending {
+			b.WriteString(toolStyle.Render("⚙ "))
+		} else if c.err != "" {
 			b.WriteString(errorStyle.Render("⚠ "))
 		} else {
 			b.WriteString(toolStyle.Render("✓ "))
@@ -150,13 +202,13 @@ func renderToolRun(run *toolRun, expanded bool) string {
 
 // handleMouseClick toggles the tool-run card under a transcript click. The
 // terminal Y is translated to a transcript content line via the viewport
-// scroll offset; the layout reserves two rows above the transcript (the
-// header line and the runtime/status line).
+// scroll offset; the layout reserves one header row above the transcript
+// (runtime status is rendered on that same row).
 func (m *model) handleMouseClick(msg tea.MouseClickMsg) {
 	if msg.Button != tea.MouseLeft || !m.mouse {
 		return
 	}
-	contentLine := msg.Y - 2 + m.viewport.YOffset()
+	contentLine := msg.Y - 1 + m.viewport.YOffset()
 	if contentLine < 0 {
 		return
 	}

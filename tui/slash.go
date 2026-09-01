@@ -133,7 +133,7 @@ func builtinSlashCommands() []slashCommand {
 			{Name: "id", Kind: "string", Description: "conversation id",
 				Source: &slashSource{Tool: "store.list", Args: map[string]any{"kind": "conversation"}, Field: "id"}},
 		}},
-		{Name: "mouse", Description: "tool-card click expansion (off = native copy)", builtin: true, Params: []slashParam{
+		{Name: "mouse", Description: "wheel scrolling and drag selection", builtin: true, Params: []slashParam{
 			{Name: "state", Kind: "enum", Values: []string{"on", "off"}},
 		}},
 		{Name: "help", Description: "show this help", builtin: true},

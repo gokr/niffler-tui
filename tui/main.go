@@ -55,6 +55,8 @@ type sessionEvent struct {
 	Content        string          `json:"content"`
 	Reasoning      string          `json:"reasoning"`
 	Tool           string          `json:"tool"`
+	CallID         string          `json:"callId"`
+	Phase          string          `json:"phase"`
 	Args           json.RawMessage `json:"args"`
 	Result         json.RawMessage `json:"result"`
 	Error          string          `json:"error"`
@@ -167,12 +169,12 @@ type model struct {
 	autoApproved map[string][]string // sessionId -> tool names
 
 	// mouse toggles terminal mouse tracking (default on). When on, the wheel
-	// scrolls the transcript and clicking a tool-run card expands it; copy
-	// then uses Shift+drag (standard for SGR mouse). /mouse off disables
-	// tracking entirely: native plain-drag copy works, but the wheel is
-	// handled by the terminal itself (the app sees no wheel events), so the
-	// transcript scrolls with PgUp/PgDn/Ctrl+Up instead. See /mouse.
-	mouse bool
+	// scrolls the transcript, clicks expand tool cards, and plain left-button
+	// drags use the application-owned selection below. /mouse off remains a
+	// fallback for terminal-native selection, but the app then receives no
+	// wheel events. See /mouse.
+	mouse     bool
+	selection mouseSelection
 
 	// streaming marks output that should remain plain until it settles.
 	// renderTimerActive ensures only one settle timer spans token bursts,
@@ -302,9 +304,9 @@ func newModel(ctx context.Context, comp *sdk.Component, session, natsURL string)
 		history:      history,
 		historyFile:  historyFile,
 		slash:        newSlashRegistry(),
-		// Mouse tracking on by default: the wheel scrolls the transcript and
-		// click expands tool cards; copy uses Shift+drag. See /mouse off for
-		// a pure-native mode (plain-drag copy, no app wheel).
+		// Mouse tracking on by default: wheel scrolling, tool-card clicks, and
+		// application-owned plain-drag selection all work simultaneously.
+		// /mouse off remains a terminal-native fallback.
 		mouse: true,
 	}
 	m.layout()
@@ -448,6 +450,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
+		m.clearMouseSelection()
 		m.layout()
 		m.syncViewport(false)
 
@@ -595,10 +598,33 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case tea.MouseClickMsg:
-		// A left click toggles the tool-run card under the cursor (only
-		// meaningful with mouse tracking on, see /mouse).
-		m.handleMouseClick(msg)
+		// Mouse tracking supplies both viewport wheel events and the press,
+		// motion, and release sequence used for application-owned selection.
+		// Delay tool-card activation until release so a drag never toggles it.
+		m.beginMouseSelection(msg)
 		return m, nil
+
+	case tea.MouseMotionMsg:
+		m.extendMouseSelection(msg)
+		return m, nil
+
+	case tea.MouseReleaseMsg:
+		if !m.selection.pressed {
+			return m, nil
+		}
+		if cmd, dragged := m.finishMouseSelection(msg); dragged {
+			return m, cmd
+		}
+		m.handleMouseClick(tea.MouseClickMsg{
+			X: msg.X, Y: msg.Y, Button: tea.MouseLeft, Mod: msg.Mod,
+		})
+		return m, nil
+
+	case tea.MouseWheelMsg:
+		// A screen-coordinate selection cannot stay attached to content that
+		// moves underneath it. Clear it, then let the viewport consume the
+		// wheel below.
+		m.clearMouseSelection()
 
 	case tea.PasteMsg:
 		// Bracketed-paste arrives as PasteMsg, not KeyPressMsg, so without
@@ -998,12 +1024,29 @@ func (m *model) applySessionEvent(msg sessionEventMsg) tea.Cmd {
 		m.roundClosed = false
 		// The assistant round ended; render its markdown immediately.
 		m.setStreaming(false)
-		m.appendToolCall(toolCall{
-			name:   event.Tool,
-			args:   event.Args,
-			result: event.Result,
-			err:    event.Error,
-		})
+		if event.Phase == "start" {
+			// Phase 1 of core's two-phase protocol: the call is about to
+			// run. Append a pending entry so long-running tools are
+			// visible immediately; the done event completes it in place.
+			m.appendToolCall(toolCall{
+				name:    event.Tool,
+				args:    event.Args,
+				callID:  event.CallID,
+				pending: true,
+			})
+		} else if m.completeToolCall(event.CallID, event.Tool, event.Args, event.Result, event.Error) {
+			m.markTranscriptDirty()
+		} else {
+			// Phase 2 with no pending entry to complete (or a legacy
+			// single-phase event): append the finished call directly.
+			m.appendToolCall(toolCall{
+				name:   event.Tool,
+				args:   event.Args,
+				result: event.Result,
+				err:    event.Error,
+				callID: event.CallID,
+			})
+		}
 
 	case "status":
 		m.updateRuntimeFromEvent(event)
@@ -1309,14 +1352,12 @@ func (m model) View() tea.View {
 		max(0, m.width-ansi.StringWidth(header)-ansi.StringWidth(thinkChip)-ansi.StringWidth(toolChip)-ansi.StringWidth(effortChip)-3*ansi.StringWidth(headerSep)))
 	headerLine := header + headerSep + thinkChip + headerSep + toolChip + headerSep + effortChip + headerSep + runtimeLine
 	makeView := func(content string) tea.View {
-		view := tea.NewView(content)
+		view := tea.NewView(m.applyMouseSelection(content))
 		view.AltScreen = true
-		// Mouse tracking is on by default (see /mouse): the wheel scrolls
-		// the transcript and clicking a tool-run card expands it; native
-		// selection then needs Shift+drag. With /mouse off the terminal's
-		// native click-and-drag text selection works untouched. The
-		// transcript stays keyboard-scrollable (PgUp/PgDn,
-		// Ctrl+Up/Ctrl+Down) either way.
+		// Cell-motion tracking provides wheel, press, drag, and release events.
+		// selection.go turns drags into highlighted text and copies it on
+		// release, so wheel scrolling and plain-drag selection coexist. With
+		// /mouse off the terminal owns selection and scrollback instead.
 		if m.mouse {
 			view.MouseMode = tea.MouseModeCellMotion
 		}

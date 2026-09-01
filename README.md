@@ -67,7 +67,8 @@ Keys:
   (`auto` → `low` → `medium` → `high`)
 - `Esc`: while busy, the first press arms a "Stop?" prompt and the second
   force-cancels the running turn
-- Mouse wheel: scroll the transcript; left click toggles a tool-run card
+- Mouse: wheel scrolls the transcript; plain drag selects and copies; left
+  click toggles a tool-run card
 - `Ctrl+C`: quit
 
 Consecutive tool calls in a turn are folded into a single collapsible
@@ -75,12 +76,12 @@ Consecutive tool calls in a turn are folded into a single collapsible
 by default so long tool sequences stay unobtrusive. `Ctrl+E` cycles every
 card between brief (collapsed), full (all expanded) and off (hidden); a left
 click toggles the card under the cursor. Mouse tracking is **on by default**:
-the wheel scrolls the transcript and clicking works as above. Because
-tracking captures clicks, copy/paste selection uses `Shift`+drag (standard
-for SGR mouse). `/mouse off` disables tracking entirely — native plain-drag
-copy comes back, but the app then receives no wheel events, so the transcript
-scrolls with `PgUp`/`PgDn`/`Ctrl+Up` and the wheel behaves as ordinary
-terminal scroll instead.
+the wheel scrolls the transcript, while plain left-button drag selects and
+copies text using application-owned selection. Both therefore work at the
+same time. `/mouse off` remains a terminal-native fallback, but the app then
+receives no wheel events, so the transcript scrolls with
+`PgUp`/`PgDn`/`Ctrl+Up` and the wheel behaves as ordinary terminal scroll
+instead.
 
 ### Thinking
 
@@ -115,8 +116,9 @@ Local commands are handled by the TUI and are never sent to the model:
 - `/session` — conversation browser; switch or resume sessions, or start a
   new one
 - `/locale [en|zh|zh-TW]` — switch the UI language (persisted)
-- `/mouse [on|off]` — mouse tracking (default on: wheel+click work, copy is
-  Shift+drag; off restores native plain-drag copy but no app wheel)
+- `/mouse [on|off]` — mouse tracking (default on: wheel, click, and
+  plain-drag selection work together; off uses terminal-native selection but
+  provides no app wheel)
 - `/help` — command summary, including registered plugin commands
 
 Tab completion works for command names and, where a command declares it, for

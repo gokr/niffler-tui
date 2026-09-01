@@ -1183,12 +1183,12 @@ func TestToolCardHitTestAndToggle(t *testing.T) {
 	// must be on for clicks to reach the app.
 	m.blocks[0].run.collapsed = true
 	m.mouse = true
-	m.handleMouseClick(tea.MouseClickMsg{Button: tea.MouseLeft, Y: 0 + 2})
+	m.handleMouseClick(tea.MouseClickMsg{Button: tea.MouseLeft, Y: 0 + 1})
 	if m.blocks[0].run.collapsed {
 		t.Fatal("click did not expand the first card")
 	}
 	// Non-left button is ignored: the card stays expanded.
-	m.handleMouseClick(tea.MouseClickMsg{Button: tea.MouseRight, Y: 0 + 2})
+	m.handleMouseClick(tea.MouseClickMsg{Button: tea.MouseRight, Y: 0 + 1})
 	if m.blocks[0].run.collapsed {
 		t.Fatal("right-click collapsed the card")
 	}
@@ -1431,6 +1431,76 @@ func TestMultiRoundStillStreams(t *testing.T) {
 	}
 	if m.blocks[2].text != "the answer is 42" {
 		t.Fatalf("round 2 assistant = %q", m.blocks[2].text)
+	}
+}
+
+func TestToolcallTwoPhaseRendersOneCall(t *testing.T) {
+	m := newTestModel()
+	// Phase 1: the call opens as a pending entry.
+	m.applySessionEvent(sessionEventMsg{kind: "toolcall", event: sessionEvent{
+		SessionID: "game", Phase: "start", CallID: "call_1", Tool: "bash",
+		Args: json.RawMessage(`{"cmd":"make"}`)}})
+	if len(m.blocks) != 1 || m.blocks[0].kind != blockTool || m.blocks[0].run == nil {
+		t.Fatalf("start phase did not open a tool card: %+v", m.blocks)
+	}
+	if calls := m.blocks[0].run.calls; len(calls) != 1 || !calls[0].pending {
+		t.Fatalf("start phase call = %+v, want one pending call", m.blocks[0].run.calls)
+	}
+	// Phase 2: the done event completes the same call in place.
+	m.applySessionEvent(sessionEventMsg{kind: "toolcall", event: sessionEvent{
+		SessionID: "game", Phase: "done", CallID: "call_1", Tool: "bash",
+		Args: json.RawMessage(`{"cmd":"make"}`), Result: json.RawMessage(`"ok"`)}})
+	if len(m.blocks) != 1 || len(m.blocks[0].run.calls) != 1 {
+		t.Fatalf("done phase duplicated the call: %+v", m.blocks)
+	}
+	call := m.blocks[0].run.calls[0]
+	if call.pending || string(call.result) != `"ok"` {
+		t.Fatalf("call not completed in place: %+v", call)
+	}
+}
+
+func TestToolcallParallelCallsCompleteByCallID(t *testing.T) {
+	m := newTestModel()
+	m.applySessionEvent(sessionEventMsg{kind: "toolcall", event: sessionEvent{
+		SessionID: "game", Phase: "start", CallID: "call_1", Tool: "bash",
+		Args: json.RawMessage(`{"cmd":"a"}`)}})
+	m.applySessionEvent(sessionEventMsg{kind: "toolcall", event: sessionEvent{
+		SessionID: "game", Phase: "start", CallID: "call_2", Tool: "read",
+		Args: json.RawMessage(`{"path":"b"}`)}})
+	// Results can land out of call order (parallel dispatch).
+	m.applySessionEvent(sessionEventMsg{kind: "toolcall", event: sessionEvent{
+		SessionID: "game", Phase: "done", CallID: "call_2", Tool: "read",
+		Args: json.RawMessage(`{"path":"b"}`), Result: json.RawMessage(`"two"`)}})
+	m.applySessionEvent(sessionEventMsg{kind: "toolcall", event: sessionEvent{
+		SessionID: "game", Phase: "done", CallID: "call_1", Tool: "bash",
+		Args: json.RawMessage(`{"cmd":"a"}`), Result: json.RawMessage(`"one"`)}})
+	if len(m.blocks) != 1 || m.blocks[0].run == nil || len(m.blocks[0].run.calls) != 2 {
+		t.Fatalf("parallel calls = %+v, want one run of two", m.blocks)
+	}
+	calls := m.blocks[0].run.calls
+	if calls[0].pending || calls[1].pending {
+		t.Fatalf("calls left pending: %+v", calls)
+	}
+	if string(calls[0].result) != `"one"` || string(calls[1].result) != `"two"` {
+		t.Fatalf("results misattributed: %+v", calls)
+	}
+}
+
+func TestToolcallLegacySinglePhaseStillAppends(t *testing.T) {
+	// A phase-less event (old core) must append one complete call, and a
+	// done event with no matching pending entry must not be dropped.
+	m := newTestModel()
+	m.applySessionEvent(sessionEventMsg{kind: "toolcall", event: sessionEvent{
+		SessionID: "game", Tool: "bash", Args: json.RawMessage(`{"cmd":"ls"}`),
+		Result: json.RawMessage(`"ok"`)}})
+	m.applySessionEvent(sessionEventMsg{kind: "toolcall", event: sessionEvent{
+		SessionID: "game", Phase: "done", CallID: "call_9", Tool: "read",
+		Args: json.RawMessage(`{"path":"x"}`), Result: json.RawMessage(`"late"`)}})
+	if len(m.blocks) != 1 || m.blocks[0].run == nil || len(m.blocks[0].run.calls) != 2 {
+		t.Fatalf("legacy/complete events = %+v, want two calls in one run", m.blocks)
+	}
+	if m.blocks[0].run.calls[1].pending {
+		t.Fatalf("late done event left a pending call: %+v", m.blocks[0].run.calls)
 	}
 }
 

@@ -17,6 +17,7 @@
         "tui/i18n.go",
         "tui/oauth.go",
         "tui/provider_form.go",
+        "tui/selection.go",
         "tui/selectors.go",
         "tui/slash.go",
         "tui/toolcard.go",
