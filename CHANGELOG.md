@@ -8,6 +8,38 @@ project aims for [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Connect a provider without typing a model id** — the connect/edit
+  form fetches the provider's catalog models and prefills the model
+  field with an auto-pick (newest tool-call-capable model), so the
+  field can simply be Tab-past; the placeholder now says so. Hand-typed
+  ids are normalized against the catalog: exact ids are kept as-is and
+  missing vendor prefixes are repaired by case-insensitive suffix match
+  ("glm-5.3-flash" → "hf:zai-org/GLM-5.3-Flash" for Synthetic).
+  Unknown ids still pass through untouched (custom gateways route on
+  their own ids); without a catalog the old required-model validation
+  applies.
+
+### Added
+
+- **Prompt-cache hit ratio in the status detail** — `/status` now shows a
+  `cache hits:` line once the provider reports a cached-input breakdown:
+  session-wide cached prompt tokens, total prompt tokens, and the hit
+  percentage, accumulated across rounds (a round reported on both the
+  status and assistant events counts once) and reset on session switch.
+  Hidden when the provider gives no breakdown, so it never reads as a
+  misleading 0%.
+
+### Fixed
+
+- **Anthropic cache reads surfaced** — the Anthropic adapter mapped
+  cache-read input tokens into the prompt total but never populated the
+  OpenAI-style `prompt_tokens_details.cached_tokens` breakdown, so
+  Claude sessions reported no cache-hit data downstream (conversation
+  status events, bench, clients). Cache-creation input stays excluded:
+  it is a write, not a hit.
+
+### Added
+
 - **Initial Bubble Tea session client** (`e1cd0d4`) — a terminal chat
   client for Niffler: drives `session` calls through `svc.core.call` and
   renders `ev.session.*` token, tool-call, assistant and completion

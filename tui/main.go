@@ -44,10 +44,25 @@ const (
 	markdownSettleDelay = 300 * time.Millisecond
 )
 
+type promptTokensDetails struct {
+	CachedTokens int `json:"cached_tokens"`
+}
+
 type usageStats struct {
-	PromptTokens     int `json:"prompt_tokens"`
-	CompletionTokens int `json:"completion_tokens"`
-	TotalTokens      int `json:"total_tokens"`
+	PromptTokens     int                  `json:"prompt_tokens"`
+	CompletionTokens int                  `json:"completion_tokens"`
+	TotalTokens      int                  `json:"total_tokens"`
+	Details          *promptTokensDetails `json:"prompt_tokens_details"`
+}
+
+// cacheHitPct reports the share of prompt tokens served from the provider's
+// prompt cache this round, or -1 when the provider gave no cached-input
+// breakdown (the field is omitted, never zero, so "0%" stays meaningful).
+func (u usageStats) cacheHitPct() float64 {
+	if u.Details == nil || u.Details.CachedTokens <= 0 || u.PromptTokens <= 0 {
+		return -1
+	}
+	return float64(u.Details.CachedTokens) / float64(u.PromptTokens) * 100
 }
 
 type sessionEvent struct {
@@ -148,6 +163,16 @@ type model struct {
 	modelOverride         string
 	promptTokens          int
 	contextUsed           int
+	// lastCachePrompt is the prompt-token total of the round whose cache
+	// numbers were last accumulated, so the same round arriving on both a
+	// status and an assistant event is only counted once.
+	lastCachePrompt int
+	// cacheHits/cachePrompt accumulate the per-round cached and total prompt
+	// tokens reported by the llm component over the current session, so the
+	// status detail can show a session-wide cache-hit ratio instead of just
+	// the last round's snapshot. Rounded back to zero on session switch.
+	cacheHits    int
+	cachePrompt  int
 	contextNote           string
 	controlPending        bool
 
@@ -753,6 +778,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if msg.Err != nil {
 			m.contextNote = msg.Err.Error()
+		} else if m.mode == modeConnectForm {
+			// The connect/edit form consumes catalog models directly (prefill
+			// or normalize its model field) without touching the model list
+			// cached for the active provider's selector.
+			m.providerForm.setCatalogModels(msg.Catalog, msg.Models)
 		} else {
 			m.models = msg.Models
 			m.modelsCatalog = msg.Catalog
@@ -1153,6 +1183,16 @@ func (m *model) updateRuntimeFromEvent(event sessionEvent) {
 		m.contextUsed = event.Usage.TotalTokens
 	} else if event.Usage.PromptTokens > 0 {
 		m.contextUsed = event.Usage.PromptTokens + event.Usage.CompletionTokens
+	}
+	// Accumulate the round's cache economics. Status and assistant events
+	// both carry the usage object; guard against double-counting a round
+	// that reports through both by tracking the prompt total it belongs to.
+	if event.Usage.Details != nil && event.Usage.Details.CachedTokens > 0 {
+		if event.Usage.PromptTokens != m.lastCachePrompt {
+			m.cacheHits += event.Usage.Details.CachedTokens
+			m.cachePrompt += event.Usage.PromptTokens
+			m.lastCachePrompt = event.Usage.PromptTokens
+		}
 	}
 }
 

@@ -77,6 +77,9 @@ type modelSummary struct {
 	Reasoning bool       `json:"reasoning"`
 	ToolCall  bool       `json:"tool_call"`
 	Limit     modelLimit `json:"limit"`
+	// ReleaseDate is the catalog's release_date (YYYY-MM-DD, may be empty);
+	// used to auto-pick the newest model when connecting a provider.
+	ReleaseDate string `json:"release_date"`
 }
 
 type modelsResponse struct {

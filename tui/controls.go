@@ -33,6 +33,9 @@ func (m model) switchSession(id string) model {
 	m.runtime = runtimeResolution{}
 	m.promptTokens = 0
 	m.contextUsed = 0
+	m.cacheHits = 0
+	m.cachePrompt = 0
+	m.lastCachePrompt = 0
 	// controlPending guards the control-plane UI; a completion for the old
 	// session (e.g. a conversation model save) is dropped by its session
 	// guard, so the flag must not survive the switch.
@@ -421,6 +424,11 @@ func (m model) handleControlKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 					m.mode = modeConnectForm
 					m.providerConfirmDelete = ""
 					m.layout()
+					// Catalog models normalize/prefill the model field here too.
+					if m.providerForm.catalogID != "" {
+						m.providerForm.loading = true
+						return m, loadModelsCmd(m.comp, m.providerForm.catalogID)
+					}
 					return m, nil
 				}
 			case "d", "x", "enter":
@@ -493,6 +501,12 @@ func (m model) handleControlKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.providerForm = newProviderForm(template, m.runtime, m.width, m.loc)
 		m.mode = modeConnectForm
 		m.layout()
+		// Fetch the provider's catalog models so the form can prefill a
+		// model id (or normalize what the runtime already resolved).
+		if m.providerForm.catalogID != "" {
+			m.providerForm.loading = true
+			return m, loadModelsCmd(m.comp, m.providerForm.catalogID)
+		}
 		return m, nil
 
 	case modeModels:
@@ -613,6 +627,13 @@ func (m model) detailedRuntimeStatus() string {
 		t(m.loc, "status.detailContext", formatTokens(m.runtime.Context), valueOr(m.runtime.ContextSource, t(m.loc, "status.unknownSource"))),
 		t(m.loc, "status.detailOutput", formatTokens(m.runtime.Output), valueOr(m.runtime.OutputSource, t(m.loc, "status.unknownSource"))),
 		t(m.loc, "status.detailUsed", formatTokens(m.contextUsed), fmt.Sprintf("%.1f%%", contextPercent(m.contextUsed, m.runtime.Context)*100)),
+	}
+	// Cache-hit economics: only shown once the provider has reported a
+	// cached-input breakdown (the ratio is undefined before that).
+	if m.cachePrompt > 0 {
+		hit := float64(m.cacheHits) / float64(m.cachePrompt) * 100
+		lines = append(lines, t(m.loc, "status.detailCache",
+			formatTokens(m.cacheHits), formatTokens(m.cachePrompt), fmt.Sprintf("%.1f%%", hit)))
 	}
 	if m.providerStatus.Provider.StripPrefix {
 		lines = append(lines, t(m.loc, "status.detailStrip"))

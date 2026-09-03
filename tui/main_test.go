@@ -690,6 +690,124 @@ func TestRuntimeStatusAndContextUsage(t *testing.T) {
 	}
 }
 
+func TestCacheHitStatsAccumulate(t *testing.T) {
+	m := newTestModel()
+
+	// Round 1: a status event with a cached-input breakdown.
+	m.applySessionEvent(sessionEventMsg{kind: "status", event: sessionEvent{
+		Provider: "deepseek", Model: "deepseek-chat",
+		Usage: usageStats{PromptTokens: 10_000, TotalTokens: 10_500,
+			Details: &promptTokensDetails{CachedTokens: 8_000}},
+	}})
+	if m.cacheHits != 8_000 || m.cachePrompt != 10_000 {
+		t.Fatalf("round 1 = hits:%d prompt:%d", m.cacheHits, m.cachePrompt)
+	}
+
+	// The same round repeated on the assistant event must not double-count.
+	m.applySessionEvent(sessionEventMsg{kind: "assistant", event: sessionEvent{
+		Provider: "deepseek", Model: "deepseek-chat", Content: "ok",
+		Usage: usageStats{PromptTokens: 10_000, TotalTokens: 10_500,
+			Details: &promptTokensDetails{CachedTokens: 8_000}},
+	}})
+	if m.cacheHits != 8_000 || m.cachePrompt != 10_000 {
+		t.Fatalf("duplicate round counted twice: hits:%d prompt:%d", m.cacheHits, m.cachePrompt)
+	}
+
+	// Round 2 with a different prompt total accumulates.
+	m.applySessionEvent(sessionEventMsg{kind: "status", event: sessionEvent{
+		Provider: "deepseek", Model: "deepseek-chat",
+		Usage: usageStats{PromptTokens: 12_000, TotalTokens: 12_400,
+			Details: &promptTokensDetails{CachedTokens: 9_600}},
+	}})
+	if m.cacheHits != 17_600 || m.cachePrompt != 22_000 {
+		t.Fatalf("round 2 = hits:%d prompt:%d", m.cacheHits, m.cachePrompt)
+	}
+
+	// The detailed status surfaces the session-wide ratio; without a
+	// breakdown the line is absent rather than reading 0%.
+	status := m.detailedRuntimeStatus()
+	if !strings.Contains(status, "cache hits: 17.6k of 22.0k prompt (80.0%)") {
+		t.Fatalf("detailed status missing cache line: %q", status)
+	}
+
+	bare := newTestModel()
+	if strings.Contains(bare.detailedRuntimeStatus(), "cache hits") {
+		t.Fatal("cache line shown without a provider breakdown")
+	}
+
+	// A session switch resets the accumulated ratio.
+	switched := m.switchSession("other")
+	if switched.cacheHits != 0 || switched.cachePrompt != 0 || switched.lastCachePrompt != 0 {
+		t.Fatalf("session switch kept cache stats: %d/%d", switched.cacheHits, switched.cachePrompt)
+	}
+}
+
+func TestProviderFormModelAutoPickAndNormalization(t *testing.T) {
+	catalog := []modelSummary{
+		{ID: "hf:zai-org/GLM-4.7-Flash", Name: "GLM-4.7 Flash", ToolCall: true, ReleaseDate: "2026-01-10"},
+		{ID: "hf:moonshotai/Kimi-K3", Name: "Kimi K3", ToolCall: true, ReleaseDate: "2026-06-12"},
+		{ID: "hf:zai-org/GLM-5.3-Flash", Name: "GLM-5.3 Flash", ToolCall: true, ReleaseDate: "2026-05-02"},
+		{ID: "hf:openai/gpt-oss-120b", Name: "GPT OSS 120B", ToolCall: false, ReleaseDate: "2025-08-05"},
+	}
+
+	// Connecting with an empty model field: the newest tool-call model is
+	// prefilled (Synthetic-style hf: ids included) so nothing needs typing.
+	template := catalogProvider{ID: "synthetic", Name: "Synthetic", API: "https://api.synthetic.new/openai/v1"}
+	form := newProviderForm(&template, runtimeResolution{}, 80, LocaleEN)
+	form.setCatalogModels("synthetic", catalog)
+	if got := form.inputs[providerFieldModel].Value(); got != "hf:moonshotai/Kimi-K3" {
+		t.Fatalf("auto-picked model = %q, want hf:moonshotai/Kimi-K3", got)
+	}
+
+	// A hand-typed id missing the hf: vendor prefix is repaired on submit.
+	form.inputs[providerFieldModel].SetValue("glm-5.3-flash")
+	form.inputs[providerFieldAPIKey].SetValue("sk-test")
+	values, err := form.values()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if values.Model != "hf:zai-org/GLM-5.3-Flash" {
+		t.Fatalf("normalized model = %q, want hf:zai-org/GLM-5.3-Flash", values.Model)
+	}
+
+	// An exact catalog id is kept as-is; the field shows the correction.
+	form.inputs[providerFieldModel].SetValue("hf:zai-org/GLM-5.3-Flash")
+	values, err = form.values()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if values.Model != "hf:zai-org/GLM-5.3-Flash" {
+		t.Fatalf("exact id mangled: %q", values.Model)
+	}
+
+	// Unknown ids pass through untouched (custom gateways route on their
+	// own ids; the catalog is an authority, not a gate).
+	form.inputs[providerFieldModel].SetValue("some-gateway-id")
+	values, err = form.values()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if values.Model != "some-gateway-id" {
+		t.Fatalf("unknown id rewritten: %q", values.Model)
+	}
+
+	// Without catalog models the old required-model validation still holds.
+	empty := newProviderForm(&template, runtimeResolution{}, 80, LocaleEN)
+	empty.inputs[providerFieldAPIKey].SetValue("sk-test")
+	if _, err := empty.values(); err == nil {
+		t.Fatal("empty form without catalog models should still require a model")
+	}
+
+	// A catalog fetch for a different provider is ignored.
+	form2 := newProviderForm(&template, runtimeResolution{}, 80, LocaleEN)
+	form2.setCatalogModels("deepseek", []modelSummary{
+		{ID: "deepseek-chat", Name: "DeepSeek Chat", ToolCall: true, ReleaseDate: "2025-12-01"},
+	})
+	if form2.inputs[providerFieldModel].Value() != "" {
+		t.Fatalf("foreign catalog prefilled: %q", form2.inputs[providerFieldModel].Value())
+	}
+}
+
 func TestProviderFormMasksSecretAndValidates(t *testing.T) {
 	template := catalogProvider{ID: "deepseek", Name: "DeepSeek", API: "https://api.deepseek.com"}
 	form := newProviderForm(&template, runtimeResolution{Catalog: "deepseek", Model: "deepseek-chat"}, 80, LocaleEN)

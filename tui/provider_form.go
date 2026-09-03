@@ -29,6 +29,12 @@ type providerForm struct {
 	err      string
 	saving   bool
 	loc      Locale
+	// catalogID is the models.dev provider id whose catalog feeds the model
+	// prefill/normalization ("synthetic", "deepseek", …); empty for custom
+	// providers without a catalog entry.
+	catalogID string
+	loading   bool // catalog models are still being fetched
+	models    []modelSummary
 }
 
 func newProviderForm(template *catalogProvider, runtime runtimeResolution, width int, loc Locale) providerForm {
@@ -38,6 +44,7 @@ func newProviderForm(template *catalogProvider, runtime runtimeResolution, width
 		if form.template == "" {
 			form.template = template.ID
 		}
+		form.catalogID = template.ID
 		form.inputs[providerFieldNickname].SetValue(template.ID)
 		form.inputs[providerFieldBaseURL].SetValue(template.API)
 		form.inputs[providerFieldCatalog].SetValue(template.ID)
@@ -58,6 +65,7 @@ func newEditProviderForm(p providerSummary, width int, loc Locale) providerForm 
 	form := newProviderFormFields(width, loc)
 	form.edit = true
 	form.template = p.Nickname
+	form.catalogID = p.Catalog
 	form.inputs[providerFieldNickname].SetValue(p.Nickname)
 	form.inputs[providerFieldBaseURL].SetValue(p.BaseURL)
 	form.inputs[providerFieldCatalog].SetValue(p.Catalog)
@@ -166,7 +174,20 @@ func (f providerForm) values() (providerFormValues, error) {
 		return providerFormValues{}, fmt.Errorf("%s", t(f.loc, "form.baseUrlInvalid"))
 	}
 	if values.Model == "" {
-		return providerFormValues{}, fmt.Errorf("%s", t(f.loc, "form.modelRequired"))
+		// No model typed: fall back to the catalog auto-pick so connecting a
+		// provider never requires typing a model id.
+		if picked := pickDefaultModel(f.models); picked != "" {
+			values.Model = picked
+			f.inputs[providerFieldModel].SetValue(picked)
+		} else {
+			return providerFormValues{}, fmt.Errorf("%s", t(f.loc, "form.modelRequired"))
+		}
+	} else if exact := findModel(f.models, values.Model); exact != "" {
+		values.Model = exact
+	} else if match := findModelBySuffix(f.models, values.Model); match != "" {
+		// Repair hand-typed ids missing the vendor prefix against the catalog.
+		values.Model = match
+		f.inputs[providerFieldModel].SetValue(match)
 	}
 	contextText := strings.TrimSpace(f.inputs[providerFieldContext].Value())
 	if contextText != "" && contextText != "0" {
@@ -181,6 +202,100 @@ func (f providerForm) values() (providerFormValues, error) {
 
 func (f *providerForm) clearSecret() {
 	f.inputs[providerFieldAPIKey].SetValue("")
+}
+
+// setCatalogModels feeds the fetched catalog for the form's provider. The
+// first call prefills the model field with an auto-picked default (newest
+// tool-call model) so connecting does not require typing a model id, and
+// normalizes an inherited value to its exact catalog spelling.
+func (f *providerForm) setCatalogModels(catalogID string, models []modelSummary) {
+	if catalogID != f.catalogID || len(models) == 0 {
+		return
+	}
+	f.models = models
+	f.loading = false
+	field := &f.inputs[providerFieldModel]
+	if field.Value() == "" {
+		if picked := pickDefaultModel(models); picked != "" {
+			field.SetValue(picked)
+		}
+		return
+	}
+	// Normalize what is already in the field: a case-insensitive suffix
+	// match repairs hand-typed ids missing the vendor prefix
+	// ("glm-5.3-flash" → "hf:zai-org/GLM-5.3-Flash"). An exact catalog id
+	// is kept as-is; anything else is left untouched.
+	if exact := findModel(models, field.Value()); exact != "" {
+		field.SetValue(exact)
+		return
+	}
+	if match := findModelBySuffix(models, field.Value()); match != "" {
+		field.SetValue(match)
+	}
+}
+
+// pickDefaultModel chooses a sensible default from the catalog: the newest
+// tool-call-capable text model, so providers whose ids need vendor prefixes
+// (e.g. Synthetic's "hf:zai-org/GLM-5.3-Flash") still connect out of the box.
+func pickDefaultModel(models []modelSummary) string {
+	best := ""
+	var bestDate string
+	for _, candidate := range models {
+		if !candidate.ToolCall {
+			continue
+		}
+		date := candidate.ReleaseDate
+		if best == "" || date > bestDate {
+			best, bestDate = candidate.ID, date
+		}
+	}
+	if best != "" {
+		return best
+	}
+	// No tool-call filter match: fall back to the newest model overall.
+	for _, candidate := range models {
+		if best == "" || candidate.ReleaseDate > bestDate {
+			best, bestDate = candidate.ID, candidate.ReleaseDate
+		}
+	}
+	return best
+}
+
+// findModel returns the exact catalog id matching the given model id (the
+// catalog is the spelling authority), or "" when absent.
+func findModel(models []modelSummary, id string) string {
+	for _, candidate := range models {
+		if candidate.ID == id {
+			return candidate.ID
+		}
+	}
+	return ""
+}
+
+// findModelBySuffix matches case-insensitively on the tail of catalog ids
+// after the last "/" and ":" — "GLM-5.3-flash" matches
+// "hf:zai-org/GLM-5.3-Flash". Returns the catalog spelling.
+func findModelBySuffix(models []modelSummary, id string) string {
+	tail := modelIDTail(id)
+	if tail == "" {
+		return ""
+	}
+	for _, candidate := range models {
+		if strings.EqualFold(modelIDTail(candidate.ID), tail) {
+			return candidate.ID
+		}
+	}
+	return ""
+}
+
+// modelIDTail returns the last path segment of a model id, keeping any
+// hf: style scheme prefix ("hf:zai-org/GLM-5.3-Flash" → "hf:GLM-5.3-Flash").
+// Comparing tails keeps scheme and vendor spellings out of the match.
+func modelIDTail(id string) string {
+	if i := strings.LastIndexByte(id, '/'); i >= 0 {
+		id = id[i+1:]
+	}
+	return id
 }
 
 func (f providerForm) view(width int) string {
