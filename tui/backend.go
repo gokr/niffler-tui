@@ -188,6 +188,50 @@ func loadProviderStatus(comp *sdk.Component) (providerStatusResponse, error) {
 	return response, err
 }
 
+// servedModelsMsg reports the live model ids a provider's own /models
+// endpoint serves (via the provider component's provider_models tool). The
+// connect/edit form uses it to auto-pick or repair the model field; the
+// catalog prefill remains the fallback when the probe fails.
+type servedModelsMsg struct {
+	Models  []string
+	Err     error
+	editFor string // nickname when probed for the edit form; "" for connect
+}
+
+// loadServedModelsCmd probes the endpoint. For the connect form the
+// baseUrl/apiKey are explicit (the key is not saved yet); for the edit form
+// the stored credential is used by nickname.
+func loadServedModelsCmd(comp *sdk.Component, nickname, baseURL, apiKey string) tea.Cmd {
+	return func() tea.Msg {
+		args := map[string]any{"refresh": true}
+		if nickname != "" {
+			args["nickname"] = nickname
+		} else {
+			args["baseUrl"] = baseURL
+			if apiKey != "" {
+				args["apiKey"] = apiKey
+			}
+		}
+		var response struct {
+			OK     bool `json:"ok"`
+			Models []struct {
+				ID string `json:"id"`
+			} `json:"models"`
+		}
+		err := requestInto(comp, "provider", "provider_models", args, &response)
+		if err != nil {
+			return servedModelsMsg{Err: err, editFor: nickname}
+		}
+		ids := make([]string, 0, len(response.Models))
+		for _, model := range response.Models {
+			if model.ID != "" {
+				ids = append(ids, model.ID)
+			}
+		}
+		return servedModelsMsg{Models: ids, editFor: nickname}
+	}
+}
+
 func resolveRuntime(comp *sdk.Component, modelOverride string) (runtimeResolution, error) {
 	args := map[string]any{}
 	if strings.TrimSpace(modelOverride) != "" {
@@ -504,6 +548,38 @@ func addProviderCmd(comp *sdk.Component, values providerFormValues) tea.Cmd {
 			err = fmt.Errorf("provider add failed")
 		}
 		return providerActionMsg{Action: "add", Nickname: values.Nickname, Err: err}
+	}
+}
+
+// probeThenAddProviderCmd probes the endpoint's live model list with the
+// not-yet-saved credentials and repairs the model id against it, then adds
+// the provider. Probe failure (no /models route, bad gateway) falls through
+// to the add unchanged.
+func probeThenAddProviderCmd(comp *sdk.Component, values providerFormValues) tea.Cmd {
+	return func() tea.Msg {
+		var probe struct {
+			OK     bool `json:"ok"`
+			Models []struct {
+				ID string `json:"id"`
+			} `json:"models"`
+		}
+		err := requestInto(comp, "provider", "provider_models", map[string]any{
+			"baseUrl": values.BaseURL, "apiKey": values.APIKey, "refresh": true,
+		}, &probe)
+		if err == nil && probe.OK && len(probe.Models) > 0 {
+			ids := make([]string, 0, len(probe.Models))
+			for _, model := range probe.Models {
+				if model.ID != "" {
+					ids = append(ids, model.ID)
+				}
+			}
+			if match := matchServedModel(ids, values.Model); match != "" {
+				values.Model = match
+			} else if pick := pickDefaultServedModel(ids); pick != "" && values.Model == "" {
+				values.Model = pick
+			}
+		}
+		return addProviderCmd(comp, values)()
 	}
 }
 

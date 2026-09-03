@@ -171,10 +171,10 @@ type model struct {
 	// tokens reported by the llm component over the current session, so the
 	// status detail can show a session-wide cache-hit ratio instead of just
 	// the last round's snapshot. Rounded back to zero on session switch.
-	cacheHits    int
-	cachePrompt  int
-	contextNote           string
-	controlPending        bool
+	cacheHits      int
+	cachePrompt    int
+	contextNote    string
+	controlPending bool
 
 	// transcript is the cached joined rendering of all blocks (see
 	// renderTranscript); viewportContent is the last string pushed into the
@@ -788,6 +788,14 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.modelsCatalog = msg.Catalog
 			if m.mode == modeModels {
 				m.openModelSelector()
+			}
+		}
+
+	case servedModelsMsg:
+		// Edit form: live ids from the stored provider's endpoint.
+		if m.mode == modeConnectForm && m.providerForm.edit && msg.editFor == m.providerForm.template {
+			if msg.Err == nil {
+				m.providerForm.setServedModels(msg.Models)
 			}
 		}
 

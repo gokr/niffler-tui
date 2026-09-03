@@ -8,6 +8,17 @@ project aims for [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Live model ids in the connect/edit forms** — the edit form (`e` in
+  `/provider`) refines its model prefill with the stored provider's live
+  `/models` ids (via the new `provider_models` tool, stored credential);
+  the connect form probes with the typed credentials at submit and repairs
+  the model id before saving (probe failure still saves). Live ids take
+  precedence over the models.dev catalog for prefill and suffix-match
+  normalization; the version-tail pick ("5.10" > "5.9", zero-padded
+  segments) drives the default.
+
+### Added
+
 - **Connect a provider without typing a model id** — the connect/edit
   form fetches the provider's catalog models and prefills the model
   field with an auto-pick (newest tool-call-capable model), so the

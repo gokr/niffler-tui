@@ -2262,3 +2262,53 @@ func TestOAuthPollErrorKeepsPanelForRetry(tt *testing.T) {
 		tt.Fatal("error text missing from the login panel")
 	}
 }
+
+func TestProviderFormServedModelsPreferred(t *testing.T) {
+	catalog := []modelSummary{
+		{ID: "hf:zai-org/GLM-4.7-Flash", Name: "GLM-4.7 Flash", ToolCall: true, ReleaseDate: "2026-01-10"},
+		{ID: "hf:zai-org/GLM-5.3-Flash", Name: "GLM-5.3 Flash", ToolCall: true, ReleaseDate: "2026-05-02"},
+	}
+	template := catalogProvider{ID: "synthetic", Name: "Synthetic", API: "https://api.synthetic.new/openai/v1"}
+	form := newProviderForm(&template, runtimeResolution{}, 80, LocaleEN)
+	form.setCatalogModels("synthetic", catalog)
+	// Catalog prefill picks the newest tool-call model.
+	if got := form.inputs[providerFieldModel].Value(); got != "hf:zai-org/GLM-5.3-Flash" {
+		t.Fatalf("catalog prefill = %q", got)
+	}
+
+	// The live list is the spelling authority: a served id that differs
+	// from every catalog entry replaces the prefill. The pick is by
+	// version tail: GLM-5.3 ("5.3") outranks Kimi-K3 ("3").
+	form.setServedModels([]string{"hf:moonshotai/Kimi-K3", "hf:zai-org/GLM-5.3-Flash"})
+	if got := form.inputs[providerFieldModel].Value(); got != "hf:zai-org/GLM-5.3-Flash" {
+		t.Fatalf("served prefill = %q, want the version-tail pick", got)
+	}
+
+	// Submit normalizes a prefix-less id against the served list first.
+	form.inputs[providerFieldModel].SetValue("kimi-k3")
+	form.inputs[providerFieldAPIKey].SetValue("sk-test")
+	values, err := form.values()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if values.Model != "hf:moonshotai/Kimi-K3" {
+		t.Fatalf("served normalization = %q", values.Model)
+	}
+
+	// pickDefaultServedModel compares version tails numerically, so a
+	// higher version wins regardless of list order or id prefix.
+	ids := []string{"hf:zai-org/GLM-4.7-Flash", "some/model-v9", "hf:zai-org/GLM-5.3-Flash"}
+	if pick := pickDefaultServedModel(ids); pick != "some/model-v9" {
+		t.Fatalf("version pick = %q, want some/model-v9", pick)
+	}
+}
+
+func TestServedModelSortKeyZeroPads(t *testing.T) {
+	// 5.10 must sort above 5.9: zero-padded segments compare numerically.
+	if servedModelSortKey("m-5.10") <= servedModelSortKey("m-5.9") {
+		t.Fatalf("5.10 (%q) should outrank 5.9 (%q)", servedModelSortKey("m-5.10"), servedModelSortKey("m-5.9"))
+	}
+	if servedModelSortKey("no-digits") != "" {
+		t.Fatalf("digitless id key = %q", servedModelSortKey("no-digits"))
+	}
+}

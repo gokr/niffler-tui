@@ -424,12 +424,15 @@ func (m model) handleControlKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 					m.mode = modeConnectForm
 					m.providerConfirmDelete = ""
 					m.layout()
-					// Catalog models normalize/prefill the model field here too.
+					// Catalog models normalize/prefill the model field; the live
+					// endpoint probe (stored credential) refines it when it lands.
 					if m.providerForm.catalogID != "" {
 						m.providerForm.loading = true
-						return m, loadModelsCmd(m.comp, m.providerForm.catalogID)
+						return m, tea.Batch(
+							loadModelsCmd(m.comp, m.providerForm.catalogID),
+							loadServedModelsCmd(m.comp, p.Nickname, "", ""))
 					}
-					return m, nil
+					return m, loadServedModelsCmd(m.comp, p.Nickname, "", "")
 				}
 			case "d", "x", "enter":
 				if armed != "" {
@@ -563,8 +566,16 @@ func (m model) submitProviderForm() (tea.Model, tea.Cmd) {
 	if m.providerForm.edit {
 		return m, updateProviderCmd(m.comp, values)
 	}
-	return m, addProviderCmd(m.comp, values)
+	// Connect form: probe the endpoint with the typed credentials first so
+	// the saved model id is spelled exactly as the provider serves it (the
+	// probe also validates the key/URL before the provider is stored).
+	return m, probeThenAddProviderCmd(m.comp, values)
 }
+
+// probeThenAddProviderCmd chains a provider_models probe (explicit
+// baseUrl/apiKey) into the provider_add call. A failed probe still saves —
+// the endpoint may simply lack a /models route — but the model id is then
+// whatever normalization produced from the catalog.
 
 // cycleThinkingLevel advances the reasoning-display level (full → brief →
 // off → full). Persists across session switches: it is a display preference,

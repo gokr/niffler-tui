@@ -35,6 +35,7 @@ type providerForm struct {
 	catalogID string
 	loading   bool // catalog models are still being fetched
 	models    []modelSummary
+	served    []string // live ids from the provider's /models endpoint
 }
 
 func newProviderForm(template *catalogProvider, runtime runtimeResolution, width int, loc Locale) providerForm {
@@ -174,14 +175,20 @@ func (f providerForm) values() (providerFormValues, error) {
 		return providerFormValues{}, fmt.Errorf("%s", t(f.loc, "form.baseUrlInvalid"))
 	}
 	if values.Model == "" {
-		// No model typed: fall back to the catalog auto-pick so connecting a
-		// provider never requires typing a model id.
-		if picked := pickDefaultModel(f.models); picked != "" {
+		// No model typed: fall back to the live list or catalog auto-pick so
+		// connecting a provider never requires typing a model id.
+		if picked := pickDefaultServedModel(f.served); picked != "" {
 			values.Model = picked
-			f.inputs[providerFieldModel].SetValue(picked)
+		} else if picked := pickDefaultModel(f.models); picked != "" {
+			values.Model = picked
 		} else {
 			return providerFormValues{}, fmt.Errorf("%s", t(f.loc, "form.modelRequired"))
 		}
+		f.inputs[providerFieldModel].SetValue(values.Model)
+	} else if match := matchServedModel(f.served, values.Model); match != "" {
+		// Live ids are the authority on spelling: repair against them first.
+		values.Model = match
+		f.inputs[providerFieldModel].SetValue(match)
 	} else if exact := findModel(f.models, values.Model); exact != "" {
 		values.Model = exact
 	} else if match := findModelBySuffix(f.models, values.Model); match != "" {
@@ -198,6 +205,95 @@ func (f providerForm) values() (providerFormValues, error) {
 		values.Context = contextSize
 	}
 	return values, nil
+}
+
+// setServedModels feeds the live id list from the provider's own /models
+// endpoint. Same prefill/normalize contract as setCatalogModels, but with
+// authoritative ids — preferred over catalog data on submit.
+func (f *providerForm) setServedModels(ids []string) {
+	if len(ids) == 0 {
+		return
+	}
+	f.served = ids
+	field := &f.inputs[providerFieldModel]
+	if field.Value() == "" {
+		if picked := pickDefaultServedModel(ids); picked != "" {
+			field.SetValue(picked)
+		}
+		return
+	}
+	if match := matchServedModel(ids, field.Value()); match != "" {
+		field.SetValue(match)
+	}
+}
+
+// pickDefaultServedModel picks the newest-looking id from a live list. The
+// endpoint gives no metadata, so "newest" falls back to heuristics: prefer
+// ids whose version tail sorts highest ("glm-5.3" over "glm-4.7").
+func pickDefaultServedModel(ids []string) string {
+	best := ""
+	for _, id := range ids {
+		if best == "" || servedModelSortKey(id) > servedModelSortKey(best) {
+			best = id
+		}
+	}
+	return best
+}
+
+// servedModelSortKey extracts a comparable version tail from a model id:
+// digits-and-dots run from the id tail ("hf:zai-org/GLM-5.3-Flash" →
+// "5.3"), lower-cased so "5.10" style ids still compare by segments first
+// through zero-padding.
+func servedModelSortKey(id string) string {
+	tail := id
+	if i := strings.LastIndexByte(tail, '/'); i >= 0 {
+		tail = tail[i+1:]
+	}
+	var digits []byte
+	for i := len(tail) - 1; i >= 0; i-- {
+		c := tail[i]
+		if c >= '0' && c <= '9' || c == '.' && len(digits) > 0 {
+			digits = append([]byte{c}, digits...)
+			continue
+		}
+		if len(digits) > 0 {
+			break
+		}
+	}
+	// Zero-pad each segment to 4 digits for numeric comparison.
+	digitRun := string(digits)
+	if digitRun == "" {
+		return ""
+	}
+	parts := strings.Split(digitRun, ".")
+	for i, part := range parts {
+		for len(part) < 4 {
+			part = "0" + part
+		}
+		parts[i] = part
+	}
+	return strings.Join(parts, "")
+}
+
+// matchServedModel matches a typed id against the live list: exact, then
+// case-insensitive suffix on the tail ("glm-5.3-flash" →
+// "hf:zai-org/GLM-5.3-Flash").
+func matchServedModel(ids []string, id string) string {
+	for _, candidate := range ids {
+		if candidate == id {
+			return candidate
+		}
+	}
+	tail := modelIDTail(id)
+	if tail == "" {
+		return ""
+	}
+	for _, candidate := range ids {
+		if strings.EqualFold(modelIDTail(candidate), tail) {
+			return candidate
+		}
+	}
+	return ""
 }
 
 func (f *providerForm) clearSecret() {
