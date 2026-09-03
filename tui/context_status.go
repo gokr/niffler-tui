@@ -47,7 +47,7 @@ func contextBar(percent float64, width int) string {
 	return bar.ViewAs(max(0.0, min(1.0, percent)))
 }
 
-func runtimeStatusLine(loc Locale, runtime runtimeResolution, modelOverride string, used int, width int) string {
+func runtimeStatusLine(loc Locale, runtime runtimeResolution, modelOverride string, used int, width int, cacheHitRatio float64, cacheVisible bool) string {
 	provider := runtime.Provider
 	if provider == "" {
 		provider = t(loc, "runtime.provider")
@@ -78,5 +78,9 @@ func runtimeStatusLine(loc Locale, runtime runtimeResolution, modelOverride stri
 			contextText = t(loc, "runtime.ctxEmpty", contextBar(0, 10), formatTokens(runtime.Context))
 		}
 	}
-	return truncate(selection+"  │  "+contextText, max(1, width-1))
+	cacheChip := ""
+	if cacheVisible && cacheHitRatio > 0 {
+		cacheChip = "  │  " + t(loc, "runtime.cache", fmt.Sprintf("%.0f%%", cacheHitRatio*100))
+	}
+	return truncate(selection+"  │  "+contextText+cacheChip, max(1, width-1))
 }

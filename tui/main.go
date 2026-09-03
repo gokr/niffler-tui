@@ -45,9 +45,12 @@ const (
 )
 
 type usageStats struct {
-	PromptTokens     int `json:"prompt_tokens"`
-	CompletionTokens int `json:"completion_tokens"`
-	TotalTokens      int `json:"total_tokens"`
+	PromptTokens        int `json:"prompt_tokens"`
+	CompletionTokens    int `json:"completion_tokens"`
+	TotalTokens         int `json:"total_tokens"`
+	PromptTokensDetails struct {
+		CachedTokens int `json:"cached_tokens"`
+	} `json:"prompt_tokens_details"`
 }
 
 type sessionEvent struct {
@@ -71,6 +74,8 @@ type sessionEvent struct {
 	UsedTokens     int             `json:"usedTokens"`
 	Warning        json.RawMessage `json:"warning"`
 	Trimmed        int             `json:"trimmed"`
+	CacheHitTokens int             `json:"cacheHitTokens"`
+	CacheHitRatio  float64         `json:"cacheHitRatio"`
 	Usage          usageStats      `json:"usage"`
 }
 
@@ -148,6 +153,8 @@ type model struct {
 	modelOverride         string
 	promptTokens          int
 	contextUsed           int
+	cacheHitRatio         float64
+	cacheDirty            bool // a turn reported a ratio; clear on turn start
 	contextNote           string
 	controlPending        bool
 
@@ -530,6 +537,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.hadAssistant = false
 			m.assistantIdx = -1
 			m.thinkingIdx = -1
+			m.cacheDirty = false
 			m.setStreaming(false)
 			m.roundClosed = false
 			m.addBlock(blockUser, content)
@@ -1154,6 +1162,26 @@ func (m *model) updateRuntimeFromEvent(event sessionEvent) {
 	} else if event.Usage.PromptTokens > 0 {
 		m.contextUsed = event.Usage.PromptTokens + event.Usage.CompletionTokens
 	}
+	// Cache economics (CodeWhale borrow): core reports the cached share of
+	// the prompt either precomputed (cacheHitRatio) or via the provider's
+	// usage details; show it until the next turn resets it.
+	if event.CacheHitTokens > 0 || event.Usage.PromptTokensDetails.CachedTokens > 0 {
+		cached := event.CacheHitTokens
+		if cached == 0 {
+			cached = event.Usage.PromptTokensDetails.CachedTokens
+		}
+		prompt := event.PromptTokens
+		if prompt == 0 {
+			prompt = event.Usage.PromptTokens
+		}
+		if prompt > 0 {
+			m.cacheHitRatio = float64(cached) / float64(prompt)
+			m.cacheDirty = true
+		}
+	} else if event.CacheHitRatio > 0 {
+		m.cacheHitRatio = event.CacheHitRatio
+		m.cacheDirty = true
+	}
 }
 
 func (m *model) finishTurn(reply, errorText string) {
@@ -1349,7 +1377,8 @@ func (m model) View() tea.View {
 	toolChip := toolLevelStyle.Render(t(m.loc, "chip.tool", t(m.loc, "level."+m.toolLevel.String())))
 	effortChip := effortStyle.Render(t(m.loc, "chip.effort", t(m.loc, "level."+m.effortLabel())))
 	runtimeLine := runtimeStatusLine(m.loc, m.runtime, m.modelOverride, m.contextUsed,
-		max(0, m.width-ansi.StringWidth(header)-ansi.StringWidth(thinkChip)-ansi.StringWidth(toolChip)-ansi.StringWidth(effortChip)-3*ansi.StringWidth(headerSep)))
+		max(0, m.width-ansi.StringWidth(header)-ansi.StringWidth(thinkChip)-ansi.StringWidth(toolChip)-ansi.StringWidth(effortChip)-3*ansi.StringWidth(headerSep)),
+		m.cacheHitRatio, m.cacheDirty)
 	headerLine := header + headerSep + thinkChip + headerSep + toolChip + headerSep + effortChip + headerSep + runtimeLine
 	makeView := func(content string) tea.View {
 		view := tea.NewView(m.applyMouseSelection(content))

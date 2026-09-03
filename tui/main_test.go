@@ -675,7 +675,7 @@ func TestRuntimeStatusAndContextUsage(t *testing.T) {
 	if m.contextUsed != 250_000 || contextPercent(m.contextUsed, m.runtime.Context) != 0.25 {
 		t.Fatalf("context = used:%d limit:%d", m.contextUsed, m.runtime.Context)
 	}
-	line := runtimeStatusLine(LocaleEN, m.runtime, "deepseek-v4-pro", m.contextUsed, 80)
+	line := runtimeStatusLine(LocaleEN, m.runtime, "deepseek-v4-pro", m.contextUsed, 80, 0, false)
 	if ansi.StringWidth(line) > 79 || !strings.Contains(ansi.Strip(line), "25%") {
 		t.Fatalf("runtime line width/content = %d %q", ansi.StringWidth(line), ansi.Strip(line))
 	}
@@ -1598,7 +1598,7 @@ func TestRuntimeOutputLimitSurfaced(t *testing.T) {
 	if !strings.Contains(status, "output: 32.8k (fallback)") {
 		t.Fatalf("detailed status missing output limit: %q", status)
 	}
-	line := runtimeStatusLine(LocaleEN, m.runtime, "", 0, 80)
+	line := runtimeStatusLine(LocaleEN, m.runtime, "", 0, 80, 0, false)
 	if ansi.StringWidth(line) > 79 {
 		t.Fatalf("runtime line too wide: %d", ansi.StringWidth(line))
 	}
