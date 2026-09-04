@@ -7,6 +7,8 @@ package main
 import (
 	"regexp"
 	"strings"
+
+	"github.com/charmbracelet/x/ansi"
 )
 
 // blankRunRe matches runs of blank lines inside streamed reasoning text.
@@ -179,6 +181,35 @@ func compactThinkingText(text string) string {
 	return blankRunRe.ReplaceAllString(text, "\n")
 }
 
+// clampLines fits every line of a transcript piece to the viewport width:
+// word-wrap first so breaks land between words, then hard-truncate whatever
+// is still wider (unbreakable tokens). The viewport pads its lines to its
+// exact width, and a line reaching the terminal's last column flips the
+// terminal into pending-wrap — bubbletea's relative cursor moves then land
+// one row off, which shows up as phantom blank lines between random lines
+// while streaming or scrolling. Nothing the transcript emits may reach the
+// last column.
+func clampLines(text string, width int) string {
+	if width <= 0 {
+		return text
+	}
+	lines := strings.Split(text, "\n")
+	for i, line := range lines {
+		if ansi.StringWidth(line) <= width {
+			continue
+		}
+		wrapped := strings.Split(ansi.Wordwrap(line, width, ""), "\n")
+		for j, l := range wrapped {
+			// Wordwrap keeps unbreakable runs intact — clamp each wrapped
+			// line separately (Truncate measures the string as a whole,
+			// so it must never see a multi-line input).
+			wrapped[j] = ansi.Truncate(l, width, "")
+		}
+		lines[i] = strings.Join(wrapped, "\n")
+	}
+	return strings.Join(lines, "\n")
+}
+
 // renderTranscript joins all block renderings, caching the result until a
 // block mutation or a render-affecting flag change marks the model dirty.
 // Hidden thinking blocks (level off) are skipped entirely; the separator
@@ -190,7 +221,7 @@ func (m *model) renderTranscript() string {
 	var out strings.Builder
 	wrote := false
 	for i := range m.blocks {
-		piece := m.piece(i)
+		piece := clampLines(m.piece(i), m.viewport.Width())
 		if piece == "" {
 			continue
 		}

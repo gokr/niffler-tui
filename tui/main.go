@@ -1315,7 +1315,14 @@ func (m *model) handleSearchKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 func (m *model) layout() {
 	width := max(20, m.width)
 	height := max(6, m.height)
-	m.viewport.SetWidth(width)
+	// One cell short of the terminal everywhere: the viewport pads every
+	// visible line to its exact width, and a line reaching the terminal's
+	// last column flips the terminal into pending-wrap — bubbletea's
+	// relative cursor moves then land one row off, showing up as phantom
+	// blank lines between random lines while streaming or scrolling
+	// (notably in the VSCode terminal). Reserving the last column keeps
+	// soft-wrap out of the picture.
+	m.viewport.SetWidth(width - 1)
 	// SetWidth recalculates the textarea height (DynamicHeight, capped at
 	// MaxHeight), so the viewport height below sees the settled input size.
 	m.input.SetWidth(max(1, width-2))
@@ -1327,7 +1334,7 @@ func (m *model) layout() {
 	// rule + status — six fixed rows besides the viewport and input.
 	m.viewport.SetHeight(max(1, height-6-m.input.Height()-extra))
 	if m.mode == modeProviders || m.mode == modeCatalogProviders || m.mode == modeModels || m.mode == modeSessions {
-		m.selector.setSize(width, max(6, height-4))
+		m.selector.setSize(width-1, max(6, height-4))
 	}
 	if m.mode == modeConnectForm {
 		m.providerForm.setWidth(width)
@@ -1335,7 +1342,7 @@ func (m *model) layout() {
 	if m.mode == modeOAuth && m.oauthLogin != nil {
 		m.oauthLogin.setWidth(width)
 	}
-	m.ensureRenderer(width)
+	m.ensureRenderer(width - 1)
 }
 
 func (m *model) syncViewport(forceBottom bool) {
@@ -1397,7 +1404,7 @@ func (m model) View() tea.View {
 	toolChip := toolLevelStyle.Render(t(m.loc, "chip.tool", t(m.loc, "level."+m.toolLevel.String())))
 	effortChip := effortStyle.Render(t(m.loc, "chip.effort", t(m.loc, "level."+m.effortLabel())))
 	runtimeLine := runtimeStatusLine(m.loc, m.runtime, m.modelOverride, m.contextUsed,
-		max(0, m.width-ansi.StringWidth(header)-ansi.StringWidth(thinkChip)-ansi.StringWidth(toolChip)-ansi.StringWidth(effortChip)-3*ansi.StringWidth(headerSep)))
+		max(0, m.width-1-ansi.StringWidth(header)-ansi.StringWidth(thinkChip)-ansi.StringWidth(toolChip)-ansi.StringWidth(effortChip)-3*ansi.StringWidth(headerSep)))
 	headerLine := header + headerSep + thinkChip + headerSep + toolChip + headerSep + effortChip + headerSep + runtimeLine
 	makeView := func(content string) tea.View {
 		view := tea.NewView(m.applyMouseSelection(content))
@@ -1479,7 +1486,7 @@ func (m model) View() tea.View {
 
 	// Pi-style input zone: a blank spacer keeps streamed output from
 	// crowding the input, and colored rules above/below mark it clearly.
-	rule := inputBorderStyle.Render(strings.Repeat("─", max(1, m.width)))
+	rule := inputBorderStyle.Render(strings.Repeat("─", max(1, m.width-1)))
 	parts := []string{headerLine, m.viewport.View(), "", rule, m.input.View(), rule}
 	if m.searchActive {
 		parts = append(parts, m.searchView())
