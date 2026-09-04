@@ -235,6 +235,34 @@ func TestApplySlashResultError(t *testing.T) {
 	}
 }
 
+func TestFormatSlashResult(t *testing.T) {
+	if got := formatSlashResult(json.RawMessage(`"plain"`)); got != "plain" {
+		t.Fatalf("string result = %q, want it passed through", got)
+	}
+	if got := formatSlashResult(json.RawMessage(`{"summary":"Synthetic: 0/1250 requests","weekly":{"left":44.28}}`)); got != "Synthetic: 0/1250 requests" {
+		t.Fatalf("summary result = %q, want the summary line verbatim", got)
+	}
+	got := formatSlashResult(json.RawMessage(`{"ok":true,"count":2}`))
+	if !strings.Contains(got, "\n") || !strings.Contains(got, `"count": 2`) {
+		t.Fatalf("object result should pretty-print, got %q", got)
+	}
+	if got := formatSlashResult(nil); got != "" {
+		t.Fatalf("empty result = %q, want empty", got)
+	}
+}
+
+func TestApplySlashResultSummary(t *testing.T) {
+	m := newTestModel()
+	m.applySlashResult(slashResultMsg{Name: "synthetic",
+		Result: json.RawMessage(`{"summary":"Synthetic: 0/1250 requests"}`)})
+	// The exec meta line already names the command — the result block must
+	// not repeat it as a "/synthetic → …" prefix.
+	if len(m.blocks) != 1 || m.blocks[0].kind != blockMeta ||
+		m.blocks[0].text != "Synthetic: 0/1250 requests" {
+		t.Fatalf("blocks = %+v, want a single meta block with the bare summary line", m.blocks)
+	}
+}
+
 func TestSuggestSlash(t *testing.T) {
 	m := newTestModel()
 	m.mergeSlashRegistry([]slashCommand{deployTestCommand()})

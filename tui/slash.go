@@ -551,8 +551,43 @@ func (m *model) applySlashResult(msg slashResultMsg) {
 		m.syncViewport(true)
 		return
 	}
-	m.addBlock(blockMeta, "/"+msg.Name+" → "+compactJSON(msg.Result))
+	// The exec meta line (→ /cmd args) directly above already names the
+	// command; the result block carries only the formatted payload.
+	m.addBlock(blockMeta, formatSlashResult(msg.Result))
 	m.syncViewport(true)
+}
+
+// formatSlashResult renders a registered command's tool result for the
+// result meta block: a JSON string passes through, an object's "summary"
+// field (the plugins' crafted human-first one-liner, e.g. synthetic_usage)
+// is shown verbatim, anything else pretty-prints as JSON. Raw compact dumps
+// stay only as the fallback — result rendering is the UI's business
+// (docs/WIRE.md).
+func formatSlashResult(raw json.RawMessage) string {
+	if len(raw) == 0 {
+		return ""
+	}
+	var probe any
+	if err := json.Unmarshal(raw, &probe); err != nil {
+		return compactJSON(raw) // not JSON — show it compacted as before
+	}
+	if s, ok := probe.(string); ok {
+		return s // JSON string result: show unquoted
+	}
+	if obj, ok := probe.(map[string]any); ok {
+		if s, ok := obj["summary"].(string); ok && s != "" {
+			return s
+		}
+	}
+	pretty, err := json.MarshalIndent(probe, "", "  ")
+	if err != nil {
+		return compactJSON(raw)
+	}
+	out := string(pretty)
+	if len(out) > 2000 {
+		out = out[:2000] + "…"
+	}
+	return out
 }
 
 // parseSlashArgs builds the tool-call arguments object from a command
