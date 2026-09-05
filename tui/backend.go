@@ -66,6 +66,14 @@ type catalogProvidersResponse struct {
 	Providers []catalogProvider `json:"providers"`
 }
 
+// harnessIdentity is the owning harness's identity from the catalog — the
+// clone root plus its git revision — so /status shows which instance the
+// tui is talking to (two clones must never be confused).
+type harnessIdentity struct {
+	Root    string `json:"root"`
+	GitHash string `json:"gitHash"`
+}
+
 type modelLimit struct {
 	Context int `json:"context"`
 	Output  int `json:"output"`
@@ -103,6 +111,7 @@ type bootstrapMsg struct {
 	Providers        providerListResponse
 	ProviderStatus   providerStatusResponse
 	CatalogProviders []catalogProvider
+	Identity         harnessIdentity
 	Conversation     conversationState
 	Runtime          runtimeResolution
 	Warnings         []string
@@ -338,6 +347,15 @@ func sessionListCmd(comp *sdk.Component) tea.Cmd {
 // The independent lookups run concurrently; the conversation state and the
 // runtime resolution are sequential because the resolution takes the
 // persisted conversation model override as its argument.
+// loadHarnessIdentity reads the owning harness's root + git revision from
+// the catalog list response (core publishes them for exactly this purpose:
+// showing users which clone a UI is attached to).
+func loadHarnessIdentity(comp *sdk.Component) (harnessIdentity, error) {
+	var identity harnessIdentity
+	err := requestInto(comp, "core", "catalog", map[string]any{"op": "list"}, &identity)
+	return identity, err
+}
+
 func bootstrapBackendCmd(comp *sdk.Component, session string) tea.Cmd {
 	return func() tea.Msg {
 		var msg bootstrapMsg
@@ -346,17 +364,20 @@ func bootstrapBackendCmd(comp *sdk.Component, session string) tea.Cmd {
 			status     providerStatusResponse
 			catalog    []catalogProvider
 			slashCmds  []slashCommand
+			identity   harnessIdentity
 			listErr    error
 			statusErr  error
 			catalogErr error
 			slashErr   error
+			idErr      error
 		)
 		var wg sync.WaitGroup
-		wg.Add(4)
+		wg.Add(5)
 		go func() { defer wg.Done(); providers, listErr = loadProviderList(comp) }()
 		go func() { defer wg.Done(); status, statusErr = loadProviderStatus(comp) }()
 		go func() { defer wg.Done(); catalog, catalogErr = loadCatalogProviders(comp) }()
 		go func() { defer wg.Done(); slashCmds, slashErr = loadSlashTable(comp) }()
+		go func() { defer wg.Done(); identity, idErr = loadHarnessIdentity(comp) }()
 		wg.Wait()
 		if listErr != nil {
 			msg.Warnings = append(msg.Warnings, listErr.Error())
@@ -372,6 +393,9 @@ func bootstrapBackendCmd(comp *sdk.Component, session string) tea.Cmd {
 			msg.Warnings = append(msg.Warnings, catalogErr.Error())
 		} else {
 			msg.CatalogProviders = catalog
+		}
+		if idErr == nil {
+			msg.Identity = identity
 		}
 		msg.SlashCommands = slashCmds
 		msg.SlashErr = slashErr

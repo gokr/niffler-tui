@@ -157,6 +157,7 @@ type model struct {
 	providers             []providerSummary
 	providerStatus        providerStatusResponse
 	catalogProviders      []catalogProvider
+	harnessIdentity       harnessIdentity
 	models                []modelSummary
 	modelsCatalog         string
 	runtime               runtimeResolution
@@ -682,6 +683,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.providers = msg.Providers.Providers
 		m.providerStatus = msg.ProviderStatus
 		m.catalogProviders = msg.CatalogProviders
+		m.harnessIdentity = msg.Identity
 		m.modelOverride = msg.Conversation.ModelOverride
 		m.thinkingEffort = msg.Conversation.ThinkingEffort
 		m.runtime = msg.Runtime

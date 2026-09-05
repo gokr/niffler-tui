@@ -635,10 +635,19 @@ func (m model) detailedRuntimeStatus() string {
 		t(m.loc, "status.detailProvider", valueOr(m.runtime.Provider, t(m.loc, "status.unknown")), valueOr(m.runtime.ProviderSource, t(m.loc, "status.unknownSource"))),
 		t(m.loc, "status.detailModel", valueOr(m.runtime.Model, t(m.loc, "status.unknown"))),
 		t(m.loc, "status.detailCatalog", valueOr(m.runtime.Catalog, t(m.loc, "status.none"))),
+	}
+	// Which harness (clone) this tui is attached to — root + git revision,
+	// exactly what core prints at startup. Empty when the harness predates
+	// identity publication.
+	if m.harnessIdentity.Root != "" {
+		hash := valueOr(m.harnessIdentity.GitHash, t(m.loc, "status.unknown"))
+		lines = append(lines, t(m.loc, "status.detailHarness", m.harnessIdentity.Root, hash))
+	}
+	lines = append(lines,
 		t(m.loc, "status.detailContext", formatTokens(m.runtime.Context), valueOr(m.runtime.ContextSource, t(m.loc, "status.unknownSource"))),
 		t(m.loc, "status.detailOutput", formatTokens(m.runtime.Output), valueOr(m.runtime.OutputSource, t(m.loc, "status.unknownSource"))),
 		t(m.loc, "status.detailUsed", formatTokens(m.contextUsed), fmt.Sprintf("%.1f%%", contextPercent(m.contextUsed, m.runtime.Context)*100)),
-	}
+	)
 	// Cache-hit economics: only shown once the provider has reported a
 	// cached-input breakdown (the ratio is undefined before that).
 	if m.cachePrompt > 0 {
