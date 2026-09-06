@@ -14,6 +14,8 @@ import (
 // blankRunRe matches runs of blank lines inside streamed reasoning text.
 // Gateways emit paragraph breaks as repeated newlines across deltas; without
 // compaction they render as walls of empty rows between thinking paragraphs.
+// Runs are capped at one blank line, not erased: paragraph breaks stay
+// visible between thinking blocks.
 var blankRunRe = regexp.MustCompile(`(\r?\n){2,}`)
 
 type blockKind int
@@ -150,9 +152,10 @@ func (m *model) piece(i int) string {
 			return thinkingStyle.Render("▸ thinking…")
 		}
 		// Render reasoning in Pi style: pure gray italic, no label. Edge
-		// newlines are trimmed and interior blank-line runs collapse to a
-		// single newline — streamed reasoning would otherwise stack
-		// paragraph breaks into walls of empty rows.
+		// newlines are trimmed and blank-line runs capped at one blank
+		// line — streamed reasoning would otherwise stack paragraph
+		// breaks into walls of empty rows, while genuine paragraph gaps
+		// between thinking blocks stay visible.
 		return thinkingStyle.Render(compactThinkingText(block.text))
 	case blockTool:
 		if block.run != nil {
@@ -174,11 +177,12 @@ func (m *model) piece(i int) string {
 }
 
 // compactThinkingText prepares streamed reasoning for display: edge
-// newlines are trimmed and interior blank-line runs collapse to a single
-// newline, keeping reasoning dense while paragraph flow stays readable.
+// newlines are trimmed and blank-line runs capped at one blank line,
+// keeping reasoning dense while paragraph breaks between thinking blocks
+// stay readable.
 func compactThinkingText(text string) string {
 	text = strings.Trim(text, "\n\r")
-	return blankRunRe.ReplaceAllString(text, "\n")
+	return blankRunRe.ReplaceAllString(text, "\n\n")
 }
 
 // clampLines fits every line of a transcript piece to the viewport width:

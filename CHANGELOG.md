@@ -6,6 +6,13 @@ project aims for [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+- **Paragraph gaps between thinking blocks** — reasoning compaction caps
+  blank-line runs at one blank line instead of collapsing them to a single
+  newline; streamed thinking keeps its paragraph separation while runaway
+  empty rows stay bounded (web UI twin: gokr/niffler#12).
+
 ### Added
 
 - **Live model ids in the connect/edit forms** — the edit form (`e` in
