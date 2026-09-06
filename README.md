@@ -89,8 +89,9 @@ Model reasoning renders as gray italic text above each assistant reply,
 placed per round in the transcript. `Ctrl+T` cycles how much of it is shown:
 `full` (everything), `brief` (one dim `▸ thinking…` line per block) and `off`
 (hidden entirely). Reasoning is compacted for display: edge newlines are
-trimmed and interior blank-line runs collapse to a single newline, so
-paragraphs flow densely instead of stacking into walls of empty rows.
+trimmed and blank-line runs are capped at one blank line, so paragraph
+breaks between thinking blocks stay visible without stacking into walls of
+empty rows.
 
 `Ctrl+G` rotates the conversation's LLM thinking *effort* —
 `auto` (provider default) → `low` → `medium` → `high`. The selection is

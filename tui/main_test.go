@@ -1937,15 +1937,16 @@ func TestThinkingRenderingTrimsEdgeNewlines(t *testing.T) {
 	// lipgloss pads interior empty lines with spaces; normalize them back
 	// to truly empty lines for the structure checks.
 	out = blankLineRe.ReplaceAllString(out, "")
-	// Interior blank-line runs collapse to a single newline: paragraphs
-	// flow directly after one another. Only the block separator's single
-	// blank line (\n\n) may appear anywhere.
+	// Interior blank-line runs are capped at one blank line: paragraph
+	// breaks inside thinking stay visible. Triple+ newlines are impossible:
+	// blocks are edge-trimmed and joined with a single blank line, and the
+	// cap bounds interior runs to the same.
 	if strings.Contains(out, "\n\n\n") {
-		t.Fatalf("rendered transcript kept blank lines:\n%q", out)
+		t.Fatalf("rendered transcript kept runaway blank lines:\n%q", out)
 	}
-	// The paragraph flow survives (lines may carry trailing padding spaces).
-	if !regexp.MustCompile(`First step\. +\nSecond step\.`).MatchString(out) {
-		t.Fatalf("paragraph flow lost:\n%q", out)
+	// The paragraph gap survives (lines may carry trailing padding spaces).
+	if !regexp.MustCompile(`First step\. +\n\nSecond step\.`).MatchString(out) {
+		t.Fatalf("paragraph gap lost:\n%q", out)
 	}
 	if !strings.Contains(out, "Here is the answer.") {
 		t.Fatalf("assistant content lost:\n%q", out)
