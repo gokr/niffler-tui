@@ -1,1 +1,4 @@
 /bin/
+
+# worktrees (using-git-worktrees skill)
+.worktrees/
