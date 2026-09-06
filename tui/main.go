@@ -74,9 +74,12 @@ type sessionEvent struct {
 	UsedTokens     int             `json:"usedTokens"`
 	Warning        json.RawMessage `json:"warning"`
 	Trimmed        int             `json:"trimmed"`
-	CacheHitTokens int             `json:"cacheHitTokens"`
-	CacheHitRatio  float64         `json:"cacheHitRatio"`
-	Usage          usageStats      `json:"usage"`
+	Cache          struct {
+		Prompt  int     `json:"prompt"`
+		Read    int     `json:"read"`
+		HitRate float64 `json:"hitRate"`
+	} `json:"cache"` // session-cumulative prompt-cache split (A3)
+	Usage usageStats `json:"usage"`
 }
 
 type connectedMsg struct{}
@@ -1162,24 +1165,22 @@ func (m *model) updateRuntimeFromEvent(event sessionEvent) {
 	} else if event.Usage.PromptTokens > 0 {
 		m.contextUsed = event.Usage.PromptTokens + event.Usage.CompletionTokens
 	}
-	// Cache economics (CodeWhale borrow): core reports the cached share of
-	// the prompt either precomputed (cacheHitRatio) or via the provider's
-	// usage details; show it until the next turn resets it.
-	if event.CacheHitTokens > 0 || event.Usage.PromptTokensDetails.CachedTokens > 0 {
-		cached := event.CacheHitTokens
-		if cached == 0 {
-			cached = event.Usage.PromptTokensDetails.CachedTokens
-		}
-		prompt := event.PromptTokens
+	// Cache economics (CodeWhale borrow): prefer the session-cumulative
+	// cache block core reports on status events; fall back to the per-
+	// response provider details. Shown until the next turn resets it.
+	cached, prompt := 0, 0
+	if event.Cache.Prompt > 0 {
+		prompt = event.Cache.Prompt
+		cached = event.Cache.Read
+	} else if event.Usage.PromptTokensDetails.CachedTokens > 0 {
+		cached = event.Usage.PromptTokensDetails.CachedTokens
+		prompt = event.PromptTokens
 		if prompt == 0 {
 			prompt = event.Usage.PromptTokens
 		}
-		if prompt > 0 {
-			m.cacheHitRatio = float64(cached) / float64(prompt)
-			m.cacheDirty = true
-		}
-	} else if event.CacheHitRatio > 0 {
-		m.cacheHitRatio = event.CacheHitRatio
+	}
+	if prompt > 0 {
+		m.cacheHitRatio = float64(cached) / float64(prompt)
 		m.cacheDirty = true
 	}
 }
