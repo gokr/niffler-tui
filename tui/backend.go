@@ -732,6 +732,7 @@ type mcpFormValues struct {
 	Args        []string
 	URL         string
 	EnvJSON     string // raw JSON object text; empty = keep on edit
+	HeadersJSON string // raw JSON object text; empty = keep on edit
 	Approval    string
 	Expose      string
 	Effect      string
@@ -758,6 +759,12 @@ func mcpAddCmd(comp *sdk.Component, values mcpFormValues) tea.Cmd {
 			var env map[string]any
 			if err := json.Unmarshal([]byte(values.EnvJSON), &env); err == nil {
 				args["env"] = env
+			}
+		}
+		if values.HeadersJSON != "" {
+			var headers map[string]string
+			if err := json.Unmarshal([]byte(values.HeadersJSON), &headers); err == nil {
+				args["headers"] = headers
 			}
 		}
 		var response okResponse
@@ -787,6 +794,12 @@ func mcpEditCmd(comp *sdk.Component, values mcpFormValues) tea.Cmd {
 			var env map[string]any
 			if err := json.Unmarshal([]byte(values.EnvJSON), &env); err == nil {
 				args["env"] = env
+			}
+		}
+		if values.HeadersJSON != "" {
+			var headers map[string]string
+			if err := json.Unmarshal([]byte(values.HeadersJSON), &headers); err == nil {
+				args["headers"] = headers
 			}
 		}
 		var response okResponse

@@ -15,6 +15,12 @@ project aims for [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Headers field in the /mcp form** — the add/edit form gains a
+  `Headers (JSON)` field next to env (blank keeps the stored headers on
+  edit, mirroring env), so authenticated http/sse servers can be managed
+  entirely from the TUI; `${NAME}` placeholders pass through untouched to
+  the bridge's env interpolation. Non-string header values are rejected
+  at form time (the wire type is map[string]string); locales updated.
 - **MCP registry search** — `/mcp search <keywords>` browses the official
   MCP Registry through the manager's `mcp_search`: installable entries open
   the add form pre-filled (suggested name from the entry id, transport,
