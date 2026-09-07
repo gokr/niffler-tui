@@ -112,15 +112,16 @@ type turnDoneMsg struct {
 type renderSettleMsg struct{}
 
 type model struct {
-	ctx      context.Context
-	comp     *sdk.Component
-	session  string
-	natsURL  string
-	loc      Locale
-	viewport viewport.Model
-	input    textarea.Model
-	spinner  spinner.Model
-	blocks   []transcriptBlock
+	toolProfile string // client selection for subsequently created conversations
+	ctx         context.Context
+	comp        *sdk.Component
+	session     string
+	natsURL     string
+	loc         Locale
+	viewport    viewport.Model
+	input       textarea.Model
+	spinner     spinner.Model
+	blocks      []transcriptBlock
 
 	width        int
 	height       int
@@ -380,6 +381,7 @@ func (m model) sendTurn(content string) tea.Cmd {
 	return func() tea.Msg {
 		args := map[string]any{
 			"sessionId": m.session,
+			"profile":   m.toolProfile,
 			"content":   content,
 			// Always include the key: empty explicitly clears a previously
 			// persisted conversation override after a provider/default change.
