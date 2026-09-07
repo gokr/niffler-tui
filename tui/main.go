@@ -774,7 +774,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.applySlashSource(msg)
 
 	case slashResultMsg:
-		m.applySlashResult(msg)
+		cmds = append(cmds, m.applySlashResult(msg))
 
 	case catalogProvidersMsg:
 		if msg.Err == nil {
@@ -905,6 +905,19 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.layout()
 		}
 
+	case mcpSearchMsg:
+		if msg.Err != nil {
+			m.contextNote = msg.Err.Error()
+			if m.mode == modeMcpSearch {
+				m.mode = modeChat
+				m.layout()
+			}
+			break
+		}
+		if m.mode == modeMcpSearch {
+			m.openMcpSearchResults(msg.Query, msg.Entries)
+		}
+
 	case mcpEditReadyMsg:
 		m.controlPending = false
 		if msg.Err != nil {
@@ -948,6 +961,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.mode = modeChat
 		m.mcpConfirmDelete = ""
 		m.addBlock(blockMeta, label)
+		if msg.Warning != "" {
+			// Partial failure: stored/configured, but something (bridge start,
+			// old bridge shutdown) needs attention.
+			m.addBlock(blockError, t(m.loc, "mcp.warning", msg.Warning))
+		}
 		m.syncViewport(true)
 
 	case thinkingEffortMsg:
@@ -1498,7 +1516,8 @@ func (m model) View() tea.View {
 		var control string
 		parts := []string{headerLine}
 		switch m.mode {
-		case modeProviders, modeCatalogProviders, modeModels, modeSessions:
+		case modeProviders, modeCatalogProviders, modeModels, modeSessions,
+			modeMcp, modeMcpSearch:
 			control = m.selector.list.View()
 			parts = append(parts, control)
 			footer := t(m.loc, "footer.filterChoose")
@@ -1511,12 +1530,20 @@ func (m model) View() tea.View {
 					footer = t(m.loc, "footer.filterSwitch")
 				}
 			}
+			if m.mode == modeMcp {
+				footer = t(m.loc, "footer.mcp")
+				if m.mcpConfirmDelete != "" {
+					footer = errorStyle.Render(t(m.loc, "footer.confirmRemove", m.mcpConfirmDelete))
+				}
+			}
 			if m.controlPending {
 				footer = t(m.loc, "status.updating") + "…"
 			} else if m.contextNote != "" {
 				footer = m.contextNote
 			}
 			parts = append(parts, metaStyle.Render(truncate(footer, max(1, m.width-1))))
+		case modeMcpForm:
+			parts = append(parts, m.mcpForm.view(m.width))
 		case modeConnectForm:
 			parts = append(parts, m.providerForm.view(m.width))
 		case modeOAuth:

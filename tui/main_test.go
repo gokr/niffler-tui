@@ -2495,3 +2495,223 @@ func TestSlashMcpCommandRouting(t *testing.T) {
 		t.Fatalf("bad subcommand mode = %v", m.mode)
 	}
 }
+
+func TestSlashUserMessageConvention(t *testing.T) {
+	// A slash result carrying userMessage enters the conversation as a user
+	// message when the session is unchanged (docs/WIRE.md convention, same
+	// as the web UI's Chat.svelte).
+	m := newTestModel()
+	m.session = "s1"
+	cmd := m.applySlashResult(slashResultMsg{
+		Name: "mcp-fs-greet", Session: "s1",
+		Result: json.RawMessage(`{"userMessage":"review this code","text":"review this code"}`),
+	})
+	if cmd == nil {
+		t.Fatal("userMessage result must dispatch a turn command")
+	}
+	if n := len(m.blocks); n == 0 || m.blocks[n-1].kind != blockUser || m.blocks[n-1].text != "review this code" {
+		t.Fatalf("last block = %#v, want user block with the rendered prompt", m.blocks[n-1])
+	}
+	if !m.busy {
+		t.Fatal("turn submission must set busy")
+	}
+
+	// A session switch while the call was in flight drops the result.
+	m = newTestModel()
+	m.session = "s2"
+	cmd = m.applySlashResult(slashResultMsg{
+		Name: "mcp-fs-greet", Session: "s1",
+		Result: json.RawMessage(`{"userMessage":"stale"}`),
+	})
+	if cmd != nil {
+		t.Fatal("stale-session result must not dispatch anything")
+	}
+	last := m.blocks[len(m.blocks)-1]
+	if last.kind != blockError || !strings.Contains(last.text, "conversation changed") {
+		t.Fatalf("last block = %#v, want a conversation-changed error", last)
+	}
+
+	// Plain results still render as the meta block.
+	m = newTestModel()
+	m.session = "s1"
+	cmd = m.applySlashResult(slashResultMsg{
+		Name: "mcp-fs-resources", Session: "s1",
+		Result: json.RawMessage(`{"text":"2 resources"}`),
+	})
+	if cmd != nil {
+		t.Fatal("plain result must not dispatch a turn")
+	}
+	last = m.blocks[len(m.blocks)-1]
+	if last.kind != blockMeta || last.text != "2 resources" {
+		t.Fatalf("last block = %#v, want meta block with text", last)
+	}
+}
+
+func TestFormatSlashResultPrefersTextOverSummary(t *testing.T) {
+	if got := formatSlashResult(json.RawMessage(`{"text":"plain","summary":"one-liner"}`)); got != "plain" {
+		t.Fatalf("text preference broken: %q", got)
+	}
+	if got := formatSlashResult(json.RawMessage(`{"summary":"one-liner"}`)); got != "one-liner" {
+		t.Fatalf("summary fallback broken: %q", got)
+	}
+}
+
+func TestMcpFormEffectConcurrencyIdle(t *testing.T) {
+	form := newMcpForm(80, LocaleEN)
+	form.inputs[mcpFieldName].SetValue("fs")
+	form.inputs[mcpFieldCommand].SetValue("npx")
+	// Defaults ride the enum cycles even when untouched.
+	values, err := form.values()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if values.Effect != "write" || values.Concurrency != "parallel" || values.IdleMs != 0 {
+		t.Fatalf("defaults = %#v", values)
+	}
+
+	// The idle field parses milliseconds; negatives are rejected.
+	form.inputs[mcpFieldIdle].SetValue("600000")
+	values, err = form.values()
+	if err != nil || values.IdleMs != 600000 {
+		t.Fatalf("idle parse = %#v, %v", values, err)
+	}
+	form.inputs[mcpFieldIdle].SetValue("-5")
+	if _, err := form.values(); err == nil {
+		t.Fatal("negative idle must fail validation")
+	}
+
+	// Edit prefill restores effect/concurrency/idle from the stored record
+	// so a save always round-trips the full field set.
+	edited := newEditMcpForm(mcpServerSummary{
+		Name: "fs", Type: "stdio", Command: "npx", Args: []string{"-y", "x"},
+		TimeoutMs: 45000, IdleMs: 300000, Effect: "read", Concurrency: "serial",
+		Expose: "direct", Approval: "always",
+	}, 80, LocaleEN)
+	values, err = edited.values()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if values.Effect != "read" || values.Concurrency != "serial" ||
+		values.IdleMs != 300000 || values.TimeoutMs != 45000 ||
+		values.Expose != "direct" || values.Approval != "always" {
+		t.Fatalf("edit prefill = %#v", values)
+	}
+}
+
+func TestSuggestedServerName(t *testing.T) {
+	cases := []struct{ in, want string }{
+		{"io.github.user/server-name", "server-name"},
+		{"x/y/My_Tool.v2", "my-tool-v2"},
+		{"plain-name", "plain-name"},
+		{"123server", ""}, // must start with a letter
+		{"", ""},          // nothing usable
+	}
+	for _, c := range cases {
+		if got := suggestedServerName(mcpRegistryEntry{Name: c.in}); got != c.want {
+			t.Errorf("suggestedServerName(%q) = %q, want %q", c.in, got, c.want)
+		}
+	}
+	long := suggestedServerName(mcpRegistryEntry{Name: "x/" + strings.Repeat("n", 40)})
+	if len(long) != 32 {
+		t.Errorf("long name truncated to %d, want 32", len(long))
+	}
+}
+
+func TestMcpSearchSelectorAndPrefill(t *testing.T) {
+	entries := []mcpRegistryEntry{
+		{Name: "io.github.acme/files", Title: "Filesystem", Version: "1.2.0",
+			Transport: "stdio", Command: "npx", Args: []string{"-y", "@acme/files"},
+			Installable: true},
+		{Name: "io.github.acme/db", Title: "Database", Transport: "stdio",
+			Command: "uvx", Requirements: []string{"DATABASE_URL"}, Installable: false},
+	}
+	items := mcpSearchSelectorItems(LocaleEN, entries)
+	if len(items) != 2 {
+		t.Fatalf("items = %d, want 2", len(items))
+	}
+	first := items[0].(selectorItem)
+	if !strings.HasPrefix(first.title, "+ ") || !strings.Contains(first.description, "installable") {
+		t.Fatalf("installable item = %#v", first)
+	}
+	second := items[1].(selectorItem)
+	if !strings.HasPrefix(second.title, "− ") || !strings.Contains(second.description, "DATABASE_URL") {
+		t.Fatalf("non-installable item = %#v", second)
+	}
+
+	// Selecting an installable entry opens the add form prefilled; a
+	// non-installable one only notes the reason.
+	m := newTestModel()
+	m.loc = LocaleEN
+	m.width, m.height = 100, 30
+	m.mode = modeMcpSearch
+	m.selector = newSelector("search", items, m.width, m.height-3)
+	m.selector.list.Select(0)
+	updated, _ := m.handleControlKey(tea.KeyPressMsg{Code: tea.KeyEnter})
+	m = updated.(model)
+	if m.mode != modeMcpForm {
+		t.Fatalf("mode after enter = %v, want modeMcpForm", m.mode)
+	}
+	if got := m.mcpForm.inputs[mcpFieldName].Value(); got != "files" {
+		t.Fatalf("prefilled name = %q, want files", got)
+	}
+	if got := m.mcpForm.inputs[mcpFieldCommand].Value(); got != "npx" {
+		t.Fatalf("prefilled command = %q, want npx", got)
+	}
+	if got := m.mcpForm.inputs[mcpFieldArgs].Value(); !strings.Contains(got, "@acme/files") {
+		t.Fatalf("prefilled args = %q", got)
+	}
+
+	m2 := newTestModel()
+	m2.loc = LocaleEN
+	m2.width, m2.height = 100, 30
+	m2.mode = modeMcpSearch
+	m2.selector = newSelector("search", items, m2.width, m2.height-3)
+	m2.selector.list.Select(1)
+	updated, _ = m2.handleControlKey(tea.KeyPressMsg{Code: tea.KeyEnter})
+	m2 = updated.(model)
+	if m2.mode != modeMcpSearch {
+		t.Fatalf("non-installable enter changed mode to %v", m2.mode)
+	}
+	if !strings.Contains(m2.contextNote, "DATABASE_URL") {
+		t.Fatalf("contextNote = %q, want the requirement reason", m2.contextNote)
+	}
+}
+
+func TestMcpModesRender(t *testing.T) {
+	// Regression: the /mcp selector and form previously switched modes and
+	// handled keys but were never wired into View() — the screen showed only
+	// the header. All three MCP modes must render their content.
+	m := newTestModel()
+	m.loc = LocaleEN
+	m.width, m.height = 100, 30
+	m.mcpServers = []mcpServerSummary{
+		{Name: "live", Type: "stdio", Command: "npx", Enabled: true, Live: true, ToolCount: 3},
+	}
+	m.openMcpServerSelector()
+	view := string(m.View().Content)
+	if !strings.Contains(view, "live") || !strings.Contains(view, "MCP server") {
+		t.Fatalf("modeMcp view missing selector content:\n%s", view)
+	}
+	if !strings.Contains(view, "d: remove") { // footer.mcp
+		t.Fatalf("modeMcp view missing the mcp footer:\n%s", view)
+	}
+
+	// The add form renders with its title and fields.
+	m.mcpForm = newMcpForm(m.width, m.loc)
+	m.mode = modeMcpForm
+	view = string(m.View().Content)
+	if !strings.Contains(view, "Add MCP server") || !strings.Contains(view, "Idle ms") {
+		t.Fatalf("modeMcpForm view missing form content:\n%s", view)
+	}
+
+	// The registry search selector renders entries and the install hint.
+	m.mode = modeMcpSearch
+	m.selector = newSelector("MCP registry — test", mcpSearchSelectorItems(LocaleEN, []mcpRegistryEntry{
+		{Name: "io.github.acme/files", Title: "Filesystem", Transport: "stdio",
+			Command: "npx", Args: []string{"-y", "@acme/files"}, Installable: true},
+	}), m.width, m.height-3)
+	view = string(m.View().Content)
+	if !strings.Contains(view, "Filesystem") || !strings.Contains(view, "installable") {
+		t.Fatalf("modeMcpSearch view missing entries:\n%s", view)
+	}
+}

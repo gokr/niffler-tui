@@ -536,38 +536,87 @@ func slashArgText(rawArgs string) string {
 }
 
 func (m model) slashCallCmd(cmd slashCommand, args map[string]any) tea.Cmd {
+	session := m.session // guard: the result must belong to the conversation it was invoked in
 	return func() tea.Msg {
 		var result json.RawMessage
 		err := requestInto(m.comp, cmd.Component, cmd.Tool, args, &result)
-		return slashResultMsg{Name: cmd.Name, Result: result, Err: err}
+		return slashResultMsg{Name: cmd.Name, Session: session, Result: result, Err: err}
 	}
 }
 
 // slashResultMsg carries a registered command's tool result for display.
 type slashResultMsg struct {
-	Name   string
-	Result json.RawMessage
-	Err    error
+	Name    string
+	Session string // conversation id at invocation time (userMessage guard)
+	Result  json.RawMessage
+	Err     error
 }
 
-func (m *model) applySlashResult(msg slashResultMsg) {
+func (m *model) applySlashResult(msg slashResultMsg) tea.Cmd {
 	if msg.Err != nil {
 		m.addBlock(blockError, "/"+msg.Name+" failed: "+msg.Err.Error())
 		m.syncViewport(true)
-		return
+		return nil
+	}
+	// userMessage convention (docs/WIRE.md): a result carrying userMessage
+	// asks the client to put that text into the conversation as a USER
+	// message (MCP prompt templates). The guard matches the web UI: a
+	// session switch while the tool call was in flight drops the result.
+	if message := slashUserMessage(msg.Result); message != "" {
+		if msg.Session != m.session {
+			m.addBlock(blockError, t(m.loc, "slash.conversationChanged"))
+			m.syncViewport(true)
+			return nil
+		}
+		if m.busy {
+			// Mid-turn: steer the rendered prompt into the live turn (the
+			// same path Enter uses for typed input while busy).
+			m.addBlock(blockUser, message)
+			m.layout()
+			m.syncViewport(true)
+			return m.sendSteer(message)
+		}
+		// Idle: run it as an ordinary user turn.
+		m.busy = true
+		m.hadAssistant = false
+		m.assistantIdx = -1
+		m.thinkingIdx = -1
+		m.setStreaming(false)
+		m.roundClosed = false
+		m.addBlock(blockUser, message)
+		m.layout()
+		m.syncViewport(true)
+		return tea.Batch(m.sendTurn(message), m.spinner.Tick)
 	}
 	// The exec meta line (→ /cmd args) directly above already names the
 	// command; the result block carries only the formatted payload.
 	m.addBlock(blockMeta, formatSlashResult(msg.Result))
 	m.syncViewport(true)
+	return nil
+}
+
+// slashUserMessage extracts the userMessage field of a tool result (the
+// rendered prompt text that should enter the conversation as a user
+// message). Empty when absent or blank.
+func slashUserMessage(raw json.RawMessage) string {
+	if len(raw) == 0 {
+		return ""
+	}
+	var probe struct {
+		UserMessage string `json:"userMessage"`
+	}
+	if err := json.Unmarshal(raw, &probe); err != nil {
+		return ""
+	}
+	return strings.TrimSpace(probe.UserMessage)
 }
 
 // formatSlashResult renders a registered command's tool result for the
-// result meta block: a JSON string passes through, an object's "summary"
-// field (the plugins' crafted human-first one-liner, e.g. synthetic_usage)
-// is shown verbatim, anything else pretty-prints as JSON. Raw compact dumps
-// stay only as the fallback — result rendering is the UI's business
-// (docs/WIRE.md).
+// result meta block: a JSON string passes through, an object's "text"
+// (the LLM-facing rendering) or "summary" field (the plugins' crafted
+// human-first one-liner, e.g. synthetic_usage) is shown verbatim, anything
+// else pretty-prints as JSON. Raw compact dumps stay only as the fallback —
+// result rendering is the UI's business (docs/WIRE.md).
 func formatSlashResult(raw json.RawMessage) string {
 	if len(raw) == 0 {
 		return ""
@@ -580,6 +629,9 @@ func formatSlashResult(raw json.RawMessage) string {
 		return s // JSON string result: show unquoted
 	}
 	if obj, ok := probe.(map[string]any); ok {
+		if s, ok := obj["text"].(string); ok && s != "" {
+			return s
+		}
 		if s, ok := obj["summary"].(string); ok && s != "" {
 			return s
 		}

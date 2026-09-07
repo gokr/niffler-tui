@@ -186,6 +186,15 @@ func (m model) executeLocalCommand(command string) (tea.Model, tea.Cmd) {
 			}
 			m.controlPending = true
 			return m, mcpRefreshCmd(m.comp, parts[1])
+		case "search", "s":
+			query := strings.TrimSpace(strings.Join(parts[1:], " "))
+			if query == "" {
+				m.addBlock(blockError, t(m.loc, "mcp.searchQueryRequired"))
+				m.syncViewport(true)
+				return m, nil
+			}
+			m.openMcpSearchSelector(query)
+			return m, mcpSearchCmd(m.comp, query)
 		default:
 			m.addBlock(blockError, t(m.loc, "mcp.unknownSubcommand", parts[0]))
 			m.syncViewport(true)
@@ -320,6 +329,30 @@ func (m *model) openMcpSelector() {
 	m.selector = newSelector(t(m.loc, "selector.mcpLoading"), nil, m.width, m.height-3)
 	m.mode = modeMcp
 	m.mcpConfirmDelete = ""
+	m.layout()
+}
+
+// openMcpSearchSelector opens the /mcp search browser with a loading
+// placeholder; the mcpSearchMsg handler rebuilds it with the results.
+func (m *model) openMcpSearchSelector(query string) {
+	m.selector = newSelector(t(m.loc, "mcp.searchLoading", query), nil, m.width, m.height-3)
+	m.mode = modeMcpSearch
+	m.mcpConfirmDelete = ""
+	m.layout()
+}
+
+// openMcpSearchResults rebuilds the /mcp search list from the loaded
+// entries; an empty result set keeps the selector open with a note item.
+func (m *model) openMcpSearchResults(query string, entries []mcpRegistryEntry) {
+	items := mcpSearchSelectorItems(m.loc, entries)
+	if len(items) == 0 {
+		m.contextNote = t(m.loc, "mcp.searchNone", query)
+		m.mode = modeChat
+		m.layout()
+		return
+	}
+	m.selector = newSelector(t(m.loc, "mcp.searchTitle", query), items, m.width, m.height-3)
+	m.mode = modeMcpSearch
 	m.layout()
 }
 
@@ -489,6 +522,34 @@ func (m model) handleControlKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		var cmd tea.Cmd
 		m.mcpForm, cmd = m.mcpForm.update(msg)
 		return m, cmd
+	}
+
+	// MCP registry search (modeMcpSearch): enter/a on an installable entry
+	// opens the add form prefilled from the entry; esc returns to chat.
+	if m.mode == modeMcpSearch {
+		key := msg.String()
+		if key == "esc" {
+			m.mode = modeChat
+			m.layout()
+			return m, nil
+		}
+		if selected, ok := m.selector.selected(); ok && selected.kind == selectorMcpEntry &&
+			(key == "enter" || key == "a") && !m.busy {
+			if entry, ok := selected.payload.(mcpRegistryEntry); ok {
+				if !entry.Installable {
+					reason := entry.NotInstallable
+					if len(entry.Requirements) > 0 {
+						reason = strings.Join(entry.Requirements, "; ")
+					}
+					m.contextNote = t(m.loc, "mcp.entryNotInstallable", reason)
+					return m, nil
+				}
+				m.mcpForm = newRegistryMcpForm(entry, m.width, m.loc)
+				m.mode = modeMcpForm
+				m.layout()
+				return m, nil
+			}
+		}
 	}
 
 	// MCP server management (modeMcp): a = add, e = edit, r = refresh,

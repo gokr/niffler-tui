@@ -15,9 +15,11 @@ import (
 const controlTimeout = 10 * time.Second
 
 // okResponse is the minimal envelope of backend RPC results that carry only
-// a success flag.
+// a success flag. Warning carries a partial-failure notice (e.g. "stored but
+// bridge did not start") that the UI must still surface.
 type okResponse struct {
-	OK bool `json:"ok"`
+	OK      bool   `json:"ok"`
+	Warning string `json:"warning"`
 }
 
 type providerSummary struct {
@@ -663,7 +665,11 @@ type mcpServerSummary struct {
 	Type            string           `json:"type"`
 	Enabled         bool             `json:"enabled"`
 	ToolCount       int              `json:"toolCount"`
+	PromptCount     int              `json:"promptCount"`
 	TimeoutMs       int              `json:"timeoutMs"`
+	IdleMs          int              `json:"idleMs"`
+	Effect          string           `json:"effect"`
+	Concurrency     string           `json:"concurrency"`
 	Approval        string           `json:"approval"`
 	Expose          string           `json:"expose"`
 	Command         string           `json:"command"`
@@ -705,9 +711,10 @@ func mcpServersCmd(comp *sdk.Component) tea.Cmd {
 // refresh/toggle); the transcript shows the label and the /mcp selector
 // reloads.
 type mcpActionMsg struct {
-	Action string
-	Name   string
-	Err    error
+	Action  string
+	Name    string
+	Warning string // partial-failure notice from add/edit (store saved, bridge issue)
+	Err     error
 }
 
 // mcpControlTimeout covers add/edit/refresh: validation connects to the
@@ -716,16 +723,21 @@ const mcpControlTimeout = 120 * time.Second
 
 // mcpFormValues is what the /mcp form submits. Empty strings mean "not
 // provided"; on edit the manager merges provided fields and keeps the rest.
+// Effect/concurrency/idleMs are always sent (prefilled on edit) so the form
+// fully describes the server, matching the web UI's mcpForm.
 type mcpFormValues struct {
-	Name      string
-	Type      string
-	Command   string
-	Args      []string
-	URL       string
-	EnvJSON   string // raw JSON object text; empty = keep on edit
-	Approval  string
-	Expose    string
-	TimeoutMs int
+	Name        string
+	Type        string
+	Command     string
+	Args        []string
+	URL         string
+	EnvJSON     string // raw JSON object text; empty = keep on edit
+	Approval    string
+	Expose      string
+	Effect      string
+	Concurrency string
+	TimeoutMs   int
+	IdleMs      int
 }
 
 func mcpAddCmd(comp *sdk.Component, values mcpFormValues) tea.Cmd {
@@ -733,7 +745,8 @@ func mcpAddCmd(comp *sdk.Component, values mcpFormValues) tea.Cmd {
 		args := map[string]any{
 			"name": values.Name, "type": values.Type,
 			"approval": values.Approval, "expose": values.Expose,
-			"timeoutMs": values.TimeoutMs,
+			"effect": values.Effect, "concurrency": values.Concurrency,
+			"timeoutMs": values.TimeoutMs, "idleMs": values.IdleMs,
 		}
 		if values.Type == "stdio" {
 			args["command"] = values.Command
@@ -752,7 +765,7 @@ func mcpAddCmd(comp *sdk.Component, values mcpFormValues) tea.Cmd {
 		if err == nil && !response.OK {
 			err = fmt.Errorf("mcp add failed")
 		}
-		return mcpActionMsg{Action: "add", Name: values.Name, Err: err}
+		return mcpActionMsg{Action: "add", Name: values.Name, Warning: response.Warning, Err: err}
 	}
 }
 
@@ -761,7 +774,8 @@ func mcpEditCmd(comp *sdk.Component, values mcpFormValues) tea.Cmd {
 		args := map[string]any{
 			"name": values.Name, "type": values.Type,
 			"approval": values.Approval, "expose": values.Expose,
-			"timeoutMs": values.TimeoutMs,
+			"effect": values.Effect, "concurrency": values.Concurrency,
+			"timeoutMs": values.TimeoutMs, "idleMs": values.IdleMs,
 		}
 		if values.Type == "stdio" {
 			args["command"] = values.Command
@@ -780,7 +794,7 @@ func mcpEditCmd(comp *sdk.Component, values mcpFormValues) tea.Cmd {
 		if err == nil && !response.OK {
 			err = fmt.Errorf("mcp edit failed")
 		}
-		return mcpActionMsg{Action: "edit", Name: values.Name, Err: err}
+		return mcpActionMsg{Action: "edit", Name: values.Name, Warning: response.Warning, Err: err}
 	}
 }
 
@@ -823,6 +837,74 @@ func mcpToggleCmd(comp *sdk.Component, name string, enabled bool) tea.Cmd {
 		}
 		return mcpActionMsg{Action: action, Name: name, Err: err}
 	}
+}
+
+// ---- registry browse (/mcp search) -----------------------------------------
+
+// mcpRegistryEntry mirrors one mcp_search result: the official registry
+// narrowed to what mcp_add can consume. Browsing is read-only — installing
+// still goes through the add form and its validation + approval gate.
+type mcpRegistryEntry struct {
+	Name           string   `json:"name"`
+	Title          string   `json:"title"`
+	Description    string   `json:"description"`
+	Version        string   `json:"version"`
+	Transport      string   `json:"transport"`
+	Command        string   `json:"command"`
+	Args           []string `json:"args"`
+	URL            string   `json:"url"`
+	Requirements   []string `json:"requirements"`
+	Installable    bool     `json:"installable"`
+	NotInstallable string   `json:"notInstallableReason"`
+}
+
+type mcpSearchMsg struct {
+	Query   string
+	Entries []mcpRegistryEntry
+	Err     error
+}
+
+func mcpSearchCmd(comp *sdk.Component, query string) tea.Cmd {
+	return func() tea.Msg {
+		var response struct {
+			Entries []mcpRegistryEntry `json:"entries"`
+		}
+		err := requestInto(comp, "mcp", "mcp_search", map[string]any{"query": query}, &response)
+		return mcpSearchMsg{Query: query, Entries: response.Entries, Err: err}
+	}
+}
+
+// suggestedServerName derives an mcp_add name from a registry entry id
+// ("io.github.user/server-name" → "server-name"), sanitized to the
+// manager's alphabet (lowercase, digits, hyphen; ≤32 chars). Empty when
+// nothing usable survives — the user then types a name themselves.
+func suggestedServerName(entry mcpRegistryEntry) string {
+	candidate := entry.Name
+	if i := strings.LastIndexByte(candidate, '/'); i >= 0 {
+		candidate = candidate[i+1:]
+	}
+	candidate = strings.ToLower(strings.TrimSpace(candidate))
+	var b strings.Builder
+	for _, r := range candidate {
+		switch {
+		case r >= 'a' && r <= 'z' || r >= '0' && r <= '9':
+			b.WriteRune(r)
+		case r == '-' || r == '_' || r == '.' || r == ' ':
+			// separators collapse to a single hyphen
+			if !strings.HasSuffix(b.String(), "-") {
+				b.WriteByte('-')
+			}
+		}
+	}
+	out := strings.Trim(b.String(), "-")
+	if len(out) > 32 {
+		out = strings.Trim(out[:32], "-")
+	}
+	// must start with a letter per the manager's name rule
+	if out == "" || out[0] < 'a' || out[0] > 'z' {
+		return ""
+	}
+	return out
 }
 
 // mcpEditReadyMsg carries the stored server snapshot for /mcp edit <name>;

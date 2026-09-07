@@ -20,6 +20,7 @@ const (
 	modeConnectForm
 	modeOAuth
 	modeMcp
+	modeMcpSearch
 	modeMcpForm
 )
 
@@ -40,6 +41,7 @@ const (
 	selectorNewSession
 	selectorMcpServer
 	selectorMcpAdd
+	selectorMcpEntry
 )
 
 type selectorItem struct {
@@ -126,6 +128,49 @@ func mcpSelectorItems(loc Locale, servers []mcpServerSummary, confirmDelete stri
 		id:   "__mcp_add__", title: t(loc, "selector.mcpAdd"),
 		description: t(loc, "selector.mcpAddDesc"),
 	})
+	return items
+}
+
+// mcpSearchSelectorItems renders /mcp search results: installable entries
+// first-class (enter opens a prefilled add form), non-installable ones with
+// their reason so the distinction is visible before selection.
+func mcpSearchSelectorItems(loc Locale, entries []mcpRegistryEntry) []list.Item {
+	items := make([]list.Item, 0, len(entries))
+	for i, entry := range entries {
+		title := entry.Title
+		if title == "" {
+			title = entry.Name
+		}
+		description := entry.Name
+		if entry.Version != "" {
+			description += " v" + entry.Version
+		}
+		if entry.Transport != "" {
+			description += " · " + entry.Transport
+		}
+		if entry.Installable {
+			title = "+ " + title
+			description += " · " + t(loc, "selector.mcpInstallable")
+		} else {
+			title = "− " + title
+			reason := entry.NotInstallable
+			if len(entry.Requirements) > 0 {
+				reason = strings.Join(entry.Requirements, "; ")
+			}
+			if reason == "" {
+				reason = t(loc, "selector.mcpNotInstallable")
+			}
+			description += " · " + reason
+		}
+		if entry.Description != "" {
+			description += "\n" + entry.Description
+		}
+		items = append(items, selectorItem{
+			kind: selectorMcpEntry,
+			id:   strconv.Itoa(i), title: title, description: description,
+			payload: entry,
+		})
+	}
 	return items
 }
 

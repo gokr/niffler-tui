@@ -24,13 +24,20 @@ const (
 	mcpFieldEnv
 	mcpFieldApproval
 	mcpFieldExpose
+	mcpFieldEffect
+	mcpFieldConcurrency
 	mcpFieldTimeout
+	mcpFieldIdle
 	mcpFieldCount
 )
 
-var mcpTypeCycle = []string{"stdio", "http", "sse"}
-var mcpApprovalCycle = []string{"", "always"}
-var mcpExposeCycle = []string{"ondemand", "direct"}
+var (
+	mcpTypeCycle        = []string{"stdio", "http", "sse"}
+	mcpApprovalCycle    = []string{"", "always"}
+	mcpExposeCycle      = []string{"ondemand", "direct"}
+	mcpEffectCycle      = []string{"write", "read"}
+	mcpConcurrencyCycle = []string{"parallel", "serial"}
+)
 
 type mcpForm struct {
 	inputs [mcpFieldCount]textinput.Model
@@ -67,8 +74,29 @@ func newEditMcpForm(s mcpServerSummary, width int, loc Locale) mcpForm {
 	}
 	form.inputs[mcpFieldApproval].SetValue(approvalLabel(s.Approval))
 	form.inputs[mcpFieldExpose].SetValue(indexDefault(mcpExposeCycle, s.Expose, "ondemand"))
+	form.inputs[mcpFieldEffect].SetValue(indexDefault(mcpEffectCycle, s.Effect, "write"))
+	form.inputs[mcpFieldConcurrency].SetValue(indexDefault(mcpConcurrencyCycle, s.Concurrency, "parallel"))
+	form.inputs[mcpFieldIdle].SetValue(strconv.Itoa(max(0, s.IdleMs)))
 	form.inputs[mcpFieldName].Prompt = t(loc, "mcpform.prompt.nameLocked") + " "
 	form.focusField(mcpFieldCommand)
+	return form
+}
+
+// newRegistryMcpForm opens the add form prefilled from an mcp_search
+// result: suggested name + transport fields from the entry's suggested
+// config. Unparsable entries leave the form blank for manual entry.
+func newRegistryMcpForm(entry mcpRegistryEntry, width int, loc Locale) mcpForm {
+	form := newMcpForm(width, loc)
+	form.inputs[mcpFieldName].SetValue(suggestedServerName(entry))
+	switch entry.Transport {
+	case "http", "sse":
+		form.setType(indexOf(mcpTypeCycle, entry.Transport))
+		form.inputs[mcpFieldURL].SetValue(entry.URL)
+	case "stdio":
+		form.inputs[mcpFieldCommand].SetValue(entry.Command)
+		form.inputs[mcpFieldArgs].SetValue(joinArgs(entry.Args))
+	}
+	form.focusField(mcpFieldName)
 	return form
 }
 
@@ -82,7 +110,10 @@ func newMcpFormFields(width int, loc Locale) mcpForm {
 		t(loc, "mcpform.prompt.env"),
 		t(loc, "mcpform.prompt.approval"),
 		t(loc, "mcpform.prompt.expose"),
+		t(loc, "mcpform.prompt.effect"),
+		t(loc, "mcpform.prompt.concurrency"),
 		t(loc, "mcpform.prompt.timeout"),
+		t(loc, "mcpform.prompt.idle"),
 	}
 	placeholders := []string{
 		"filesystem",
@@ -93,7 +124,10 @@ func newMcpFormFields(width int, loc Locale) mcpForm {
 		t(loc, "mcpform.placeholder.env"),
 		"none (left/right)",
 		"ondemand (left/right)",
+		"write (left/right)",
+		"parallel (left/right)",
 		"0 = default",
+		"0 = 5 minutes",
 	}
 	var form mcpForm
 	form.loc = loc
@@ -109,9 +143,13 @@ func newMcpFormFields(width int, loc Locale) mcpForm {
 	// values would break the cycle arithmetic.
 	form.inputs[mcpFieldType].SetValue("stdio")
 	form.inputs[mcpFieldExpose].SetValue("ondemand")
+	form.inputs[mcpFieldEffect].SetValue("write")
+	form.inputs[mcpFieldConcurrency].SetValue("parallel")
 	form.inputs[mcpFieldType].Blur() // enum display, not editable text
 	form.inputs[mcpFieldApproval].Blur()
 	form.inputs[mcpFieldExpose].Blur()
+	form.inputs[mcpFieldEffect].Blur()
+	form.inputs[mcpFieldConcurrency].Blur()
 	return form
 }
 
@@ -134,6 +172,23 @@ func (f mcpForm) currentType() string {
 		}
 	}
 	return "stdio"
+}
+
+func (f mcpForm) currentEffect() string {
+	return cycleValue(f.inputs[mcpFieldEffect].Value(), mcpEffectCycle)
+}
+
+func (f mcpForm) currentConcurrency() string {
+	return cycleValue(f.inputs[mcpFieldConcurrency].Value(), mcpConcurrencyCycle)
+}
+
+func cycleValue(value string, cycle []string) string {
+	for _, v := range cycle {
+		if value == v {
+			return v
+		}
+	}
+	return cycle[0]
 }
 
 func (f mcpForm) currentApproval() string {
@@ -290,14 +345,16 @@ func joinArgs(args []string) string {
 
 func (f mcpForm) values() (mcpFormValues, error) {
 	values := mcpFormValues{
-		Name:     strings.TrimSpace(f.inputs[mcpFieldName].Value()),
-		Type:     f.currentType(),
-		Command:  strings.TrimSpace(f.inputs[mcpFieldCommand].Value()),
-		Args:     splitArgs(f.inputs[mcpFieldArgs].Value()),
-		URL:      strings.TrimSpace(f.inputs[mcpFieldURL].Value()),
-		EnvJSON:  strings.TrimSpace(f.inputs[mcpFieldEnv].Value()),
-		Approval: f.currentApproval(),
-		Expose:   f.currentExpose(),
+		Name:        strings.TrimSpace(f.inputs[mcpFieldName].Value()),
+		Type:        f.currentType(),
+		Command:     strings.TrimSpace(f.inputs[mcpFieldCommand].Value()),
+		Args:        splitArgs(f.inputs[mcpFieldArgs].Value()),
+		URL:         strings.TrimSpace(f.inputs[mcpFieldURL].Value()),
+		EnvJSON:     strings.TrimSpace(f.inputs[mcpFieldEnv].Value()),
+		Approval:    f.currentApproval(),
+		Expose:      f.currentExpose(),
+		Effect:      f.currentEffect(),
+		Concurrency: f.currentConcurrency(),
 	}
 	if values.Name == "" && !f.edit {
 		return values, fmt.Errorf("%s", t(f.loc, "mcpform.nameRequired"))
@@ -327,6 +384,13 @@ func (f mcpForm) values() (mcpFormValues, error) {
 			return values, fmt.Errorf("%s", t(f.loc, "mcpform.timeoutInvalid"))
 		}
 		values.TimeoutMs = seconds * 1000
+	}
+	if text := strings.TrimSpace(f.inputs[mcpFieldIdle].Value()); text != "" {
+		ms, err := strconv.Atoi(text)
+		if err != nil || ms < 0 {
+			return values, fmt.Errorf("%s", t(f.loc, "mcpform.idleInvalid"))
+		}
+		values.IdleMs = ms
 	}
 	return values, nil
 }

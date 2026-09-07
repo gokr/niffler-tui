@@ -8,6 +8,33 @@ project aims for [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **/mcp selector and form never rendered** — the MCP modes switched state
+  and handled keys but were missing from the `View()` switch, so `/mcp`
+  showed only the header line; all three modes (server browser, registry
+  search, add/edit form) now render their list, footer and form.
+
+### Added
+
+- **MCP registry search** — `/mcp search <keywords>` browses the official
+  MCP Registry through the manager's `mcp_search`: installable entries open
+  the add form pre-filled (suggested name from the entry id, transport,
+  command/args/url); non-installable ones show the requirement reason
+  (template variables, required env) instead of a half-filled config.
+- **MCP prompt results enter the conversation** — a slash-command result
+  carrying `userMessage` (MCP prompt templates, `mcp-<server>-<prompt>`)
+  now submits as a user message (steered mid-turn, a normal turn when
+  idle) instead of dumping JSON into a meta block; a session switch while
+  the render was in flight drops it with a note. Matches the web UI's
+  Chat.svelte behavior (docs/WIRE.md userMessage convention). Slash meta
+  results now prefer the `text` field over `summary`, like the web UI.
+- **MCP form parity with the web UI** — the add/edit form gained effect
+  (write/read) and concurrency (parallel/serial) enum cycles plus an idle
+  timeout (ms, 0 = 5 minutes) field, all pre-filled on edit and always
+  sent; add/edit warnings ("stored but bridge did not start") surface as
+  transcript errors; `promptCount` joins the server listing.
+
+### Fixed
+
 - **Paragraph gaps between thinking blocks** — reasoning compaction caps
   blank-line runs at one blank line instead of collapsing them to a single
   newline; streamed thinking keeps its paragraph separation while runaway
