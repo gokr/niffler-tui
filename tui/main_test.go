@@ -2313,3 +2313,185 @@ func TestServedModelSortKeyZeroPads(t *testing.T) {
 		t.Fatalf("digitless id key = %q", servedModelSortKey("no-digits"))
 	}
 }
+
+func TestMcpFormValuesAndValidation(t *testing.T) {
+	form := newMcpForm(80, LocaleEN)
+	if _, err := form.values(); err == nil {
+		t.Fatal("empty form should fail validation")
+	}
+	form.inputs[mcpFieldName].SetValue("filesystem")
+	form.inputs[mcpFieldCommand].SetValue("npx")
+	form.inputs[mcpFieldArgs].SetValue(`-y "some package" /tmp`)
+	values, err := form.values()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if values.Type != "stdio" || values.Command != "npx" {
+		t.Fatalf("values = %#v", values)
+	}
+	if len(values.Args) != 3 || values.Args[1] != "some package" {
+		t.Fatalf("args = %#v, want quoted token grouped", values.Args)
+	}
+	if values.Expose != "ondemand" {
+		t.Fatalf("default expose = %q", values.Expose)
+	}
+
+	// http type requires a URL; enum cycling sets the type.
+	form.cycleEnum(1) // focus is on args; ignored
+	form.focusField(mcpFieldType)
+	form.cycleEnum(1)
+	if form.currentType() != "http" {
+		t.Fatalf("type after cycle = %q", form.currentType())
+	}
+	if _, err := form.values(); err == nil {
+		t.Fatal("http without url should fail validation")
+	}
+	form.inputs[mcpFieldURL].SetValue("https://example.com/mcp")
+	values, err = form.values()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if values.URL != "https://example.com/mcp" {
+		t.Fatalf("url = %q", values.URL)
+	}
+
+	// env must parse as a JSON object.
+	form.focusField(mcpFieldEnv)
+	form.inputs[mcpFieldEnv].SetValue("not-json")
+	if _, err := form.values(); err == nil {
+		t.Fatal("invalid env JSON should fail")
+	}
+	form.inputs[mcpFieldEnv].SetValue(`{"KEY":"value"}`)
+	values, err = form.values()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if values.EnvJSON == "" {
+		t.Fatal("env JSON lost")
+	}
+
+	// timeout seconds convert to milliseconds.
+	form.focusField(mcpFieldTimeout)
+	form.inputs[mcpFieldTimeout].SetValue("30")
+	values, err = form.values()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if values.TimeoutMs != 30000 {
+		t.Fatalf("timeoutMs = %d, want 30000", values.TimeoutMs)
+	}
+}
+
+func TestEditMcpFormPrefillsAndJoinsArgs(t *testing.T) {
+	form := newEditMcpForm(mcpServerSummary{
+		Name: "filesystem", Type: "stdio", Command: "npx",
+		Args:      []string{"-y", "@modelcontextprotocol/server-filesystem", "/tmp with space"},
+		TimeoutMs: 45000, Approval: "always", Expose: "direct",
+	}, 80, LocaleEN)
+	if !form.edit {
+		t.Fatal("edit form not flagged as edit")
+	}
+	if got := form.inputs[mcpFieldArgs].Value(); got != `-y @modelcontextprotocol/server-filesystem "/tmp with space"` {
+		t.Fatalf("joined args = %q", got)
+	}
+	if got := form.inputs[mcpFieldTimeout].Value(); got != "45" {
+		t.Fatalf("timeout field = %q, want 45", got)
+	}
+	if got := form.inputs[mcpFieldApproval].Value(); got != "always" {
+		t.Fatalf("approval field = %q", got)
+	}
+	values, err := form.values()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(values.Args) != 3 || values.Args[2] != "/tmp with space" {
+		t.Fatalf("round-trip args = %#v", values.Args)
+	}
+	if values.TimeoutMs != 45000 || values.Approval != "always" || values.Expose != "direct" {
+		t.Fatalf("values = %#v", values)
+	}
+}
+
+func TestMcpSelectorItemsAndKeys(t *testing.T) {
+	m := newTestModel()
+	m.loc = LocaleEN
+	m.mcpServers = []mcpServerSummary{
+		{Name: "live", Type: "stdio", Command: "/usr/bin/server", Enabled: true, Live: true, ToolCount: 3},
+		{Name: "off", Type: "http", URL: "https://example.com/mcp", Enabled: false, ToolCount: 0},
+	}
+	m.openMcpServerSelector()
+	if m.mode != modeMcp {
+		t.Fatalf("mode = %v", m.mode)
+	}
+	items := mcpSelectorItems(LocaleEN, m.mcpServers, "")
+	if len(items) != 3 { // two servers + add entry
+		t.Fatalf("items = %d, want 3", len(items))
+	}
+	first := items[0].(selectorItem)
+	if first.kind != selectorMcpServer || first.id != "live" {
+		t.Fatalf("first item = %#v", first)
+	}
+	if !strings.Contains(first.title, "●") || !strings.Contains(first.title, "live") {
+		t.Fatalf("live title = %q", first.title)
+	}
+	third := items[2].(selectorItem)
+	if third.kind != selectorMcpAdd {
+		t.Fatalf("third item = %#v", third)
+	}
+
+	// Two-stage remove: first d arms, second d fires.
+	m.selector.list.Select(0)
+	updated, _ := m.handleControlKey(tea.KeyPressMsg{Code: 'd'})
+	m = updated.(model)
+	if m.mcpConfirmDelete != "live" {
+		t.Fatalf("confirm delete not armed: %q", m.mcpConfirmDelete)
+	}
+	if m.controlPending {
+		t.Fatal("remove fired on first press")
+	}
+	updated, _ = m.handleControlKey(tea.KeyPressMsg{Code: 'd'})
+	m = updated.(model)
+	if !m.controlPending {
+		t.Fatal("confirmed remove did not dispatch")
+	}
+
+	// t toggles: sends the inverse of the current enabled state.
+	m2 := newTestModel()
+	m2.loc = LocaleEN
+	m2.mcpServers = m.mcpServers
+	m2.openMcpServerSelector()
+	m2.selector.list.Select(1) // disabled server
+	updated, _ = m2.handleControlKey(tea.KeyPressMsg{Code: 't'})
+	m2 = updated.(model)
+	if !m2.controlPending {
+		t.Fatal("toggle did not dispatch")
+	}
+}
+
+func TestSlashMcpCommandRouting(t *testing.T) {
+	m := newTestModel()
+	m.loc = LocaleEN
+	m.connected = true
+
+	updated, _ := m.executeLocalCommand("/mcp")
+	m = updated.(model)
+	if m.mode != modeMcp {
+		t.Fatalf("/mcp mode = %v, want modeMcp", m.mode)
+	}
+
+	updated, _ = m.executeLocalCommand("/mcp add")
+	m = updated.(model)
+	if m.mode != modeMcpForm {
+		t.Fatalf("/mcp add mode = %v, want modeMcpForm", m.mode)
+	}
+
+	// Unknown subcommand: error block, mode untouched by the failing command
+	// itself — run it from chat mode to prove it does not open a form.
+	m.mode = modeChat
+	m.mcpForm = mcpForm{}
+	updated, _ = m.executeLocalCommand("/mcp bogus")
+	m = updated.(model)
+	if m.mode != modeChat {
+		t.Fatalf("bad subcommand mode = %v", m.mode)
+	}
+}

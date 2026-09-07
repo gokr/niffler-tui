@@ -51,6 +51,7 @@ func (m model) switchSession(id string) model {
 	m.histIdx = -1
 	m.draft = ""
 	m.input.SetValue("")
+	m.mcpConfirmDelete = ""
 	// Completion state is per-input, not per-session: the cleared input
 	// invalidates any active candidate list.
 	m.slashComp = slashCompleteState{}
@@ -140,6 +141,57 @@ func (m model) executeLocalCommand(command string) (tea.Model, tea.Cmd) {
 		m.openCatalogProviderSelector()
 		return m, nil
 
+	case "mcp":
+		if !m.connected {
+			m.contextNote = t(m.loc, "note.notConnected")
+			return m, nil
+		}
+		if m.busy {
+			m.contextNote = t(m.loc, "note.betweenTurnsProvider")
+			return m, nil
+		}
+		argument = strings.TrimSpace(argument)
+		if argument == "" {
+			m.openMcpSelector()
+			return m, mcpServersCmd(m.comp)
+		}
+		parts := strings.Fields(argument)
+		switch parts[0] {
+		case "add":
+			m.mcpForm = newMcpForm(m.width, m.loc)
+			m.mode = modeMcpForm
+			m.layout()
+			return m, nil
+		case "edit":
+			if len(parts) < 2 {
+				m.addBlock(blockError, t(m.loc, "mcp.nameRequired"))
+				m.syncViewport(true)
+				return m, nil
+			}
+			m.controlPending = true
+			return m, loadMcpEditCmd(m.comp, parts[1])
+		case "on", "off":
+			if len(parts) < 2 {
+				m.addBlock(blockError, t(m.loc, "mcp.nameRequired"))
+				m.syncViewport(true)
+				return m, nil
+			}
+			m.controlPending = true
+			return m, mcpToggleCmd(m.comp, parts[1], parts[0] == "on")
+		case "refresh":
+			if len(parts) < 2 {
+				m.addBlock(blockError, t(m.loc, "mcp.nameRequired"))
+				m.syncViewport(true)
+				return m, nil
+			}
+			m.controlPending = true
+			return m, mcpRefreshCmd(m.comp, parts[1])
+		default:
+			m.addBlock(blockError, t(m.loc, "mcp.unknownSubcommand", parts[0]))
+			m.syncViewport(true)
+			return m, nil
+		}
+
 	case "model", "models":
 		if !m.connected {
 			m.contextNote = t(m.loc, "note.notConnected")
@@ -213,6 +265,7 @@ func (m model) executeLocalCommand(command string) (tea.Model, tea.Cmd) {
 			t(m.loc, "help.provider"),
 			t(m.loc, "help.model"),
 			t(m.loc, "help.connect"),
+			t(m.loc, "help.mcp"),
 			t(m.loc, "help.status"),
 			t(m.loc, "help.mouse"),
 			t(m.loc, "help.locale"),
@@ -258,6 +311,23 @@ func (m *model) openCatalogProviderSelector() {
 	m.selector = newSelector(t(m.loc, "selector.connectCatalog"),
 		catalogProviderItems(m.loc, m.configuredCatalogProviders()), m.width, m.height-3)
 	m.mode = modeCatalogProviders
+	m.layout()
+}
+
+// openMcpSelector opens the /mcp browser with a loading placeholder; the
+// mcpServersMsg handler rebuilds it with the loaded list.
+func (m *model) openMcpSelector() {
+	m.selector = newSelector(t(m.loc, "selector.mcpLoading"), nil, m.width, m.height-3)
+	m.mode = modeMcp
+	m.mcpConfirmDelete = ""
+	m.layout()
+}
+
+// openMcpServerSelector rebuilds the /mcp list from the current snapshot.
+func (m *model) openMcpServerSelector() {
+	m.selector = newSelector(t(m.loc, "selector.mcpServers"),
+		mcpSelectorItems(m.loc, m.mcpServers, m.mcpConfirmDelete), m.width, m.height-3)
+	m.mode = modeMcp
 	m.layout()
 }
 
@@ -390,6 +460,94 @@ func (m model) handleControlKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		var cmd tea.Cmd
 		m.providerForm, cmd = m.providerForm.update(msg)
 		return m, cmd
+	}
+
+	if m.mode == modeMcpForm {
+		switch msg.String() {
+		case "esc":
+			m.mode = modeChat
+			m.layout()
+			return m, nil
+		case "tab", "down":
+			return m, m.mcpForm.nextField(1)
+		case "shift+tab", "up":
+			return m, m.mcpForm.nextField(-1)
+		case "left":
+			m.mcpForm.cycleEnum(-1)
+			return m, nil
+		case "right":
+			m.mcpForm.cycleEnum(1)
+			return m, nil
+		case "ctrl+s":
+			return m.submitMcpForm()
+		case "enter":
+			if m.mcpForm.focus == mcpFieldCount-1 {
+				return m.submitMcpForm()
+			}
+			return m, m.mcpForm.nextField(1)
+		}
+		var cmd tea.Cmd
+		m.mcpForm, cmd = m.mcpForm.update(msg)
+		return m, cmd
+	}
+
+	// MCP server management (modeMcp): a = add, e = edit, r = refresh,
+	// t/space = enable/disable, d/x = remove (two-stage like providers).
+	if m.mode == modeMcp {
+		key := msg.String()
+		if key == "esc" {
+			m.mcpConfirmDelete = ""
+			m.mode = modeChat
+			m.layout()
+			return m, nil
+		}
+		selected, ok := m.selector.selected()
+		armed := m.mcpConfirmDelete
+		if armed != "" && (!ok || selected.id != armed) {
+			// Selection moved: disarm the pending delete.
+			m.mcpConfirmDelete = ""
+		}
+		if ok && selected.kind == selectorMcpAdd && (key == "a" || key == "enter") {
+			m.mcpForm = newMcpForm(m.width, m.loc)
+			m.mode = modeMcpForm
+			m.layout()
+			return m, nil
+		}
+		if ok && selected.kind == selectorMcpServer && !m.busy {
+			switch key {
+			case "e":
+				if server, ok := selected.payload.(mcpServerSummary); ok {
+					m.mcpForm = newEditMcpForm(server, m.width, m.loc)
+					m.mode = modeMcpForm
+					m.mcpConfirmDelete = ""
+					m.layout()
+					return m, nil
+				}
+			case "r":
+				m.mcpConfirmDelete = ""
+				m.controlPending = true
+				return m, mcpRefreshCmd(m.comp, selected.id)
+			case "t", " ":
+				m.mcpConfirmDelete = ""
+				m.controlPending = true
+				if server, ok := selected.payload.(mcpServerSummary); ok {
+					return m, mcpToggleCmd(m.comp, selected.id, !server.Enabled)
+				}
+				return m, nil
+			case "d", "x", "enter":
+				if armed != "" && key != "enter" || armed != "" && key == "enter" {
+					// Confirmed: remove it.
+					m.mcpConfirmDelete = ""
+					m.controlPending = true
+					return m, mcpRemoveCmd(m.comp, selected.id)
+				}
+				if armed == "" && key != "enter" {
+					// First press: arm the remove confirmation.
+					m.mcpConfirmDelete = selected.id
+					return m, nil
+				}
+			}
+		}
 	}
 
 	// Let the list own Enter/Esc while editing its filter.
@@ -570,6 +728,28 @@ func (m model) submitProviderForm() (tea.Model, tea.Cmd) {
 	// the saved model id is spelled exactly as the provider serves it (the
 	// probe also validates the key/URL before the provider is stored).
 	return m, probeThenAddProviderCmd(m.comp, values)
+}
+
+// submitMcpForm saves the /mcp form. The manager validates the server with
+// one real connect before storing, so saving may take a while on first runs
+// (npx/uvx downloads) — the form stays up with a saving hint until the
+// action completes.
+func (m model) submitMcpForm() (tea.Model, tea.Cmd) {
+	if m.controlPending || m.mcpForm.saving {
+		return m, nil
+	}
+	values, err := m.mcpForm.values()
+	if err != nil {
+		m.mcpForm.err = err.Error()
+		return m, nil
+	}
+	m.mcpForm.err = ""
+	m.mcpForm.saving = true
+	m.controlPending = true
+	if m.mcpForm.edit {
+		return m, mcpEditCmd(m.comp, values)
+	}
+	return m, mcpAddCmd(m.comp, values)
 }
 
 // probeThenAddProviderCmd chains a provider_models probe (explicit

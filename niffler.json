@@ -15,6 +15,7 @@
         "tui/controls.go",
         "tui/history.go",
         "tui/i18n.go",
+        "tui/mcp_form.go",
         "tui/oauth.go",
         "tui/provider_form.go",
         "tui/selection.go",

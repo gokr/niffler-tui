@@ -19,6 +19,8 @@ const (
 	modeSessions
 	modeConnectForm
 	modeOAuth
+	modeMcp
+	modeMcpForm
 )
 
 type selectorItemKind int
@@ -36,6 +38,8 @@ const (
 	selectorProviderDefaultModel
 	selectorSession
 	selectorNewSession
+	selectorMcpServer
+	selectorMcpAdd
 )
 
 type selectorItem struct {
@@ -74,6 +78,63 @@ func (s *selectorState) setSize(width, height int) {
 func (s selectorState) selected() (selectorItem, bool) {
 	item, ok := s.list.SelectedItem().(selectorItem)
 	return item, ok
+}
+
+// mcpSelectorItems builds the /mcp list: configured servers plus the
+// add-server entry. Live state comes from the catalog snapshot the manager
+// embeds (registered bridge tools, session status).
+func mcpSelectorItems(loc Locale, servers []mcpServerSummary, confirmDelete string) []list.Item {
+	items := make([]list.Item, 0, len(servers)+1)
+	for _, server := range servers {
+		title := server.Name
+		description := server.Type
+		switch {
+		case !server.Enabled:
+			title = "× " + title
+			description += " · " + t(loc, "selector.mcpDisabled")
+		case server.Live:
+			title = "● " + title
+			if server.Bridge != nil && server.Bridge.Connected {
+				description += " · " + t(loc, "selector.mcpSession")
+			}
+		default:
+			title = "○ " + title
+			description += " · " + t(loc, "selector.mcpStopped")
+		}
+		description += " · " + t(loc, "selector.mcpTools", strconv.Itoa(server.ToolCount))
+		if server.Type == "stdio" && server.Command != "" {
+			description += " · " + endpointCommand(server.Command)
+		} else if host := endpointHost(server.URL); host != "" {
+			description += " · " + host
+		}
+		if server.Approval == "always" {
+			description += " · " + t(loc, "selector.mcpApproval")
+		}
+		if server.Error != "" {
+			description += " · " + server.Error
+		} else if server.Bridge != nil && server.Bridge.LastError != "" {
+			description += " · " + server.Bridge.LastError
+		}
+		items = append(items, selectorItem{
+			kind: selectorMcpServer,
+			id:   server.Name, title: title, description: strings.Trim(description, " ·"),
+			payload: server,
+		})
+	}
+	items = append(items, selectorItem{
+		kind: selectorMcpAdd,
+		id:   "__mcp_add__", title: t(loc, "selector.mcpAdd"),
+		description: t(loc, "selector.mcpAddDesc"),
+	})
+	return items
+}
+
+// endpointCommand shortens a stdio command for the selector description.
+func endpointCommand(command string) string {
+	if i := strings.LastIndexByte(command, '/'); i >= 0 {
+		command = command[i+1:]
+	}
+	return command
 }
 
 func providerSelectorItems(loc Locale, providers []providerSummary, status providerStatusResponse) []list.Item {

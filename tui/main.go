@@ -158,12 +158,17 @@ type model struct {
 	providerStatus        providerStatusResponse
 	catalogProviders      []catalogProvider
 	harnessIdentity       harnessIdentity
-	models                []modelSummary
-	modelsCatalog         string
-	runtime               runtimeResolution
-	modelOverride         string
-	promptTokens          int
-	contextUsed           int
+	// MCP server control plane (/mcp): configured servers, the two-stage
+	// delete arm, and the add/edit form.
+	mcpServers       []mcpServerSummary
+	mcpConfirmDelete string
+	mcpForm          mcpForm
+	models           []modelSummary
+	modelsCatalog    string
+	runtime          runtimeResolution
+	modelOverride    string
+	promptTokens     int
+	contextUsed      int
 	// lastCachePrompt is the prompt-token total of the round whose cache
 	// numbers were last accumulated, so the same round arriving on both a
 	// status and an assistant event is only counted once.
@@ -661,6 +666,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.providerForm, cmd = m.providerForm.update(msg)
 			return m, cmd
 		}
+		if m.mode == modeMcpForm {
+			var cmd tea.Cmd
+			m.mcpForm, cmd = m.mcpForm.update(msg)
+			return m, cmd
+		}
 		if m.mode == modeOAuth && m.oauthLogin != nil {
 			var cmd tea.Cmd
 			var input textinput.Model
@@ -882,6 +892,63 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.addBlock(blockMeta, label)
 		m.syncViewport(true)
 		cmds = append(cmds, refreshRuntimeCmd(m.comp, m.session, m.modelOverride))
+
+	case mcpServersMsg:
+		if msg.Err == nil {
+			m.mcpServers = msg.Servers
+			if m.mode == modeMcp {
+				m.openMcpServerSelector()
+			}
+		} else {
+			m.contextNote = msg.Err.Error()
+			m.mode = modeChat
+			m.layout()
+		}
+
+	case mcpEditReadyMsg:
+		m.controlPending = false
+		if msg.Err != nil {
+			m.addBlock(blockError, msg.Err.Error())
+			m.syncViewport(true)
+			return m, nil
+		}
+		m.mcpForm = newEditMcpForm(*msg.Server, m.width, m.loc)
+		m.mode = modeMcpForm
+		m.layout()
+
+	case mcpActionMsg:
+		m.controlPending = false
+		m.mcpForm.saving = false
+		label := "mcp: " + msg.Name
+		switch msg.Action {
+		case "add":
+			label = t(m.loc, "mcp.added", msg.Name)
+		case "edit":
+			label = t(m.loc, "mcp.updated", msg.Name)
+		case "remove":
+			label = t(m.loc, "mcp.removed", msg.Name)
+		case "refresh":
+			label = t(m.loc, "mcp.refreshed", msg.Name)
+		case "on":
+			label = t(m.loc, "mcp.enabled", msg.Name)
+		case "off":
+			label = t(m.loc, "mcp.disabled", msg.Name)
+		}
+		if msg.Err != nil {
+			if msg.Action == "add" || msg.Action == "edit" {
+				m.mcpForm.err = msg.Err.Error()
+				m.mode = modeMcpForm
+			} else {
+				m.addBlock(blockError, msg.Err.Error())
+				m.mode = modeChat
+			}
+			m.syncViewport(true)
+			break
+		}
+		m.mode = modeChat
+		m.mcpConfirmDelete = ""
+		m.addBlock(blockMeta, label)
+		m.syncViewport(true)
 
 	case thinkingEffortMsg:
 		m.applyThinkingEffort(msg)

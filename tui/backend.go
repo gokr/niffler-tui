@@ -642,3 +642,207 @@ func removeProviderCmd(comp *sdk.Component, nickname string) tea.Cmd {
 		return providerActionMsg{Action: "remove", Nickname: nickname, Err: err}
 	}
 }
+
+// ---- MCP servers (components/mcp + one mcp-bridge per server) --------------
+
+// mcpBridgeStatus is the live state a bridge reports through its hidden
+// status tool (surfaced by mcp_servers as "bridge").
+type mcpBridgeStatus struct {
+	Connected bool    `json:"connected"`
+	Tools     int     `json:"tools"`
+	Drifted   bool    `json:"drifted"`
+	LastError string  `json:"lastError"`
+	StartedAt float64 `json:"startedAt"`
+	LastUsed  float64 `json:"lastUsed"`
+}
+
+// mcpServerSummary mirrors one mcp_servers entry. Secrets are redacted
+// server-side; only key names (envKeys/headerKeys) reach the UI.
+type mcpServerSummary struct {
+	Name            string           `json:"name"`
+	Type            string           `json:"type"`
+	Enabled         bool             `json:"enabled"`
+	ToolCount       int              `json:"toolCount"`
+	TimeoutMs       int              `json:"timeoutMs"`
+	Approval        string           `json:"approval"`
+	Expose          string           `json:"expose"`
+	Command         string           `json:"command"`
+	Args            []string         `json:"args"`
+	URL             string           `json:"url"`
+	EnvKeys         []string         `json:"envKeys"`
+	HeaderKeys      []string         `json:"headerKeys"`
+	Component       string           `json:"component"`
+	Live            bool             `json:"live"`
+	RegisteredTools []string         `json:"registeredTools"`
+	Bridge          *mcpBridgeStatus `json:"bridge"`
+	Error           string           `json:"error"`
+}
+
+type mcpServersResponse struct {
+	Servers []mcpServerSummary `json:"servers"`
+}
+
+func loadMcpServers(comp *sdk.Component) (mcpServersResponse, error) {
+	var response mcpServersResponse
+	err := requestInto(comp, "mcp", "mcp_servers", map[string]any{}, &response)
+	return response, err
+}
+
+// mcpServersMsg carries the configured MCP servers for the /mcp selector.
+type mcpServersMsg struct {
+	Servers []mcpServerSummary
+	Err     error
+}
+
+func mcpServersCmd(comp *sdk.Component) tea.Cmd {
+	return func() tea.Msg {
+		response, err := loadMcpServers(comp)
+		return mcpServersMsg{Servers: response.Servers, Err: err}
+	}
+}
+
+// mcpActionMsg reports a completed MCP control action (add/edit/remove/
+// refresh/toggle); the transcript shows the label and the /mcp selector
+// reloads.
+type mcpActionMsg struct {
+	Action string
+	Name   string
+	Err    error
+}
+
+// mcpControlTimeout covers add/edit/refresh: validation connects to the
+// server for real, and first runs of npx/uvx servers download packages.
+const mcpControlTimeout = 120 * time.Second
+
+// mcpFormValues is what the /mcp form submits. Empty strings mean "not
+// provided"; on edit the manager merges provided fields and keeps the rest.
+type mcpFormValues struct {
+	Name      string
+	Type      string
+	Command   string
+	Args      []string
+	URL       string
+	EnvJSON   string // raw JSON object text; empty = keep on edit
+	Approval  string
+	Expose    string
+	TimeoutMs int
+}
+
+func mcpAddCmd(comp *sdk.Component, values mcpFormValues) tea.Cmd {
+	return func() tea.Msg {
+		args := map[string]any{
+			"name": values.Name, "type": values.Type,
+			"approval": values.Approval, "expose": values.Expose,
+			"timeoutMs": values.TimeoutMs,
+		}
+		if values.Type == "stdio" {
+			args["command"] = values.Command
+			args["args"] = values.Args
+		} else {
+			args["url"] = values.URL
+		}
+		if values.EnvJSON != "" {
+			var env map[string]any
+			if err := json.Unmarshal([]byte(values.EnvJSON), &env); err == nil {
+				args["env"] = env
+			}
+		}
+		var response okResponse
+		err := requestInto(comp, "mcp", "mcp_add", args, &response)
+		if err == nil && !response.OK {
+			err = fmt.Errorf("mcp add failed")
+		}
+		return mcpActionMsg{Action: "add", Name: values.Name, Err: err}
+	}
+}
+
+func mcpEditCmd(comp *sdk.Component, values mcpFormValues) tea.Cmd {
+	return func() tea.Msg {
+		args := map[string]any{
+			"name": values.Name, "type": values.Type,
+			"approval": values.Approval, "expose": values.Expose,
+			"timeoutMs": values.TimeoutMs,
+		}
+		if values.Type == "stdio" {
+			args["command"] = values.Command
+			args["args"] = values.Args
+		} else {
+			args["url"] = values.URL
+		}
+		if values.EnvJSON != "" {
+			var env map[string]any
+			if err := json.Unmarshal([]byte(values.EnvJSON), &env); err == nil {
+				args["env"] = env
+			}
+		}
+		var response okResponse
+		err := requestInto(comp, "mcp", "mcp_edit", args, &response)
+		if err == nil && !response.OK {
+			err = fmt.Errorf("mcp edit failed")
+		}
+		return mcpActionMsg{Action: "edit", Name: values.Name, Err: err}
+	}
+}
+
+func mcpRemoveCmd(comp *sdk.Component, name string) tea.Cmd {
+	return func() tea.Msg {
+		var response okResponse
+		err := requestInto(comp, "mcp", "mcp_remove", map[string]any{"name": name}, mcpControlTimeout)
+		if err == nil && !response.OK {
+			err = fmt.Errorf("mcp remove failed")
+		}
+		return mcpActionMsg{Action: "remove", Name: name, Err: err}
+	}
+}
+
+func mcpRefreshCmd(comp *sdk.Component, name string) tea.Cmd {
+	return func() tea.Msg {
+		var response okResponse
+		err := requestInto(comp, "mcp", "mcp_refresh", map[string]any{"name": name}, mcpControlTimeout)
+		if err == nil && !response.OK {
+			err = fmt.Errorf("mcp refresh failed")
+		}
+		return mcpActionMsg{Action: "refresh", Name: name, Err: err}
+	}
+}
+
+// mcpToggleCmd enables or disables a server (mcp_edit {enabled}); disabled
+// servers keep their config but stop (or never start) their bridge.
+func mcpToggleCmd(comp *sdk.Component, name string, enabled bool) tea.Cmd {
+	return func() tea.Msg {
+		var response okResponse
+		err := requestInto(comp, "mcp", "mcp_edit", map[string]any{
+			"name": name, "enabled": enabled,
+		}, mcpControlTimeout)
+		if err == nil && !response.OK {
+			err = fmt.Errorf("mcp edit failed")
+		}
+		action := "off"
+		if enabled {
+			action = "on"
+		}
+		return mcpActionMsg{Action: action, Name: name, Err: err}
+	}
+}
+
+// mcpEditReadyMsg carries the stored server snapshot for /mcp edit <name>;
+// the handler opens the pre-filled form.
+type mcpEditReadyMsg struct {
+	Server *mcpServerSummary
+	Err    error
+}
+
+func loadMcpEditCmd(comp *sdk.Component, name string) tea.Cmd {
+	return func() tea.Msg {
+		response, err := loadMcpServers(comp)
+		if err != nil {
+			return mcpEditReadyMsg{Err: err}
+		}
+		for i := range response.Servers {
+			if response.Servers[i].Name == name {
+				return mcpEditReadyMsg{Server: &response.Servers[i]}
+			}
+		}
+		return mcpEditReadyMsg{Err: fmt.Errorf("mcp server %q is not configured", name)}
+	}
+}

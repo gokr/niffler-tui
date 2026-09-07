@@ -118,6 +118,11 @@ func builtinSlashCommands() []slashCommand {
 			{Name: "id", Kind: "string", Description: "model id or 'default'"},
 		}},
 		{Name: "connect", Description: "store a provider connection", builtin: true},
+		{Name: "mcp", Description: "manage external MCP servers", builtin: true, Params: []slashParam{
+			{Name: "subcommand", Kind: "enum", Values: []string{"add", "edit", "on", "off", "refresh"}},
+			{Name: "name", Kind: "string", Description: "server name",
+				Source: &slashSource{Tool: "mcp.mcp_servers", Args: map[string]any{}, Field: "name"}},
+		}},
 		{Name: "status", Description: "show provider/model/context details", builtin: true},
 		{Name: "new", Description: "start a new conversation", builtin: true, Params: []slashParam{
 			{Name: "id", Kind: "string", Description: "optional conversation id"},
