@@ -21,6 +21,7 @@ const (
 	mcpFieldCommand
 	mcpFieldArgs
 	mcpFieldURL
+	mcpFieldHeaders
 	mcpFieldEnv
 	mcpFieldApproval
 	mcpFieldExpose
@@ -57,8 +58,8 @@ func newMcpForm(width int, loc Locale) mcpForm {
 }
 
 // newEditMcpForm prefills from a stored server. Env/header values are
-// redacted server-side, so the env field starts blank: leaving it keeps the
-// stored env, typing a JSON object replaces it.
+// redacted server-side, so the env and headers fields start blank: leaving
+// either keeps the stored value, typing a JSON object replaces it.
 func newEditMcpForm(s mcpServerSummary, width int, loc Locale) mcpForm {
 	form := newMcpFormFields(width, loc)
 	form.edit = true
@@ -107,6 +108,7 @@ func newMcpFormFields(width int, loc Locale) mcpForm {
 		t(loc, "mcpform.prompt.command"),
 		t(loc, "mcpform.prompt.args"),
 		t(loc, "mcpform.prompt.url"),
+		t(loc, "mcpform.prompt.headers"),
 		t(loc, "mcpform.prompt.env"),
 		t(loc, "mcpform.prompt.approval"),
 		t(loc, "mcpform.prompt.expose"),
@@ -121,6 +123,7 @@ func newMcpFormFields(width int, loc Locale) mcpForm {
 		"npx",
 		"-y @modelcontextprotocol/server-filesystem /tmp",
 		"https://example.com/mcp",
+		t(loc, "mcpform.placeholder.headers"),
 		t(loc, "mcpform.placeholder.env"),
 		"none (left/right)",
 		"ondemand (left/right)",
@@ -350,6 +353,7 @@ func (f mcpForm) values() (mcpFormValues, error) {
 		Command:     strings.TrimSpace(f.inputs[mcpFieldCommand].Value()),
 		Args:        splitArgs(f.inputs[mcpFieldArgs].Value()),
 		URL:         strings.TrimSpace(f.inputs[mcpFieldURL].Value()),
+		HeadersJSON: strings.TrimSpace(f.inputs[mcpFieldHeaders].Value()),
 		EnvJSON:     strings.TrimSpace(f.inputs[mcpFieldEnv].Value()),
 		Approval:    f.currentApproval(),
 		Expose:      f.currentExpose(),
@@ -376,6 +380,12 @@ func (f mcpForm) values() (mcpFormValues, error) {
 		var env map[string]any
 		if err := json.Unmarshal([]byte(values.EnvJSON), &env); err != nil || env == nil {
 			return values, fmt.Errorf("%s", t(f.loc, "mcpform.envInvalid"))
+		}
+	}
+	if values.HeadersJSON != "" {
+		var headers map[string]string
+		if err := json.Unmarshal([]byte(values.HeadersJSON), &headers); err != nil || headers == nil {
+			return values, fmt.Errorf("%s", t(f.loc, "mcpform.headersInvalid"))
 		}
 	}
 	if text := strings.TrimSpace(f.inputs[mcpFieldTimeout].Value()); text != "" {
