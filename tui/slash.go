@@ -124,6 +124,9 @@ func builtinSlashCommands() []slashCommand {
 				Source: &slashSource{Tool: "mcp.mcp_servers", Args: map[string]any{}, Field: "name"}},
 		}},
 		{Name: "status", Description: "show provider/model/context details", builtin: true},
+		{Name: "components", Description: "running components: all/direct/discovered/undiscovered", builtin: true},
+		{Name: "discover", Description: "append component schemas to this conversation (or tool=NAME)", builtin: true},
+		{Name: "profile", Description: "choose tool profile for new conversations; default clears", builtin: true},
 		{Name: "new", Description: "start a new conversation", builtin: true, Params: []slashParam{
 			{Name: "id", Kind: "string", Description: "optional conversation id"},
 		}},
@@ -550,9 +553,13 @@ type slashResultMsg struct {
 	Session string // conversation id at invocation time (userMessage guard)
 	Result  json.RawMessage
 	Err     error
+	Profile *string // non-nil after a validated /profile selection
 }
 
 func (m *model) applySlashResult(msg slashResultMsg) tea.Cmd {
+	if msg.Err == nil && msg.Profile != nil {
+		m.toolProfile = *msg.Profile
+	}
 	if msg.Err != nil {
 		m.addBlock(blockError, "/"+msg.Name+" failed: "+msg.Err.Error())
 		m.syncViewport(true)

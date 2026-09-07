@@ -79,6 +79,13 @@ func (m model) executeLocalCommand(command string) (tea.Model, tea.Cmd) {
 	}
 
 	switch name {
+	case "components", "discover", "profile":
+		if m.busy && name == "discover" {
+			m.addBlock(blockError, "Wait for the turn to finish before explicit discovery.")
+			m.syncViewport(true)
+			return m, nil
+		}
+		return m, m.toolVisibilityCmd(name, argument)
 	case "locale":
 		arg := strings.TrimSpace(argument)
 		if arg == "" {
