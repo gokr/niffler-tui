@@ -237,7 +237,7 @@ func (s oauthLoginState) view(width int) string {
 	out.WriteString(metaStyle.Render(t(s.loc, "oauth.keys")))
 	panel := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
-		BorderForeground(lipgloss.Color("8")).
+		BorderForeground(lipgloss.Color(currentTheme.formBorder)).
 		Padding(1, 2).
 		Width(max(24, min(width-6, 88))).
 		Render(out.String())

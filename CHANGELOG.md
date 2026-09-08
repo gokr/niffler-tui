@@ -6,6 +6,21 @@ project aims for [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- **Color themes (`/theme`)** — the UI chrome (header, transcript roles, tool
+  cards, forms, approval gate, context gauge) and the markdown style assistant
+  output renders with now come from a selectable theme. Ten palettes ship:
+  the compiled-in ANSI default (unchanged rendering, markdown still follows
+  `GLAMOUR_STYLE`), light themes for white-background terminals (`light`,
+  `sepia`, `solarized-light` — the old default washed out on macOS
+  Terminal's white profile), and `solarized-dark`, `gruvbox-dark`, `nord`,
+  `dracula`, `tokyo-night`, `catppuccin-mocha`. `/theme [name]` applies and
+  persists the choice (like `/locale`, env override `NIF_TUI_THEME`); a bare
+  `/theme` opens a picker that previews each palette live as you move the
+  selection. Tab completes theme names. Switching mid-conversation repaints
+  the transcript (cached block renders and the glamour renderer are rebuilt).
+
 ### Fixed
 
 - **/mcp selector and form never rendered** — the MCP modes switched state

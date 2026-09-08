@@ -31,11 +31,11 @@ func contextBar(percent float64, width int) string {
 	if width <= 0 {
 		return ""
 	}
-	color := lipgloss.Color("6")
+	color := lipgloss.Color(currentTheme.barOK)
 	if percent >= 0.9 {
-		color = lipgloss.Color("9")
+		color = lipgloss.Color(currentTheme.barCrit)
 	} else if percent >= 0.75 {
-		color = lipgloss.Color("3")
+		color = lipgloss.Color(currentTheme.barWarn)
 	}
 	bar := progress.New(
 		progress.WithWidth(width),
@@ -43,7 +43,7 @@ func contextBar(percent float64, width int) string {
 		progress.WithFillCharacters('█', '░'),
 		progress.WithoutPercentage(),
 	)
-	bar.EmptyColor = lipgloss.Color("8")
+	bar.EmptyColor = lipgloss.Color(currentTheme.barEmpty)
 	return bar.ViewAs(max(0.0, min(1.0, percent)))
 }
 

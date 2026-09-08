@@ -144,6 +144,9 @@ func builtinSlashCommands() []slashCommand {
 		{Name: "mouse", Description: "wheel scrolling and drag selection", builtin: true, Params: []slashParam{
 			{Name: "state", Kind: "enum", Values: []string{"on", "off"}},
 		}},
+		{Name: "theme", Description: "choose the UI color theme", builtin: true, Params: []slashParam{
+			{Name: "name", Kind: "string", Description: "theme name (empty opens the picker)", Values: themeNames},
+		}},
 		{Name: "help", Description: "show this help", builtin: true},
 		{Name: "?", Description: "show this help", builtin: true},
 	}

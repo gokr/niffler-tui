@@ -21,6 +21,7 @@
         "tui/selection.go",
         "tui/selectors.go",
         "tui/slash.go",
+        "tui/theme.go",
         "tui/toolprofiles.go",
         "tui/toolcard.go",
         "tui/transcript.go"

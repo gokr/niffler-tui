@@ -118,6 +118,7 @@ type model struct {
 	session     string
 	natsURL     string
 	loc         Locale
+	theme       string // active UI color theme (themeRegistry key)
 	viewport    viewport.Model
 	input       textarea.Model
 	spinner     spinner.Model
@@ -256,6 +257,11 @@ type model struct {
 }
 
 var (
+	// The styles below are the compiled-in default theme (see theme.go).
+	// They are the single source of truth for the "default" palette — every
+	// other theme overwrites them in applyTheme, and they are re-derived from
+	// the theme registry there, so edits to colors must happen in both places
+	// (or better: only here, then mirrored).
 	headerStyle      = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("6"))
 	inputBorderStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("6"))
 	userStyle        = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("12"))
@@ -296,6 +302,11 @@ func configureKeymaps(input *textarea.Model, view *viewport.Model) {
 }
 
 func newModel(ctx context.Context, comp *sdk.Component, session, natsURL string) model {
+	// Apply the persisted theme before any component copies a style value
+	// (the spinner keeps its own copy of metaStyle).
+	theme := detectTheme()
+	applyTheme(theme)
+
 	input := textarea.New()
 	input.Prompt = "> "
 	loc := detectLocale()
@@ -325,6 +336,7 @@ func newModel(ctx context.Context, comp *sdk.Component, session, natsURL string)
 		session:      session,
 		natsURL:      natsURL,
 		loc:          loc,
+		theme:        theme,
 		viewport:     view,
 		input:        input,
 		spinner:      spin,
@@ -344,6 +356,25 @@ func newModel(ctx context.Context, comp *sdk.Component, session, natsURL string)
 	m.layout()
 	m.syncViewport(true)
 	return m
+}
+
+// setTheme switches the color theme live: the global styles flip, the
+// glamour renderer is marked for a rebuild (its style is theme-dependent),
+// and every block's cached rendering is invalidated so the transcript
+// repaints in the new palette. Returns false for an unknown name.
+func (m *model) setTheme(name string) bool {
+	if !applyTheme(name) {
+		return false
+	}
+	m.theme = name
+	m.spinner.Style = metaStyle
+	m.renderW = -1 // force the glamour renderer rebuild on next layout
+	for i := range m.blocks {
+		m.blocks[i].renderedOK = false
+	}
+	m.markTranscriptDirty()
+	m.layout()
+	return true
 }
 
 func (m model) Init() tea.Cmd {
@@ -1422,7 +1453,7 @@ func (m *model) layout() {
 	// The chat frame is header + viewport + blank spacer + rule + input +
 	// rule + status — six fixed rows besides the viewport and input.
 	m.viewport.SetHeight(max(1, height-6-m.input.Height()-extra))
-	if m.mode == modeProviders || m.mode == modeCatalogProviders || m.mode == modeModels || m.mode == modeSessions {
+	if m.mode == modeProviders || m.mode == modeCatalogProviders || m.mode == modeModels || m.mode == modeSessions || m.mode == modeThemes {
 		m.selector.setSize(width-1, max(6, height-4))
 	}
 	if m.mode == modeConnectForm {
@@ -1458,12 +1489,19 @@ func (m *model) ensureRenderer(width int) {
 	}
 	m.markTranscriptDirty()
 
-	// WithEnvironmentConfig honors GLAMOUR_STYLE (default: dark).
-	r, err := glamour.NewTermRenderer(
-		glamour.WithEnvironmentConfig(),
+	// The renderer's markdown style comes from the active theme; the
+	// default theme passes "" so GLAMOUR_STYLE still controls it (previous
+	// behavior), named themes pin a matching built-in style.
+	opts := []glamour.TermRendererOption{
 		glamour.WithWordWrap(width),
 		glamour.WithPreservedNewLines(),
-	)
+	}
+	if currentTheme.glamour == "" {
+		opts = append(opts, glamour.WithEnvironmentConfig())
+	} else {
+		opts = append(opts, glamour.WithStandardStyle(currentTheme.glamour))
+	}
+	r, err := glamour.NewTermRenderer(opts...)
 	if err != nil {
 		// Fall back to plain text rendering without retrying on every key
 		// event. A terminal resize will attempt construction again.
@@ -1519,7 +1557,7 @@ func (m model) View() tea.View {
 		parts := []string{headerLine}
 		switch m.mode {
 		case modeProviders, modeCatalogProviders, modeModels, modeSessions,
-			modeMcp, modeMcpSearch:
+			modeMcp, modeMcpSearch, modeThemes:
 			control = m.selector.list.View()
 			parts = append(parts, control)
 			footer := t(m.loc, "footer.filterChoose")

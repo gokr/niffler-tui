@@ -22,6 +22,7 @@ const (
 	modeMcp
 	modeMcpSearch
 	modeMcpForm
+	modeThemes
 )
 
 type selectorItemKind int
@@ -42,6 +43,7 @@ const (
 	selectorMcpServer
 	selectorMcpAdd
 	selectorMcpEntry
+	selectorTheme
 )
 
 type selectorItem struct {
@@ -335,6 +337,25 @@ func endpointHost(raw string) string {
 		return parsed.Hostname() + ":" + parsed.Port()
 	}
 	return parsed.Hostname()
+}
+
+// themeSelectorItems builds the /theme picker: every registered theme with
+// its one-line description, the active one marked. Selection re-renders
+// live, so arrowing through the list previews each palette immediately.
+func themeSelectorItems(current string) []list.Item {
+	items := make([]list.Item, 0, len(themeNames))
+	for _, name := range themeNames {
+		title := name
+		if name == current {
+			title = "● " + name
+		}
+		items = append(items, selectorItem{
+			kind: selectorTheme,
+			id:   name, title: title,
+			description: themeDescription(name),
+		})
+	}
+	return items
 }
 
 // sessionSelectorItems builds the /session list: the current session first,
