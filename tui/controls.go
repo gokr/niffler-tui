@@ -273,6 +273,22 @@ func (m model) executeLocalCommand(command string) (tea.Model, tea.Cmd) {
 		m.syncViewport(true)
 		return m, nil
 
+	case "theme":
+		arg := strings.TrimSpace(argument)
+		if arg == "" {
+			m.openThemeSelector()
+			return m, nil
+		}
+		if !m.setTheme(arg) {
+			m.addBlock(blockError, t(m.loc, "theme.invalid", arg))
+			m.syncViewport(true)
+			return m, nil
+		}
+		persistTheme(arg)
+		m.addBlock(blockMeta, t(m.loc, "theme.switched", arg))
+		m.syncViewport(true)
+		return m, nil
+
 	case "help", "?":
 		lines := []string{
 			t(m.loc, "help.title"),
@@ -284,6 +300,7 @@ func (m model) executeLocalCommand(command string) (tea.Model, tea.Cmd) {
 			t(m.loc, "help.mcp"),
 			t(m.loc, "help.status"),
 			t(m.loc, "help.mouse"),
+			t(m.loc, "help.theme"),
 			t(m.loc, "help.locale"),
 			t(m.loc, "help.help"),
 			"",
@@ -385,6 +402,15 @@ func (m *model) openSessionSelector(sessions []sessionSummary) {
 	m.selector = newSelector(t(m.loc, "selector.sessions"),
 		sessionSelectorItems(m.loc, m.session, sessions), m.width, m.height-3)
 	m.mode = modeSessions
+	m.layout()
+}
+
+// openThemeSelector opens the /theme picker with every registered theme;
+// the current choice is marked, and moving the selection previews each
+// palette live (the whole UI re-renders from the global styles).
+func (m *model) openThemeSelector() {
+	m.selector = newSelector(t(m.loc, "selector.themes"), themeSelectorItems(m.theme), m.width, m.height-3)
+	m.mode = modeThemes
 	m.layout()
 }
 
@@ -757,6 +783,17 @@ func (m model) handleControlKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.contextNote = t(m.loc, "note.savingModel")
 		m.layout()
 		return m, setConversationModelCmd(m.comp, m.session, m.modelOverride, previous)
+	case modeThemes:
+		name := selected.id
+		if !m.setTheme(name) {
+			return m, nil
+		}
+		persistTheme(name)
+		m.mode = modeChat
+		m.layout()
+		m.addBlock(blockMeta, t(m.loc, "theme.switched", name))
+		m.syncViewport(true)
+		return m, nil
 	case modeSessions:
 		switch selected.kind {
 		case selectorNewSession:

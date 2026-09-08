@@ -178,6 +178,8 @@ func prettyApprovalArgs(raw json.RawMessage) string {
 }
 
 var (
+	// Compiled-in default theme colors; applyTheme (theme.go) overwrites
+	// both when another theme is active.
 	approvalBoxStyle = lipgloss.NewStyle().
 				Border(lipgloss.RoundedBorder()).
 				BorderForeground(lipgloss.Color("3")).

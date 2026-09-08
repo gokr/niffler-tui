@@ -106,6 +106,11 @@ Niffler 的 builder 不使用這個 `go.mod`；它建立隔離的模組，replac
 - `/new [id]` —— 開始一個新對話
 - `/session` —— 對話瀏覽器；切換或復原對話，或開始新對話
 - `/locale [en|zh|zh-TW]` —— 切換介面語言（持久化到使用者狀態目錄）
+- `/theme [name]` —— 切換介面配色主題（持久化）；不帶參數的 `/theme` 開啟
+  選擇器，移動選取即可即時預覽。除編譯內建的 ANSI 預設主題外，另附九套配色，
+  含適合白底終端機的淺色主題（`light`、`sepia`、`solarized-light`），以及
+  `solarized-dark`、`gruvbox-dark`、`nord`、`dracula`、`tokyo-night`、
+  `catppuccin-mocha`。`NIF_TUI_THEME` 可覆蓋啟動預設值
 - `/mouse [on|off]` —— 滑鼠追蹤（預設開：滾輪、點擊和直接拖曳選取可
   同時使用；關閉後使用終端機原生選取，但應用收不到滾輪）
 - `/help` —— 指令摘要，含已註冊的外掛指令
