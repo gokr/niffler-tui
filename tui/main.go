@@ -316,6 +316,11 @@ func newModel(ctx context.Context, comp *sdk.Component, session, natsURL string)
 	input.DynamicHeight = true
 	input.MinHeight = 1
 	input.ShowLineNumbers = false
+	// The textarea palette depends on the theme's surface (light vs dark);
+	// applyTheme above chose the theme, so style the widget to match. The
+	// widget otherwise bakes in the dark palette and would keep its active
+	// line black even under a light theme.
+	input.SetStyles(inputTextareaStyles(currentTheme))
 	focusCmd := input.Focus()
 
 	view := viewport.New(viewport.WithWidth(80), viewport.WithHeight(20))
@@ -368,6 +373,11 @@ func (m *model) setTheme(name string) bool {
 	}
 	m.theme = name
 	m.spinner.Style = metaStyle
+	// The textarea palette is surface-dependent (light vs dark), like the
+	// startup styling in newModel; switching themes live must re-style the
+	// widget too or a light theme leaves the dark palette's black active
+	// line behind.
+	m.input.SetStyles(inputTextareaStyles(currentTheme))
 	m.renderW = -1 // force the glamour renderer rebuild on next layout
 	for i := range m.blocks {
 		m.blocks[i].renderedOK = false
