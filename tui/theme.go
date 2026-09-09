@@ -16,6 +16,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"charm.land/bubbles/v2/textarea"
 	"charm.land/lipgloss/v2"
 )
 
@@ -343,6 +344,30 @@ var themeDescriptions = map[string]string{
 // approval borders). Initialized to the compiled-in default; applyTheme
 // keeps it in sync.
 var currentTheme = themeRegistry[ThemeDefault]
+
+// inputDark reports whether the active theme renders on a dark surface. The
+// bubbles textarea ships one style palette per terminal surface (see
+// textarea.DefaultDarkStyles / DefaultLightStyles); a theme whose markdown
+// (glamour) style is built on a light background gets the light palette so
+// the input field does not keep the dark palette's hard black active-line
+// background when a light theme is active. Every non-light theme -- the
+// compiled-in default included -- keeps the dark palette, matching its
+// annotated terminal assumption.
+func inputDark(th theme) bool {
+	return th.glamour != "light"
+}
+
+// inputTextareaStyles is the theme-driven palette for the textarea widget.
+// The widget's two built-in palettes are tuned for the terminal surface the
+// theme picks; choosing by the active theme keeps the field legible when
+// switching between light and dark themes instead of leaving a black input
+// line behind.
+func inputTextareaStyles(th theme) textarea.Styles {
+	if inputDark(th) {
+		return textarea.DefaultDarkStyles()
+	}
+	return textarea.DefaultLightStyles()
+}
 
 // themeDescription returns the picker blurb for name, or "" when unknown.
 func themeDescription(name string) string {
