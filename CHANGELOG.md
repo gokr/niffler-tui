@@ -21,6 +21,27 @@ project aims for [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   selection. Tab completes theme names. Switching mid-conversation repaints
   the transcript (cached block renders and the glamour renderer are rebuilt).
 
+### Changed
+
+- **Local commands are declared once** — the built-in registry
+  (`builtinSlashCommands`) now carries everything about a command: its
+  handler, its aliases (`aliasOf`), its declared subcommands and its params.
+  `executeLocalCommand` dispatches through the registry instead of a parallel
+  switch, so a local command is one entry that `/help`, Tab completion,
+  validation and dispatch all read. Consequences:
+  - `/provider strip [on|off]` is discoverable at last — it existed only as a
+    string comparison inside the old switch, in no list, help text or README.
+  - `/mcp`'s subcommands come from one table, so the enum Tab completes and
+    the dispatcher accepts can no longer disagree (they did: `search`/`s` were
+    switch-only while the declared enum said `add|edit|on|off|refresh`).
+  - `/discover` declares its `<component>|tool=NAME` shape, `/components` its
+    filter enum, `/locale` its language enum.
+  - `TestEveryBuiltinIsHandled`, the new
+    `TestSubcommandsAreDeclaredAndHandled` and the new
+    `TestReadmeCommandList` fail CI on the remaining drift directions: a
+    registry entry without a handler, a subcommand whose enum and table
+    disagree, and a README command list out of step with the registry.
+
 ### Fixed
 
 - **Startup and `/session` switching showed a blank output area** — the TUI
@@ -36,6 +57,17 @@ project aims for [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   further switch is dropped, and are inserted at the point the load started,
   so a message sent while the store read is in flight is preserved below the
   history.
+- **`/help` hid `/components`, `/discover` and `/profile`** — the listing was a
+  hand-maintained list of translation keys instead of the command registry, so
+  three implemented commands never appeared (they completed via Tab, but
+  nothing advertised them) and `/locale`, which was listed, was missing from
+  the registry and therefore never completed. `/help` is now generated from the
+  registry (declaration order, aliases such as `/sessions` excluded), `/locale`
+  is registered with its `en|zh|zh-TW` enum, and `TestHelpListsEveryBuiltin`
+  fails CI when a registered built-in is missing from the listing, while
+  `TestEveryBuiltinIsHandled` catches the reverse drift (a registry entry the
+  dispatcher does not handle). A built-in whose catalog line is missing still
+  renders a usage line derived from its declared params.
 - **/mcp selector and form never rendered** — the MCP modes switched state
   and handled keys but were missing from the `View()` switch, so `/mcp`
   showed only the header line; all three modes (server browser, registry

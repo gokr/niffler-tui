@@ -72,269 +72,345 @@ func newSessionID() string {
 	return "conv-" + strconv.FormatInt(time.Now().Unix(), 10)
 }
 
+// executeLocalCommand runs a UI-local command. Dispatch reads the built-in
+// registry (builtinCommand): the entry Tab completes and /help lists is the
+// entry that carries the handler, so a local command is declared exactly
+// once. Registered plugin commands are the fallback.
 func (m model) executeLocalCommand(command string) (tea.Model, tea.Cmd) {
 	parts := strings.Fields(strings.TrimSpace(command))
-	name := strings.ToLower(strings.TrimPrefix(parts[0], "/"))
-	argument := ""
-	if len(parts) > 1 {
-		argument = strings.Join(parts[1:], " ")
+	if len(parts) == 0 {
+		return m, nil
 	}
+	name := strings.ToLower(strings.TrimPrefix(parts[0], "/"))
+	argument := strings.Join(parts[1:], " ")
+	if cmd, ok := builtinCommand(name); ok && cmd.run != nil {
+		return cmd.run(m, cmd, argument)
+	}
+	if cmd, ok := m.slash.lookup(name); ok && !cmd.builtin {
+		return m.executeSlashCommand(cmd, argument)
+	}
+	m.addBlock(blockError, t(m.loc, "chat.unknownCommand", name)+suggestSlash(m.slash, name))
+	m.syncViewport(true)
+	return m, nil
+}
 
-	switch name {
-	case "components", "discover", "profile":
-		if m.busy && name == "discover" {
-			m.addBlock(blockError, "Wait for the turn to finish before explicit discovery.")
-			m.syncViewport(true)
-			return m, nil
-		}
-		return m, m.toolVisibilityCmd(name, argument)
-	case "locale":
-		arg := strings.TrimSpace(argument)
-		if arg == "" {
-			arg = string(m.loc)
-		}
-		loc, ok := validLocale(arg)
-		if !ok {
-			m.addBlock(blockError, t(m.loc, "locale.invalid", arg))
-			m.syncViewport(true)
-			return m, nil
-		}
-		m.loc = loc
-		m.input.Placeholder = t(loc, "input.placeholder")
-		persistLocale(loc)
-		m.addBlock(blockMeta, t(m.loc, "locale.switched", arg))
+// splitCommand splits an argument string into its first field and the
+// trimmed remainder, for subcommand dispatch.
+func splitCommand(argument string) (first, rest string) {
+	fields := strings.Fields(argument)
+	if len(fields) == 0 {
+		return "", ""
+	}
+	return fields[0], strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(argument), fields[0]))
+}
+
+// ---- local command handlers ------------------------------------------------
+//
+// One handler per registry entry (tui/slash.go). Subcommand handlers take the
+// text after the subcommand name.
+
+func localComponents(m model, cmd slashCommand, argument string) (tea.Model, tea.Cmd) {
+	return m, m.toolVisibilityCmd(cmd.Name, argument)
+}
+
+func localDiscover(m model, cmd slashCommand, argument string) (tea.Model, tea.Cmd) {
+	if m.busy {
+		m.addBlock(blockError, "Wait for the turn to finish before explicit discovery.")
 		m.syncViewport(true)
 		return m, nil
+	}
+	return m, m.toolVisibilityCmd(cmd.Name, argument)
+}
 
-	case "provider", "providers":
-		if !m.connected {
-			m.contextNote = t(m.loc, "note.notConnected")
-			return m, nil
-		}
-		if argument != "" {
-			if m.busy {
-				m.contextNote = t(m.loc, "note.betweenTurnsProvider")
-				return m, nil
-			}
-			m.controlPending = true
-			if argument == "environment" || argument == "env" {
-				return m, useEnvironmentProviderCmd(m.comp)
-			}
-			// /provider strip [on|off] — toggle the active provider's model
-			// prefix stripping for gateways that route on the canonical id.
-			if argument == "strip" || strings.HasPrefix(argument, "strip ") {
-				on := true
-				if parts := strings.Fields(argument); len(parts) > 1 {
-					on = parts[1] != "off"
-				}
-				nickname := m.providerStatus.Provider.Nickname
-				if nickname == "" {
-					nickname = "default"
-				}
-				return m, setProviderStripCmd(m.comp, nickname, on)
-			}
-			return m, switchProviderCmd(m.comp, argument)
-		}
-		m.openProviderSelector()
+func localProfile(m model, cmd slashCommand, argument string) (tea.Model, tea.Cmd) {
+	return m, m.toolVisibilityCmd(cmd.Name, argument)
+}
+
+func localModel(m model, cmd slashCommand, argument string) (tea.Model, tea.Cmd) {
+	if !m.connected {
+		m.contextNote = t(m.loc, "note.notConnected")
 		return m, nil
-
-	case "connect":
-		if !m.connected {
-			m.contextNote = t(m.loc, "note.notConnected")
-			return m, nil
-		}
-		if m.busy {
-			m.contextNote = t(m.loc, "note.betweenTurnsProvider")
-			return m, nil
-		}
-		m.openCatalogProviderSelector()
+	}
+	if m.busy {
+		m.contextNote = t(m.loc, "note.betweenTurnsModel")
 		return m, nil
+	}
+	if argument != "" {
+		previous := m.modelOverride
+		if argument == "default" {
+			m.modelOverride = ""
+		} else {
+			m.modelOverride = argument
+			m.runtime.Model = argument
+		}
+		m.controlPending = true
+		m.contextNote = t(m.loc, "note.savingModel")
+		return m, setConversationModelCmd(m.comp, m.session, m.modelOverride, previous)
+	}
+	m.openModelSelector()
+	if m.runtime.Catalog != "" && (m.modelsCatalog != m.runtime.Catalog || len(m.models) == 0) {
+		spinCmd := m.selector.list.StartSpinner()
+		return m, tea.Batch(spinCmd, loadModelsCmd(m.comp, m.runtime.Catalog))
+	}
+	return m, nil
+}
 
-	case "mcp":
-		if !m.connected {
-			m.contextNote = t(m.loc, "note.notConnected")
-			return m, nil
-		}
-		if m.busy {
-			m.contextNote = t(m.loc, "note.betweenTurnsProvider")
-			return m, nil
-		}
-		argument = strings.TrimSpace(argument)
-		if argument == "" {
-			m.openMcpSelector()
-			return m, mcpServersCmd(m.comp)
-		}
-		parts := strings.Fields(argument)
-		switch parts[0] {
-		case "add":
-			m.mcpForm = newMcpForm(m.width, m.loc)
-			m.mode = modeMcpForm
-			m.layout()
-			return m, nil
-		case "edit":
-			if len(parts) < 2 {
-				m.addBlock(blockError, t(m.loc, "mcp.nameRequired"))
-				m.syncViewport(true)
-				return m, nil
-			}
-			m.controlPending = true
-			return m, loadMcpEditCmd(m.comp, parts[1])
-		case "on", "off":
-			if len(parts) < 2 {
-				m.addBlock(blockError, t(m.loc, "mcp.nameRequired"))
-				m.syncViewport(true)
-				return m, nil
-			}
-			m.controlPending = true
-			return m, mcpToggleCmd(m.comp, parts[1], parts[0] == "on")
-		case "refresh":
-			if len(parts) < 2 {
-				m.addBlock(blockError, t(m.loc, "mcp.nameRequired"))
-				m.syncViewport(true)
-				return m, nil
-			}
-			m.controlPending = true
-			return m, mcpRefreshCmd(m.comp, parts[1])
-		case "search", "s":
-			query := strings.TrimSpace(strings.Join(parts[1:], " "))
-			if query == "" {
-				m.addBlock(blockError, t(m.loc, "mcp.searchQueryRequired"))
-				m.syncViewport(true)
-				return m, nil
-			}
-			m.openMcpSearchSelector(query)
-			return m, mcpSearchCmd(m.comp, query)
-		default:
-			m.addBlock(blockError, t(m.loc, "mcp.unknownSubcommand", parts[0]))
-			m.syncViewport(true)
-			return m, nil
-		}
+func localStatus(m model, cmd slashCommand, argument string) (tea.Model, tea.Cmd) {
+	m.addBlock(blockMeta, m.detailedRuntimeStatus())
+	m.syncViewport(true)
+	return m, nil
+}
 
-	case "model", "models":
-		if !m.connected {
-			m.contextNote = t(m.loc, "note.notConnected")
-			return m, nil
-		}
-		if m.busy {
-			m.contextNote = t(m.loc, "note.betweenTurnsModel")
-			return m, nil
-		}
-		if argument != "" {
-			previous := m.modelOverride
-			if argument == "default" {
-				m.modelOverride = ""
-			} else {
-				m.modelOverride = argument
-				m.runtime.Model = argument
-			}
-			m.controlPending = true
-			m.contextNote = t(m.loc, "note.savingModel")
-			return m, setConversationModelCmd(m.comp, m.session, m.modelOverride, previous)
-		}
-		m.openModelSelector()
-		if m.runtime.Catalog != "" && (m.modelsCatalog != m.runtime.Catalog || len(m.models) == 0) {
-			spinCmd := m.selector.list.StartSpinner()
-			return m, tea.Batch(spinCmd, loadModelsCmd(m.comp, m.runtime.Catalog))
-		}
-		return m, nil
+func localNew(m model, cmd slashCommand, argument string) (tea.Model, tea.Cmd) {
+	id := strings.TrimSpace(argument)
+	if id == "" {
+		id = newSessionID()
+	}
+	m, historyCmd := m.switchSessionWithHistory(id)
+	return m, tea.Batch(historyCmd, bootstrapBackendCmd(m.comp, id))
+}
 
-	case "status":
-		m.addBlock(blockMeta, m.detailedRuntimeStatus())
-		m.syncViewport(true)
-		return m, nil
-
-	case "new", "newsession":
-		id := strings.TrimSpace(argument)
-		if id == "" {
-			id = newSessionID()
-		}
+func localSession(m model, cmd slashCommand, argument string) (tea.Model, tea.Cmd) {
+	if id := strings.TrimSpace(argument); id != "" {
 		m, historyCmd := m.switchSessionWithHistory(id)
 		return m, tea.Batch(historyCmd, bootstrapBackendCmd(m.comp, id))
+	}
+	// Open the conversation browser; the store list is fetched in the
+	// background and the selector rebuilds when it arrives.
+	m.sessionListSelecting()
+	return m, sessionListCmd(m.comp)
+}
 
-	case "session", "sessions":
-		if argument != "" {
-			id := strings.TrimSpace(argument)
-			m, historyCmd := m.switchSessionWithHistory(id)
-			return m, tea.Batch(historyCmd, bootstrapBackendCmd(m.comp, id))
-		}
-		// Open the conversation browser; the store list is fetched in the
-		// background and the selector rebuilds when it arrives.
-		m.sessionListSelecting()
-		return m, sessionListCmd(m.comp)
+func localMouse(m model, cmd slashCommand, argument string) (tea.Model, tea.Cmd) {
+	argument = strings.TrimSpace(argument)
+	if argument == "" {
+		m.mouse = !m.mouse
+	} else {
+		m.mouse = argument == "on"
+	}
+	m.clearMouseSelection()
+	if m.mouse {
+		m.addBlock(blockMeta, t(m.loc, "chat.mouseOn"))
+	} else {
+		m.addBlock(blockMeta, t(m.loc, "chat.mouseOff"))
+	}
+	m.syncViewport(true)
+	return m, nil
+}
 
-	case "mouse":
-		if argument == "" {
-			m.mouse = !m.mouse
-		} else {
-			m.mouse = argument == "on"
-		}
-		m.clearMouseSelection()
-		if m.mouse {
-			m.addBlock(blockMeta, t(m.loc, "chat.mouseOn"))
-		} else {
-			m.addBlock(blockMeta, t(m.loc, "chat.mouseOff"))
-		}
-		m.syncViewport(true)
+func localTheme(m model, cmd slashCommand, argument string) (tea.Model, tea.Cmd) {
+	arg := strings.TrimSpace(argument)
+	if arg == "" {
+		m.openThemeSelector()
 		return m, nil
-
-	case "theme":
-		arg := strings.TrimSpace(argument)
-		if arg == "" {
-			m.openThemeSelector()
-			return m, nil
-		}
-		if !m.setTheme(arg) {
-			m.addBlock(blockError, t(m.loc, "theme.invalid", arg))
-			m.syncViewport(true)
-			return m, nil
-		}
-		persistTheme(arg)
-		m.addBlock(blockMeta, t(m.loc, "theme.switched", arg))
-		m.syncViewport(true)
-		return m, nil
-
-	case "help", "?":
-		lines := []string{
-			t(m.loc, "help.title"),
-			t(m.loc, "help.new"),
-			t(m.loc, "help.session"),
-			t(m.loc, "help.provider"),
-			t(m.loc, "help.model"),
-			t(m.loc, "help.connect"),
-			t(m.loc, "help.mcp"),
-			t(m.loc, "help.status"),
-			t(m.loc, "help.mouse"),
-			t(m.loc, "help.theme"),
-			t(m.loc, "help.locale"),
-			t(m.loc, "help.help"),
-			"",
-			t(m.loc, "help.keys"),
-		}
-		if plugins := m.slash.pluginCommands(); len(plugins) > 0 {
-			lines = append(lines, "", t(m.loc, "help.pluginTitle"))
-			for _, cmd := range plugins {
-				line := "  /" + cmd.Name
-				if cmd.Description != "" {
-					line += " — " + cmd.Description
-				}
-				lines = append(lines, line+" ("+cmd.Component+")")
-			}
-		}
-		m.addBlock(blockMeta, strings.Join(lines, "\n"))
-		m.syncViewport(true)
-		return m, nil
-
-	default:
-		// Registered commands (docs/WIRE.md): parse against the declared
-		// params and issue the target tool call. Built-ins shadow any
-		// same-named registration, so only non-builtins reach this.
-		if cmd, ok := m.slash.lookup(name); ok && !cmd.builtin {
-			return m.executeSlashCommand(cmd, argument)
-		}
-		m.addBlock(blockError, t(m.loc, "chat.unknownCommand", name)+suggestSlash(m.slash, name))
+	}
+	if !m.setTheme(arg) {
+		m.addBlock(blockError, t(m.loc, "theme.invalid", arg))
 		m.syncViewport(true)
 		return m, nil
 	}
+	persistTheme(arg)
+	m.addBlock(blockMeta, t(m.loc, "theme.switched", arg))
+	m.syncViewport(true)
+	return m, nil
+}
+
+func localLocale(m model, cmd slashCommand, argument string) (tea.Model, tea.Cmd) {
+	arg := strings.TrimSpace(argument)
+	if arg == "" {
+		arg = string(m.loc)
+	}
+	loc, ok := validLocale(arg)
+	if !ok {
+		m.addBlock(blockError, t(m.loc, "locale.invalid", arg))
+		m.syncViewport(true)
+		return m, nil
+	}
+	m.loc = loc
+	m.input.Placeholder = t(loc, "input.placeholder")
+	persistLocale(loc)
+	m.addBlock(blockMeta, t(m.loc, "locale.switched", arg))
+	m.syncViewport(true)
+	return m, nil
+}
+
+// localHelp renders the command summary: the registry listing (one line per
+// canonical built-in) plus the registered plugin commands.
+func localHelp(m model, cmd slashCommand, argument string) (tea.Model, tea.Cmd) {
+	lines := []string{t(m.loc, "help.title")}
+	for _, builtin := range m.slash.helpCommands() {
+		lines = append(lines, m.helpLine(builtin))
+	}
+	lines = append(lines, "", t(m.loc, "help.keys"))
+	if plugins := m.slash.pluginCommands(); len(plugins) > 0 {
+		lines = append(lines, "", t(m.loc, "help.pluginTitle"))
+		for _, cmd := range plugins {
+			line := "  /" + cmd.Name
+			if cmd.Description != "" {
+				line += " — " + cmd.Description
+			}
+			lines = append(lines, line+" ("+cmd.Component+")")
+		}
+	}
+	m.addBlock(blockMeta, strings.Join(lines, "\n"))
+	m.syncViewport(true)
+	return m, nil
+}
+
+func localProvider(m model, cmd slashCommand, argument string) (tea.Model, tea.Cmd) {
+	if !m.connected {
+		m.contextNote = t(m.loc, "note.notConnected")
+		return m, nil
+	}
+	argument = strings.TrimSpace(argument)
+	if argument == "" {
+		m.openProviderSelector()
+		return m, nil
+	}
+	if m.busy {
+		m.contextNote = t(m.loc, "note.betweenTurnsProvider")
+		return m, nil
+	}
+	if first, rest := splitCommand(argument); first != "" {
+		if sub, ok := cmd.localSubcommand(first); ok {
+			return sub.run(m, cmd, rest)
+		}
+	}
+	m.controlPending = true
+	return m, switchProviderCmd(m.comp, argument)
+}
+
+// providerEnvironment selects the environment (NIF_OPENAI_*) provider.
+func providerEnvironment(m model, cmd slashCommand, argument string) (tea.Model, tea.Cmd) {
+	m.controlPending = true
+	return m, useEnvironmentProviderCmd(m.comp)
+}
+
+// providerStrip toggles model-id prefix stripping for the active provider
+// (gateways that route on the canonical id).
+func providerStrip(m model, cmd slashCommand, argument string) (tea.Model, tea.Cmd) {
+	on := true
+	if first, _ := splitCommand(argument); first != "" {
+		on = first != "off"
+	}
+	nickname := m.providerStatus.Provider.Nickname
+	if nickname == "" {
+		nickname = "default"
+	}
+	// The provider_action completion clears the flag (main.go).
+	m.controlPending = true
+	return m, setProviderStripCmd(m.comp, nickname, on)
+}
+
+func localConnect(m model, cmd slashCommand, argument string) (tea.Model, tea.Cmd) {
+	if !m.connected {
+		m.contextNote = t(m.loc, "note.notConnected")
+		return m, nil
+	}
+	if m.busy {
+		m.contextNote = t(m.loc, "note.betweenTurnsProvider")
+		return m, nil
+	}
+	m.openCatalogProviderSelector()
+	return m, nil
+}
+
+func localMcp(m model, cmd slashCommand, argument string) (tea.Model, tea.Cmd) {
+	if !m.connected {
+		m.contextNote = t(m.loc, "note.notConnected")
+		return m, nil
+	}
+	if m.busy {
+		m.contextNote = t(m.loc, "note.betweenTurnsProvider")
+		return m, nil
+	}
+	argument = strings.TrimSpace(argument)
+	if argument == "" {
+		m.openMcpSelector()
+		return m, mcpServersCmd(m.comp)
+	}
+	first, rest := splitCommand(argument)
+	sub, ok := cmd.localSubcommand(first)
+	if !ok {
+		m.addBlock(blockError, t(m.loc, "mcp.unknownSubcommand", first))
+		m.syncViewport(true)
+		return m, nil
+	}
+	return sub.run(m, cmd, rest)
+}
+
+func mcpAdd(m model, cmd slashCommand, argument string) (tea.Model, tea.Cmd) {
+	m.mcpForm = newMcpForm(m.width, m.loc)
+	m.mode = modeMcpForm
+	m.layout()
+	return m, nil
+}
+
+func mcpEdit(m model, cmd slashCommand, argument string) (tea.Model, tea.Cmd) {
+	name, _ := splitCommand(argument)
+	if name == "" {
+		m.addBlock(blockError, t(m.loc, "mcp.nameRequired"))
+		m.syncViewport(true)
+		return m, nil
+	}
+	m.controlPending = true
+	return m, loadMcpEditCmd(m.comp, name)
+}
+
+func mcpOn(m model, cmd slashCommand, argument string) (tea.Model, tea.Cmd) {
+	return mcpToggle(m, argument, true)
+}
+
+func mcpOff(m model, cmd slashCommand, argument string) (tea.Model, tea.Cmd) {
+	return mcpToggle(m, argument, false)
+}
+
+func mcpToggle(m model, argument string, on bool) (tea.Model, tea.Cmd) {
+	name, _ := splitCommand(argument)
+	if name == "" {
+		m.addBlock(blockError, t(m.loc, "mcp.nameRequired"))
+		m.syncViewport(true)
+		return m, nil
+	}
+	m.controlPending = true
+	return m, mcpToggleCmd(m.comp, name, on)
+}
+
+func mcpRefresh(m model, cmd slashCommand, argument string) (tea.Model, tea.Cmd) {
+	name, _ := splitCommand(argument)
+	if name == "" {
+		m.addBlock(blockError, t(m.loc, "mcp.nameRequired"))
+		m.syncViewport(true)
+		return m, nil
+	}
+	m.controlPending = true
+	return m, mcpRefreshCmd(m.comp, name)
+}
+
+func mcpSearch(m model, cmd slashCommand, argument string) (tea.Model, tea.Cmd) {
+	query := strings.TrimSpace(argument)
+	if query == "" {
+		m.addBlock(blockError, t(m.loc, "mcp.searchQueryRequired"))
+		m.syncViewport(true)
+		return m, nil
+	}
+	m.openMcpSearchSelector(query)
+	return m, mcpSearchCmd(m.comp, query)
+}
+
+// helpLine renders one built-in command's /help entry: the localized
+// catalog line ("help.<name>") when the locale carries it, else a line
+// derived from the registry entry — a command stays visible in /help even
+// if its translation is missing. Plugin commands are listed separately.
+func (m model) helpLine(cmd slashCommand) string {
+	if line := t(m.loc, "help."+cmd.Name); line != "" {
+		return line
+	}
+	line := "  /" + cmd.Name + cmd.usage()
+	if cmd.Description != "" {
+		line += "  — " + cmd.Description
+	}
+	return line
 }
 
 func (m *model) openProviderSelector() {

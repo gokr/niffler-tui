@@ -102,7 +102,15 @@ Niffler 的 builder 不使用這個 `go.mod`；它建立隔離的模組，replac
   覆寫（無需推理呼叫）
 - `/connect` —— 遮罩的供應商連線表單，使用 models.dev 範本或自訂
   OpenAI 相容端點
+- `/mcp [add|edit|on|off|refresh|search]` —— 管理外部 MCP 伺服器；不帶參數的
+  `/mcp` 開啟伺服器瀏覽器
 - `/status` —— 詳細的有效供應商/模型/上下文來源與用量
+- `/components [all|direct|discovered|undiscovered]` —— 本對話實際可呼叫的工具，
+  按元件列出，並顯示每個工具的曝光狀態
+- `/discover <元件>|tool=名稱` —— 將某個元件的工具（或指定的單一工具）曝光給
+  本對話，讓模型可以直接呼叫它們
+- `/profile [名稱|default]` —— 套用於新對話的工具設定；`default` 清除它，
+  不帶參數的 `/profile` 列出可用設定與目前選擇
 - `/new [id]` —— 開始一個新對話
 - `/session` —— 對話瀏覽器；切換或復原對話，或開始新對話
 - `/locale [en|zh|zh-TW]` —— 切換介面語言（持久化到使用者狀態目錄）
@@ -113,7 +121,8 @@ Niffler 的 builder 不使用這個 `go.mod`；它建立隔離的模組，replac
   `catppuccin-mocha`。`NIF_TUI_THEME` 可覆蓋啟動預設值
 - `/mouse [on|off]` —— 滑鼠追蹤（預設開：滾輪、點擊和直接拖曳選取可
   同時使用；關閉後使用終端機原生選取，但應用收不到滾輪）
-- `/help` —— 指令摘要，含已註冊的外掛指令
+- `/help` —— 指令摘要，由已註冊的指令表產生，因此始終列出每個內建指令
+  （以及每個外掛指令）
 
 Tab 補全適用於指令名，以及指令宣告的參數值（內聯候選，或經宣告的來源
 工具惰性取得）。未知指令會提示相近的指令名。

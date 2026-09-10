@@ -280,3 +280,245 @@ func TestSuggestSlash(t *testing.T) {
 type errTestBoom struct{}
 
 func (errTestBoom) Error() string { return "boom" }
+
+// helpText runs /help and returns the rendered block.
+func helpText(t *testing.T, m model) string {
+	t.Helper()
+	updated, _ := m.executeLocalCommand("/help")
+	blocks := updated.(model).blocks
+	if len(blocks) == 0 {
+		t.Fatal("/help produced no block")
+	}
+	return blocks[len(blocks)-1].text
+}
+
+// TestHelpListsEveryBuiltin is the regression for /components, /discover and
+// /profile missing from /help: the listing is generated from the registry,
+// so every registered built-in that is not an explicit alias must appear.
+func TestHelpListsEveryBuiltin(tt *testing.T) {
+	m := newTestModel()
+	m.mergeSlashRegistry(nil)
+	text := helpText(tt, m)
+
+	listed := 0
+	for _, cmd := range builtinSlashCommands() {
+		if cmd.aliasOf != "" {
+			if strings.Contains(text, "/"+cmd.Name+" ") {
+				tt.Errorf("alias /%s should not be listed in /help", cmd.Name)
+			}
+			continue
+		}
+		listed++
+		if !strings.Contains(text, "/"+cmd.Name) {
+			tt.Errorf("/help is missing the built-in /%s\n%s", cmd.Name, text)
+		}
+	}
+	if got := len(m.slash.helpCommands()); got != listed {
+		tt.Errorf("helpCommands() = %d commands, want %d (registry order vs /help drift)", got, listed)
+	}
+	// Every listed built-in carries a localized line; the registry-derived
+	// fallback exists, but the catalogs are expected to cover them all.
+	for _, cmd := range m.slash.helpCommands() {
+		if line := t(LocaleEN, "help."+cmd.Name); line == "" {
+			tt.Errorf("catalog is missing help.%s", cmd.Name)
+		}
+	}
+	// /components, /discover and /profile are the ones that disappeared.
+	for _, name := range []string{"/components", "/discover", "/profile"} {
+		if !strings.Contains(text, name) {
+			tt.Errorf("/help is missing %s\n%s", name, text)
+		}
+	}
+}
+
+// TestEveryBuiltinIsHandled covers the other direction of the same drift:
+// a name in the registry that executeLocalCommand does not handle would
+// complete and be listed, then fall through to "unknown local command".
+func TestEveryBuiltinIsHandled(t *testing.T) {
+	for _, cmd := range builtinSlashCommands() {
+		if cmd.run == nil {
+			t.Errorf("/%s is registered without a handler", cmd.Name)
+			continue
+		}
+		m := newTestModel()
+		m.mergeSlashRegistry(nil)
+		updated, _ := m.executeLocalCommand("/" + cmd.Name)
+		for _, block := range updated.(model).blocks {
+			if strings.Contains(block.text, "unknown local command") {
+				t.Errorf("/%s is in the registry but has no handler: %s", cmd.Name, block.text)
+			}
+		}
+	}
+}
+
+// TestSubcommandsAreDeclaredAndHandled covers the second level of the same
+// invariant: a subcommand the table declares is dispatched from the table,
+// and the entry's `subcommand` enum is derived from it rather than written
+// out again. /provider strip and /mcp search are the two that had drifted.
+func TestSubcommandsAreDeclaredAndHandled(t *testing.T) {
+	for _, cmd := range builtinSlashCommands() {
+		if len(cmd.subcommands) == 0 {
+			continue
+		}
+		for _, sub := range cmd.subcommands {
+			if sub.run == nil {
+				t.Errorf("/%s %s is declared without a handler", cmd.Name, sub.name)
+			}
+			if _, ok := cmd.localSubcommand(sub.name); !ok {
+				t.Errorf("/%s: %s is not resolvable", cmd.Name, sub.name)
+			}
+			for _, alias := range sub.aliases {
+				if _, ok := cmd.localSubcommand(alias); !ok {
+					t.Errorf("/%s: alias %s does not resolve", cmd.Name, alias)
+				}
+			}
+		}
+		p, ok := cmd.paramByName("subcommand")
+		if !ok {
+			continue
+		}
+		if got, want := strings.Join(p.Values, ","), strings.Join(subcommandNames(cmd.subcommands), ","); got != want {
+			t.Errorf("/%s subcommand enum = [%s], want [%s] (derived from the table)", cmd.Name, got, want)
+		}
+	}
+}
+
+// TestProviderStripIsReachable pins the subcommand that existed only as a
+// string comparison deep in the old switch: it must resolve through the
+// registry and dispatch without an "unknown argument" error.
+func TestProviderStripIsReachable(t *testing.T) {
+	cmd, ok := builtinCommand("provider")
+	if !ok {
+		t.Fatal("/provider is not registered")
+	}
+	sub, ok := cmd.localSubcommand("strip")
+	if !ok {
+		t.Fatal("/provider strip is not declared")
+	}
+	if sub.run == nil {
+		t.Fatal("/provider strip has no handler")
+	}
+	m := newTestModel()
+	m.connected = true
+	updated, call := m.executeLocalCommand("/provider strip off")
+	if call == nil {
+		t.Fatal("/provider strip off produced no command")
+	}
+	if blocks := updated.(model).blocks; len(blocks) > 0 {
+		t.Fatalf("/provider strip off added a block: %+v", blocks)
+	}
+	if !updated.(model).controlPending {
+		t.Fatal("/provider strip off did not mark the control plane pending")
+	}
+}
+
+// TestMcpSearchIsDeclaredAndDispatched: /mcp search shipped without appearing
+// in the declared subcommand set (it was a switch-only extra).
+func TestMcpSearchIsDeclaredAndDispatched(t *testing.T) {
+	cmd, ok := builtinCommand("mcp")
+	if !ok {
+		t.Fatal("/mcp is not registered")
+	}
+	for _, name := range []string{"search", "s"} {
+		if _, ok := cmd.localSubcommand(name); !ok {
+			t.Errorf("/mcp %s is not declared", name)
+		}
+	}
+	p, ok := cmd.paramByName("subcommand")
+	if !ok || !containsStr(p.Values, "search") {
+		t.Errorf("/mcp subcommand enum does not offer search: %+v", p.Values)
+	}
+	m := newTestModel()
+	m.connected = true
+	updated, _ := m.executeLocalCommand("/mcp search weather")
+	if got := updated.(model).mode; got != modeMcpSearch {
+		t.Fatalf("/mcp search mode = %v, want the search selector", got)
+	}
+	updated, _ = m.executeLocalCommand("/mcp s weather")
+	if got := updated.(model).mode; got != modeMcpSearch {
+		t.Fatalf("/mcp s (alias) mode = %v, want the search selector", got)
+	}
+}
+
+// TestPluginCommandDispatch: local dispatch falls through to a registered
+// plugin command, while a built-in still wins over a same-named registration.
+func TestPluginCommandDispatch(t *testing.T) {
+	m := newTestModel()
+	m.mergeSlashRegistry([]slashCommand{deployTestCommand()})
+	updated, call := m.executeLocalCommand("/deploy staging")
+	if call == nil {
+		t.Fatal("/deploy issued no tool call")
+	}
+	blocks := updated.(model).blocks
+	if len(blocks) != 1 || blocks[0].kind != blockMeta || !strings.Contains(blocks[0].text, "→ /deploy staging") {
+		t.Fatalf("blocks = %+v, want the exec meta line", blocks)
+	}
+
+	m.mergeSlashRegistry([]slashCommand{{Name: "help", Description: "evil", Component: "evil", Tool: "evil_help"}})
+	updated, _ = m.executeLocalCommand("/help")
+	if text := updated.(model).blocks[0].text; !strings.Contains(text, "local commands:") {
+		t.Fatalf("/help did not run the built-in: %q", text)
+	}
+}
+
+// TestAliasDispatch: every alias names its canonical command and carries the
+// same handler, so dispatch and /help agree on what is an alias of what.
+func TestAliasDispatch(t *testing.T) {
+	aliases := map[string]string{
+		"?": "help", "newsession": "new", "providers": "provider",
+		"models": "model", "sessions": "session",
+	}
+	for alias, canonical := range aliases {
+		entry, ok := builtinCommand(alias)
+		if !ok {
+			t.Errorf("alias /%s is not registered", alias)
+			continue
+		}
+		if entry.aliasOf != canonical {
+			t.Errorf("alias /%s: aliasOf = %q, want %q", alias, entry.aliasOf, canonical)
+		}
+		if entry.run == nil {
+			t.Errorf("alias /%s has no handler", alias)
+		}
+	}
+	seen := map[string]bool{}
+	for _, cmd := range builtinSlashCommands() {
+		if cmd.aliasOf != "" {
+			seen[cmd.Name] = true
+		}
+	}
+	if len(seen) != len(aliases) {
+		t.Errorf("registry has %d aliases, test knows %d: %v", len(seen), len(aliases), seen)
+	}
+}
+
+// TestHelpLineFallback covers the derived line for a command whose locale
+// entry is absent: /help must still name it rather than print a blank.
+func TestHelpLineFallback(t *testing.T) {
+	m := newTestModel()
+	line := m.helpLine(slashCommand{
+		Name: "synthetic", Description: "do a thing", builtin: true,
+		Params: []slashParam{{Name: "mode", Values: []string{"fast", "slow"}}, {Name: "force", Kind: "bool"}},
+	})
+	want := "  /synthetic [fast|slow] [force]  — do a thing"
+	if line != want {
+		t.Fatalf("helpLine fallback = %q, want %q", line, want)
+	}
+}
+
+// TestLocaleCommandIsRegistered covers the other half of the same drift:
+// /locale was implemented but absent from the registry, so Tab never
+// completed it and /help listed it by hand.
+func TestLocaleCommandIsRegistered(t *testing.T) {
+	m := newTestModel()
+	m.mergeSlashRegistry(nil)
+	cmd, ok := m.slash.lookup("locale")
+	if !ok || !cmd.builtin {
+		t.Fatalf("/locale not registered: %+v", cmd)
+	}
+	m.input.SetValue("/loc")
+	updated, _ := m.handleSlashTab(false)
+	if got := updated.input.Value(); got != "/locale" {
+		t.Fatalf("tab completion for /loc = %q, want /locale", got)
+	}
+}

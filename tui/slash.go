@@ -45,12 +45,29 @@ type slashParam struct {
 }
 
 type slashCommand struct {
-	Name        string       `json:"name"`
-	Description string       `json:"description"`
-	Component   string       `json:"component"`
-	Tool        string       `json:"tool"`
-	Params      []slashParam `json:"params"`
-	builtin     bool         // UI-local command, not from the registry
+	Name        string           `json:"name"`
+	Description string           `json:"description"`
+	Component   string           `json:"component"`
+	Tool        string           `json:"tool"`
+	Params      []slashParam     `json:"params"`
+	builtin     bool             // UI-local command, not from the registry
+	aliasOf     string           // built-in synonym of another command — never listed in /help
+	run         localCommandFunc // UI-local handler; nil for plugin-registered commands
+	subcommands []slashSubcommand
+}
+
+// localCommandFunc handles a UI-local command. cmd is the invoking registry
+// entry (aliases included) and argument is the command's text after its name
+// — or after the subcommand name when a subcommand dispatched.
+type localCommandFunc func(m model, cmd slashCommand, argument string) (tea.Model, tea.Cmd)
+
+// slashSubcommand is a declared second-level command (/mcp add, /provider
+// strip). The invoking entry's table is the only place it is written down:
+// the declared `subcommand` enum, dispatch and validation all read it.
+type slashSubcommand struct {
+	name    string
+	aliases []string
+	run     localCommandFunc
 }
 
 // slashRegistry is the merged view of built-in and registered commands.
@@ -103,53 +120,158 @@ func (r slashRegistry) pluginCommands() []slashCommand {
 // tool names resolved server-side via core.invoke.
 func builtinSlashCommands() []slashCommand {
 	return []slashCommand{
-		{Name: "provider", Description: "choose the global provider", builtin: true, Params: []slashParam{
-			{Name: "nickname", Kind: "string", Description: "provider nickname (or 'environment')",
+		{Name: "new", Description: "start a new conversation", builtin: true, run: localNew, Params: []slashParam{
+			{Name: "id", Kind: "string", Description: "optional conversation id"},
+		}},
+		{Name: "newsession", Description: "start a new conversation", builtin: true, aliasOf: "new", run: localNew, Params: []slashParam{
+			{Name: "id", Kind: "string", Description: "optional conversation id"},
+		}},
+		{Name: "session", Description: "switch conversation", builtin: true, run: localSession, Params: []slashParam{
+			{Name: "id", Kind: "string", Description: "conversation id",
+				Source: &slashSource{Tool: "store.list", Args: map[string]any{"kind": "conversation"}, Field: "id"}},
+		}},
+		{Name: "sessions", Description: "switch conversation", builtin: true, aliasOf: "session", run: localSession, Params: []slashParam{
+			{Name: "id", Kind: "string", Description: "conversation id",
+				Source: &slashSource{Tool: "store.list", Args: map[string]any{"kind": "conversation"}, Field: "id"}},
+		}},
+		// The first argument is a nickname (completed from provider_list) or a
+		// declared subcommand; only the nickname feeds completion, so Tab keeps
+		// offering providers while /help and validation cover `strip`.
+		{Name: "provider", Description: "choose the global provider", builtin: true, run: localProvider, subcommands: providerSubcommands, Params: []slashParam{
+			{Name: "nickname", Kind: "string", Description: "provider nickname, environment, or strip [on|off]",
 				Source: &slashSource{Tool: "provider.provider_list", Args: map[string]any{}, Field: "nickname"}},
 		}},
-		{Name: "providers", Description: "choose the global provider", builtin: true, Params: []slashParam{
+		{Name: "providers", Description: "choose the global provider", builtin: true, aliasOf: "provider", run: localProvider, subcommands: providerSubcommands, Params: []slashParam{
 			{Name: "nickname", Kind: "string",
 				Source: &slashSource{Tool: "provider.provider_list", Args: map[string]any{}, Field: "nickname"}},
 		}},
-		{Name: "model", Description: "choose this conversation's model", builtin: true, Params: []slashParam{
+		{Name: "model", Description: "choose this conversation's model", builtin: true, run: localModel, Params: []slashParam{
 			{Name: "id", Kind: "string", Description: "model id or 'default'"},
 		}},
-		{Name: "models", Description: "choose this conversation's model", builtin: true, Params: []slashParam{
+		{Name: "models", Description: "choose this conversation's model", builtin: true, aliasOf: "model", run: localModel, Params: []slashParam{
 			{Name: "id", Kind: "string", Description: "model id or 'default'"},
 		}},
-		{Name: "connect", Description: "store a provider connection", builtin: true},
-		{Name: "mcp", Description: "manage external MCP servers", builtin: true, Params: []slashParam{
-			{Name: "subcommand", Kind: "enum", Values: []string{"add", "edit", "on", "off", "refresh"}},
+		{Name: "connect", Description: "store a provider connection", builtin: true, run: localConnect},
+		{Name: "mcp", Description: "manage external MCP servers", builtin: true, run: localMcp, subcommands: mcpSubcommands, Params: []slashParam{
+			{Name: "subcommand", Kind: "enum", Values: subcommandNames(mcpSubcommands)},
 			{Name: "name", Kind: "string", Description: "server name",
 				Source: &slashSource{Tool: "mcp.mcp_servers", Args: map[string]any{}, Field: "name"}},
 		}},
-		{Name: "status", Description: "show provider/model/context details", builtin: true},
-		{Name: "components", Description: "running components: all/direct/discovered/undiscovered", builtin: true},
-		{Name: "discover", Description: "append component schemas to this conversation (or tool=NAME)", builtin: true},
-		{Name: "profile", Description: "choose tool profile for new conversations; default clears", builtin: true},
-		{Name: "new", Description: "start a new conversation", builtin: true, Params: []slashParam{
-			{Name: "id", Kind: "string", Description: "optional conversation id"},
+		{Name: "status", Description: "show provider/model/context details", builtin: true, run: localStatus},
+		{Name: "components", Description: "show what this conversation can call", builtin: true, run: localComponents, Params: []slashParam{
+			{Name: "filter", Kind: "enum", Values: []string{"all", "direct", "discovered", "undiscovered"}},
 		}},
-		{Name: "newsession", Description: "start a new conversation", builtin: true, Params: []slashParam{
-			{Name: "id", Kind: "string", Description: "optional conversation id"},
+		{Name: "discover", Description: "append component schemas to this conversation", builtin: true, run: localDiscover, Params: []slashParam{
+			{Name: "target", Kind: "string", Description: "component name, or tool=NAME"},
 		}},
-		{Name: "session", Description: "switch conversation", builtin: true, Params: []slashParam{
-			{Name: "id", Kind: "string", Description: "conversation id",
-				Source: &slashSource{Tool: "store.list", Args: map[string]any{"kind": "conversation"}, Field: "id"}},
-		}},
-		{Name: "sessions", Description: "switch conversation", builtin: true, Params: []slashParam{
-			{Name: "id", Kind: "string", Description: "conversation id",
-				Source: &slashSource{Tool: "store.list", Args: map[string]any{"kind": "conversation"}, Field: "id"}},
-		}},
-		{Name: "mouse", Description: "wheel scrolling and drag selection", builtin: true, Params: []slashParam{
+		{Name: "profile", Description: "choose tool profile for new conversations; default clears", builtin: true, run: localProfile},
+		{Name: "mouse", Description: "wheel scrolling and drag selection", builtin: true, run: localMouse, Params: []slashParam{
 			{Name: "state", Kind: "enum", Values: []string{"on", "off"}},
 		}},
-		{Name: "theme", Description: "choose the UI color theme", builtin: true, Params: []slashParam{
+		{Name: "theme", Description: "choose the UI color theme", builtin: true, run: localTheme, Params: []slashParam{
 			{Name: "name", Kind: "string", Description: "theme name (empty opens the picker)", Values: themeNames},
 		}},
-		{Name: "help", Description: "show this help", builtin: true},
-		{Name: "?", Description: "show this help", builtin: true},
+		{Name: "locale", Description: "switch the UI language", builtin: true, run: localLocale, Params: []slashParam{
+			{Name: "lang", Kind: "enum", Values: []string{"en", "zh", "zh-TW"}},
+		}},
+		{Name: "help", Description: "show this help", builtin: true, run: localHelp},
+		{Name: "?", Description: "show this help", builtin: true, aliasOf: "help", run: localHelp},
 	}
+}
+
+// mcpSubcommands are /mcp's declared subcommands. The entry references this
+// table for its `subcommand` enum, for dispatch, and for Tab completion, so
+// the accepted set cannot drift from the documented one.
+var mcpSubcommands = []slashSubcommand{
+	{name: "add", run: mcpAdd},
+	{name: "edit", run: mcpEdit},
+	{name: "on", run: mcpOn},
+	{name: "off", run: mcpOff},
+	{name: "refresh", run: mcpRefresh},
+	{name: "search", aliases: []string{"s"}, run: mcpSearch},
+}
+
+// providerSubcommands are /provider's: `environment` (and its `env` alias)
+// picks the environment fallback, `strip` toggles model-id prefix stripping.
+var providerSubcommands = []slashSubcommand{
+	{name: "environment", aliases: []string{"env"}, run: providerEnvironment},
+	{name: "strip", run: providerStrip},
+}
+
+// builtinCommand looks up a built-in by name, aliases included. Dispatch
+// reads the same registry that Tab completion and /help do, so a local
+// command is declared exactly once.
+func builtinCommand(name string) (slashCommand, bool) {
+	for _, cmd := range builtinSlashCommands() {
+		if cmd.Name == name {
+			return cmd, true
+		}
+	}
+	return slashCommand{}, false
+}
+
+// helpCommands returns the built-ins /help lists: registry order (declaration
+// order is display order) with aliases skipped — the listing names the
+// canonical command only.
+func (r slashRegistry) helpCommands() []slashCommand {
+	var commands []slashCommand
+	for _, name := range r.order {
+		if cmd := r.commands[name]; cmd.builtin && cmd.aliasOf == "" {
+			commands = append(commands, cmd)
+		}
+	}
+	return commands
+}
+
+// subcommandNames are the declared subcommand names (aliases excluded), for a
+// command's `subcommand` enum.
+func subcommandNames(subs []slashSubcommand) []string {
+	names := make([]string, 0, len(subs))
+	for _, sub := range subs {
+		names = append(names, sub.name)
+	}
+	return names
+}
+
+// localSubcommand resolves a subcommand name or one of its aliases.
+func (c slashCommand) localSubcommand(name string) (slashSubcommand, bool) {
+	for _, sub := range c.subcommands {
+		if sub.name == name || containsStr(sub.aliases, name) {
+			return sub, true
+		}
+	}
+	return slashSubcommand{}, false
+}
+
+// paramByName resolves a declared parameter of the command.
+func (c slashCommand) paramByName(name string) (slashParam, bool) {
+	for _, p := range c.Params {
+		if p.Name == name {
+			return p, true
+		}
+	}
+	return slashParam{}, false
+}
+
+// usage renders a command's declared arguments, for /help lines that have
+// no catalog entry: inline-value params as [a|b], bools as [flag], free
+// text as <name>.
+func (c slashCommand) usage() string {
+	var parts []string
+	for _, p := range c.Params {
+		switch {
+		case p.Kind == "bool":
+			parts = append(parts, "["+p.Name+"]")
+		case len(p.Values) > 0:
+			parts = append(parts, "["+strings.Join(p.Values, "|")+"]")
+		default:
+			parts = append(parts, "<"+p.Name+">")
+		}
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return " " + strings.Join(parts, " ")
 }
 
 // ---- loading ---------------------------------------------------------------

@@ -407,8 +407,10 @@ func newTestModel() model {
 		histIdx:      -1,
 		searchIdx:    -1,
 		// Mirror the production default (newModel): tracking on so the wheel
-		// scrolls the transcript and click expands tool cards.
+		// scrolls the transcript and click expands tool cards, and the built-in
+		// slash registry populated (local command dispatch reads it).
 		mouse: true,
+		slash: newSlashRegistry(),
 	}
 }
 

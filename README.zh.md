@@ -98,7 +98,15 @@ Niffler 的 builder 不使用这个 `go.mod`；它创建隔离的模块，replac
   覆盖（无需推理调用）
 - `/connect` —— 掩码的提供商连接表单，使用 models.dev 模板或自定义
   OpenAI 兼容端点
+- `/mcp [add|edit|on|off|refresh|search]` —— 管理外部 MCP 服务器；不带参数的
+  `/mcp` 打开服务器浏览器
 - `/status` —— 详细的有效提供商/模型/上下文来源与用量
+- `/components [all|direct|discovered|undiscovered]` —— 本会话实际可调用的工具，
+  按组件列出，并显示每个工具的暴露状态
+- `/discover <组件>|tool=名称` —— 将某个组件的工具（或指定的单个工具）暴露给
+  本会话，使模型可以直接调用它们
+- `/profile [名称|default]` —— 应用于新会话的工具配置；`default` 清除它，
+  不带参数的 `/profile` 列出可用配置与当前选择
 - `/new [id]` —— 开始一个新会话
 - `/session` —— 会话浏览器；切换或恢复会话，或开始新会话
 - `/locale [en|zh|zh-TW]` —— 切换界面语言（持久化）
@@ -109,7 +117,8 @@ Niffler 的 builder 不使用这个 `go.mod`；它创建隔离的模块，replac
   `catppuccin-mocha`。`NIF_TUI_THEME` 可覆盖启动默认值
 - `/mouse [on|off]` —— 鼠标追踪（默认开：滚轮、点击和直接拖拽选择可
   同时使用；关闭后使用终端原生选择，但应用收不到滚轮）
-- `/help` —— 命令摘要，含已注册的插件命令
+- `/help` —— 命令摘要，由已注册的命令表生成，因此始终列出每个内置命令
+  （以及每个插件命令）
 
 Tab 补全适用于命令名，以及命令声明的参数值（内联候选，或经声明的来源
 工具惰性获取）。未知命令会提示相近的命令名。

@@ -112,7 +112,16 @@ Local commands are handled by the TUI and are never sent to the model:
   immediately as this conversation's override (without an inference call)
 - `/connect` — masked provider connection form using models.dev templates or a
   custom OpenAI-compatible endpoint
+- `/mcp [add|edit|on|off|refresh|search]` — manage external MCP servers; a bare
+  `/mcp` opens the server browser
 - `/status` — detailed effective provider/model/context provenance and usage
+- `/components [all|direct|discovered|undiscovered]` — what this conversation
+  can actually call, per component, with each tool's exposure state
+- `/discover <component>|tool=NAME` — expose a component's tools (or one named
+  tool) to this conversation, so the model can call them directly
+- `/profile [name|default]` — tool profile applied to new conversations;
+  `default` clears it, a bare `/profile` lists the available profiles and the
+  current choice
 - `/new [id]` — start a fresh conversation
 - `/session` — conversation browser; switch or resume sessions, or start a
   new one
@@ -127,7 +136,8 @@ Local commands are handled by the TUI and are never sent to the model:
 - `/mouse [on|off]` — mouse tracking (default on: wheel, click, and
   plain-drag selection work together; off uses terminal-native selection but
   provides no app wheel)
-- `/help` — command summary, including registered plugin commands
+- `/help` — command summary, generated from the registered command table so
+  it always lists every built-in (and every plugin command)
 
 Tab completion works for command names and, where a command declares it, for
 argument values (inline candidates, or values fetched lazily from the
