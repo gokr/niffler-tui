@@ -16,6 +16,8 @@ import (
 	"charm.land/lipgloss/v2"
 
 	tea "charm.land/bubbletea/v2"
+
+	"github.com/charmbracelet/x/ansi"
 )
 
 const (
@@ -180,7 +182,55 @@ func (m *model) cycleToolVisibility() {
 // run reads as one block; cardStyle is applied only when the theme sets a
 // background (see applyTheme), so background-less themes are unchanged.
 func (m model) renderToolRun(run *toolRun, detail toolDetail) string {
-	return m.cardStyle().Render(m.renderToolRunLines(run, detail))
+	style := m.cardStyle()
+	body := m.renderToolRunLines(run, detail)
+	bg := cardPrefix(style)
+	if bg == "" {
+		return body
+	}
+	// Each fragment inside a card line (glyph, call head, body line) is
+	// styled independently and so ends with a full SGR reset; lipgloss does
+	// not re-emit the background after such a reset, which would leave the
+	// rest of the line unshaded. Re-applying the background after every
+	// reset keeps the card unbroken to the end of the command text — not
+	// just the trailing pad.
+	lines := strings.Split(body, "\n")
+	width := 0
+	for i, line := range lines {
+		line = strings.ReplaceAll(line, "\x1b[m", "\x1b[m"+bg)
+		lines[i] = line
+		if w := ansi.StringWidth(line); w > width {
+			width = w
+		}
+	}
+	// Shade the full card width: lipgloss pads a multiline block to its
+	// widest line, so reproduce that here (per line, after the background
+	// repaint) rather than rendering each line on its own, which has no
+	// width to pad to.
+	for i, line := range lines {
+		if pad := width - ansi.StringWidth(line); pad > 0 {
+			line += strings.Repeat(" ", pad)
+		}
+		lines[i] = style.Render(line)
+	}
+	return strings.Join(lines, "\n")
+}
+
+// cardPrefix returns the raw SGR sequence that turns on style's background,
+// or "" when the style carries none. lipgloss has no accessor for the
+// rendered prefix, so it is recovered by rendering a sentinel and cutting at
+// it — this works for both the 16-colour and truecolour forms.
+func cardPrefix(style lipgloss.Style) string {
+	if style.GetBackground() == (lipgloss.NoColor{}) {
+		return ""
+	}
+	const marker = "\x00niffler-card\x00"
+	rendered := style.Render(marker)
+	prefix, _, ok := strings.Cut(rendered, marker)
+	if !ok {
+		return ""
+	}
+	return prefix
 }
 
 // cardStyle returns the style backing tool runs: a background when the
