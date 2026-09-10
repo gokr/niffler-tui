@@ -87,6 +87,8 @@ func (m *model) completeToolCall(callID, name string, args, result json.RawMessa
 			}
 			c.result = result
 			c.err = err
+			b.pieceOK = false // the card changed with the same text
+			m.markTranscriptDirty()
 			return true
 		}
 	}
@@ -101,6 +103,7 @@ func (m *model) appendToolCall(call toolCall) {
 	n := len(m.blocks)
 	if n > 0 && m.blocks[n-1].kind == blockTool && m.blocks[n-1].run != nil {
 		m.blocks[n-1].run.calls = append(m.blocks[n-1].run.calls, call)
+		m.blocks[n-1].pieceOK = false // the card changed with the same text
 		m.markTranscriptDirty()
 		return
 	}
@@ -136,7 +139,7 @@ func (l toolLevel) String() string {
 // visible while the level is brief.
 func (m *model) cycleToolVisibility() {
 	m.toolLevel = (m.toolLevel + 1) % 3
-	m.markTranscriptDirty()
+	m.invalidatePieces()
 }
 
 // renderToolRun renders one card. expanded forces the expanded form
@@ -218,6 +221,7 @@ func (m *model) handleMouseClick(msg tea.MouseClickMsg) {
 	}
 	if b := &m.blocks[idx]; b.kind == blockTool && b.run != nil {
 		b.run.collapsed = !b.run.collapsed
+		b.pieceOK = false // collapsed state changed with the same text
 		m.markTranscriptDirty()
 		m.syncViewport(false)
 	}
@@ -225,13 +229,22 @@ func (m *model) handleMouseClick(msg tea.MouseClickMsg) {
 
 // blockAtContentLine maps a line index into the rendered transcript to the
 // block that owns it. Blocks are laid out exactly as renderTranscript emits
-// them, separated by a blank line ("\n\n") between blocks. Lines that soft-wrap
-// beyond the viewport width are approximated by their hard newlines; this is
-// exact for glamour-wrapped markdown and collapsed cards, which is where
-// clicking matters.
+// them, separated by a blank line ("\n\n") between blocks, behind the
+// scrollback marker when the transcript window is truncated. Lines that
+// soft-wrap beyond the viewport width are approximated by their hard
+// newlines; this is exact for glamour-wrapped markdown and collapsed cards,
+// which is where clicking matters.
 func (m *model) blockAtContentLine(contentLine int) int {
 	line := 0
-	for i := range m.blocks {
+	if m.renderFrom > 0 {
+		// The marker is written as the first piece, then the usual blank
+		// separator before the first visible block.
+		if contentLine < 1 {
+			return -1
+		}
+		line = 3
+	}
+	for i := m.renderFrom; i < len(m.blocks); i++ {
 		piece := m.piece(i)
 		if piece == "" {
 			continue // hidden block (thinking level off) — not rendered

@@ -44,6 +44,19 @@ project aims for [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **Streaming slowed to a crawl as sessions grew** — every token frame
+  re-rendered and re-clamped the whole transcript and handed the
+  ever-growing string to the viewport, whose internal metrics scan every
+  line; per-token cost grew linearly with conversation length (measured
+  ~9 ms/op at 100 rounds, ~129 ms/op at 400, allocating tens of MB per
+  token). Settled block renderings are now cached and only the streaming
+  tail is rebuilt, token repaints are coalesced into ~30fps flushes,
+  `View()` no longer splits the frame when nothing is selected, and the
+  rendered transcript is capped to a scrollback window (default 3000 lines;
+  `NIF_TUI_SCROLLBACK` overrides, `0` = unlimited) with a marker where
+  earlier messages are hidden. Per-token cost is now flat at any session
+  size (~4 ms including one flush per four tokens); the full transcript
+  stays in the session store and every block stays in memory.
 - **Startup and `/session` switching showed a blank output area** — the TUI
   resumed the same conversation on the backend but never replayed its
   messages, so the previous turns were invisible and unscrollable (switching

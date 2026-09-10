@@ -182,6 +182,14 @@ messages — user and assistant turns, reasoning, grouped tool cards with
 their arguments and results, and turn errors — so the previous conversation
 is visible and scrollable instead of starting blank.
 
+The viewport keeps a bounded scrollback window (the last 3000 rendered lines
+by default, with a marker where earlier messages are hidden), which is what
+keeps streaming cost flat as a session grows: settled blocks are cached and
+only the streaming tail is re-rendered, token repaints are coalesced, and
+the viewport never scans more than the window. Set `NIF_TUI_SCROLLBACK` to
+the number of lines to keep, or `0` for unlimited. The full transcript
+always remains in the session store.
+
 History is persisted per session as JSONL under
 `$XDG_STATE_HOME/niffler-tui/history-<session>.jsonl` (or
 `~/.local/state/niffler-tui/`), capped at 200 entries. Delete the file to

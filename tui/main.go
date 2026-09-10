@@ -42,6 +42,13 @@ const (
 	// the UI; instead blocks stream as plain text and upgrade to styled
 	// markdown once the model pauses (or the round ends).
 	markdownSettleDelay = 300 * time.Millisecond
+
+	// viewportFlushInterval is the streaming repaint interval (~30fps).
+	// Token frames arrive much faster than the terminal can usefully redraw,
+	// and every viewport sync scans the whole scroll window, so updates are
+	// coalesced: the first token schedules a flush and all tokens until it
+	// fires land in the same frame.
+	viewportFlushInterval = 33 * time.Millisecond
 )
 
 type promptTokensDetails struct {
@@ -110,6 +117,10 @@ type turnDoneMsg struct {
 // renderSettleMsg fires after markdownSettleDelay of quiet streaming output;
 // on arrival the dirty assistant block is rendered as markdown.
 type renderSettleMsg struct{}
+
+// viewportFlushMsg fires viewportFlushInterval after the first token of a
+// burst; the pending viewport sync then runs. See scheduleViewportFlush.
+type viewportFlushMsg struct{}
 
 type model struct {
 	toolProfile string // client selection for subsequently created conversations
@@ -184,12 +195,26 @@ type model struct {
 	contextNote    string
 	controlPending bool
 
-	// transcript is the cached joined rendering of all blocks (see
+	// transcript is the cached joined rendering of the scroll window (see
 	// renderTranscript); viewportContent is the last string pushed into the
 	// viewport, so syncViewport can skip SetContent when nothing changed.
 	transcript      string
 	transcriptDirty bool
 	viewportContent string
+
+	// scrollback caps the rendered transcript rows kept in the viewport (0 =
+	// unlimited); renderFrom is the first block included in the current
+	// window. pieceEpoch invalidates per-block render caches on wholesale
+	// display changes (width, theme, thinking/tool level, streaming mode).
+	scrollback int
+	renderFrom int
+	pieceEpoch int
+
+	// flushPending/flushTimerActive coalesce viewport repaints while tokens
+	// stream: a sync scans the whole window, so it runs at most once per
+	// viewportFlushInterval instead of once per token.
+	flushPending     bool
+	flushTimerActive bool
 
 	// historyGen stamps stored-transcript replays (startup and /session
 	// switching); a reply whose stamp is stale is dropped, so switching away
@@ -359,6 +384,8 @@ func newModel(ctx context.Context, comp *sdk.Component, session, natsURL string)
 		history:      history,
 		historyFile:  historyFile,
 		slash:        newSlashRegistry(),
+		scrollback:   scrollbackLines(),
+		pieceEpoch:   1, // 0 is "never rendered" for blocks
 		// Mouse tracking on by default: wheel scrolling, tool-card clicks, and
 		// application-owned plain-drag selection all work simultaneously.
 		// /mouse off remains a terminal-native fallback.
@@ -388,7 +415,7 @@ func (m *model) setTheme(name string) bool {
 	for i := range m.blocks {
 		m.blocks[i].renderedOK = false
 	}
-	m.markTranscriptDirty()
+	m.invalidatePieces()
 	m.layout()
 	return true
 }
@@ -555,6 +582,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		merged = append(merged, msg.Blocks...)
 		merged = append(merged, m.blocks[anchor:]...)
 		m.blocks = merged
+		m.renderFrom = 0 // recomputed by the next render
 		m.markTranscriptDirty()
 		// Pin to the newest message: startup and switches should show the
 		// tail of the conversation, with the rest scrollable above it.
@@ -1151,6 +1179,17 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// Tokens are still flowing; re-arm the settle tick.
 			cmds = append(cmds, m.scheduleRender())
 		}
+
+	case viewportFlushMsg:
+		m.flushTimerActive = false
+		if !m.flushPending {
+			break
+		}
+		m.flushPending = false
+		// A sync is cheap when nothing changed (renderTranscript is cached,
+		// SetContent is skipped on equal content), so this also absorbs a
+		// flush racing an immediate sync from assistant/tool/done events.
+		m.syncViewport(false)
 	}
 
 	var cmd tea.Cmd
@@ -1177,7 +1216,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func (m *model) applySessionEvent(msg sessionEventMsg) tea.Cmd {
 	event := msg.event
-	var renderCmd tea.Cmd
+	var renderCmd, flushCmd tea.Cmd
 	switch msg.kind {
 	case "token":
 		// Once the assistant event delivered the complete content (or the
@@ -1196,6 +1235,10 @@ func (m *model) applySessionEvent(msg sessionEventMsg) tea.Cmd {
 			m.hadAssistant = true
 		}
 		renderCmd = m.scheduleRender()
+		// Tokens arrive far faster than the viewport can be repainted; the
+		// first token schedules a flush and everything until it fires lands in
+		// the same frame (see scheduleViewportFlush).
+		flushCmd = m.scheduleViewportFlush()
 
 	case "assistant":
 		m.setStreaming(false)
@@ -1272,6 +1315,9 @@ func (m *model) applySessionEvent(msg sessionEventMsg) tea.Cmd {
 
 	case "done":
 		m.finishTurn(event.Reply, event.Error)
+	}
+	if msg.kind == "token" {
+		return tea.Batch(renderCmd, flushCmd)
 	}
 	m.syncViewport(false)
 	return renderCmd
@@ -1406,14 +1452,15 @@ func (m *model) finalizeThinking() {
 }
 
 // setStreaming flips the streaming flag, invalidating the transcript cache
-// on transition: streaming changes how the active assistant block renders
-// (plain text while tokens flow, markdown once output settles).
+// and the per-block render caches on transition: streaming changes how the
+// active assistant block renders (plain text while tokens flow, markdown
+// once output settles).
 func (m *model) setStreaming(streaming bool) {
 	if m.streaming == streaming {
 		return
 	}
 	m.streaming = streaming
-	m.markTranscriptDirty()
+	m.invalidatePieces()
 }
 
 // scheduleRender arms the markdown settle tick. The tick re-renders the
@@ -1427,6 +1474,23 @@ func (m *model) scheduleRender() tea.Cmd {
 	m.renderTimerActive = true
 	return tea.Tick(markdownSettleDelay, func(time.Time) tea.Msg {
 		return renderSettleMsg{}
+	})
+}
+
+// scheduleViewportFlush coalesces streamed viewport repaints. Every sync
+// rebuilds the scroll window and hands it to the viewport (which scans all
+// of its rows), so this runs at most once per viewportFlushInterval no
+// matter how fast tokens arrive; the pending flag records that new content
+// arrived since the last repaint. Returns nil while a flush is already
+// scheduled.
+func (m *model) scheduleViewportFlush() tea.Cmd {
+	m.flushPending = true
+	if m.flushTimerActive {
+		return nil
+	}
+	m.flushTimerActive = true
+	return tea.Tick(viewportFlushInterval, func(time.Time) tea.Msg {
+		return viewportFlushMsg{}
 	})
 }
 
@@ -1536,7 +1600,7 @@ func (m *model) ensureRenderer(width int) {
 	for i := range m.blocks {
 		m.blocks[i].renderedOK = false
 	}
-	m.markTranscriptDirty()
+	m.invalidatePieces()
 
 	// The renderer's markdown style comes from the active theme; the
 	// default theme passes "" so GLAMOUR_STYLE still controls it (previous

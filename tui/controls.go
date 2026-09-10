@@ -20,6 +20,8 @@ func (m model) switchSession(id string) model {
 	m.session = id
 	m.blocks = nil
 	m.markTranscriptDirty()
+	m.renderFrom = 0
+	m.flushPending = false
 	m.assistantIdx = -1
 	m.thinkingIdx = -1
 	m.hadAssistant = false
@@ -949,7 +951,7 @@ func (m model) submitMcpForm() (tea.Model, tea.Cmd) {
 // not per-conversation state.
 func (m *model) cycleThinkingLevel() {
 	m.thinkLevel = (m.thinkLevel + 1) % 3
-	m.markTranscriptDirty()
+	m.invalidatePieces()
 }
 
 // effortCycle is the LLM thinking-effort rotation for ctrl+g: empty means

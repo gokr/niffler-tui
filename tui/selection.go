@@ -216,7 +216,13 @@ func inverseSelection(text string) string {
 }
 
 // applyMouseSelection overlays reverse video on the selected screen cells.
+// With no selection it returns the content untouched — importantly without
+// splitting the (potentially large) rendered frame, which would otherwise
+// cost a full pass and an allocation on every repaint.
 func (m model) applyMouseSelection(content string) string {
+	if _, ok := m.selection.bounds(); !ok {
+		return content
+	}
 	lines := strings.Split(content, "\n")
 	bounds, ok := m.boundedSelection(lines)
 	if !ok {

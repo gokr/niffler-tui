@@ -5,7 +5,9 @@
 package main
 
 import (
+	"os"
 	"regexp"
+	"strconv"
 	"strings"
 
 	"github.com/charmbracelet/x/ansi"
@@ -17,6 +19,13 @@ import (
 // Runs are capped at one blank line, not erased: paragraph breaks stay
 // visible between thinking blocks.
 var blankRunRe = regexp.MustCompile(`(\r?\n){2,}`)
+
+// defaultScrollbackLines caps how many rendered transcript rows the viewport
+// carries (NIF_TUI_SCROLLBACK overrides; 0 = unlimited). Every block's
+// rendering is cached and only the tail is recomputed per frame, but the
+// viewport itself scans its whole content on each sync/scroll — the cap is
+// what keeps that scan (and therefore streaming) flat as a session grows.
+const defaultScrollbackLines = 3000
 
 type blockKind int
 
@@ -75,6 +84,30 @@ type transcriptBlock struct {
 	rendered     string
 	renderedText string
 	renderedOK   bool
+
+	// piece caches the final width-clamped rendering of this block — what
+	// renderTranscript joins — alongside the exact inputs it was built from.
+	// This is what makes streaming cost O(tail block) instead of
+	// O(whole transcript) per token: settled blocks hit the cache, only the
+	// growing tail is recomputed. Tool-run mutations clear pieceOK directly.
+	piece    string
+	pieceKey pieceKey
+	pieceOK  bool
+}
+
+// pieceKey captures every non-text input a block's rendering depends on, so
+// a cache hit needs only a struct comparison: the model's display epoch
+// (theme/renderer rebuilds), the viewport width (clampLines), and the
+// display flags that change rendering without touching block text.
+// Streaming is included because the active assistant block renders as plain
+// text until it settles (see renderBlock).
+type pieceKey struct {
+	text      string
+	epoch     int
+	width     int
+	think     thinkingLevel
+	tool      toolLevel
+	streaming bool
 }
 
 func (m *model) addBlock(kind blockKind, text string) {
@@ -98,6 +131,16 @@ func (m *model) addUniqueBlock(kind blockKind, text string) {
 // streaming block renders).
 func (m *model) markTranscriptDirty() {
 	m.transcriptDirty = true
+}
+
+// invalidatePieces drops every cached block rendering for changes that do
+// not show up in a block's pieceKey or text (a theme swap re-styles every
+// block via the global style variables). Cheap mutations that a key cannot
+// capture — tool-run completion, card collapse — invalidate their block's
+// pieceOK directly instead (see toolcard.go).
+func (m *model) invalidatePieces() {
+	m.pieceEpoch++
+	m.markTranscriptDirty()
 }
 
 // renderBlock returns the terminal rendering of block i, re-rendering only
@@ -133,10 +176,9 @@ func (m *model) renderBlock(i int) string {
 	return out
 }
 
-// piece returns the terminal rendering of transcript block i — the exact
-// string renderTranscript joins (one blank line between blocks). Shared with
-// blockAtContentLine so mouse hit-testing matches what is on screen.
-func (m *model) piece(i int) string {
+// renderPiece renders block i from scratch (no caching, no width clamp) as
+// the exact styled string the transcript joins.
+func (m *model) renderPiece(i int) string {
 	block := &m.blocks[i]
 	switch block.kind {
 	case blockUser:
@@ -174,6 +216,31 @@ func (m *model) piece(i int) string {
 		return errorStyle.Render("error> " + block.text)
 	}
 	return block.text
+}
+
+// piece returns the terminal rendering of transcript block i — the exact
+// string renderTranscript joins (one blank line between blocks). The result
+// is cached per block: while a token stream grows the tail block, every
+// settled block keeps its rendering and only the tail is recomputed. Shared
+// with blockAtContentLine so mouse hit-testing matches what is on screen.
+func (m *model) piece(i int) string {
+	block := &m.blocks[i]
+	key := pieceKey{
+		text:      block.text,
+		epoch:     m.pieceEpoch,
+		width:     m.viewport.Width(),
+		think:     m.thinkLevel,
+		tool:      m.toolLevel,
+		streaming: m.streaming,
+	}
+	if block.pieceOK && block.pieceKey == key {
+		return block.piece
+	}
+	out := clampLines(m.renderPiece(i), m.viewport.Width())
+	block.piece = out
+	block.pieceKey = key
+	block.pieceOK = true
+	return out
 }
 
 // compactThinkingText prepares streamed reasoning for display: edge
@@ -214,20 +281,23 @@ func clampLines(text string, width int) string {
 	return strings.Join(lines, "\n")
 }
 
-// renderTranscript joins all block renderings, caching the result until a
-// block mutation or a render-affecting flag change marks the model dirty.
-// Hidden thinking blocks (level off) are skipped entirely; the separator
-// logic tracks whether anything was written so no stray blank lines remain.
+// renderTranscript joins the visible block renderings, caching the result
+// until a block mutation or a display change marks the model dirty. Only the
+// tail of the transcript is rendered: the scrollback cap bounds how many
+// rows the viewport carries, so per-token cost stays flat no matter how long
+// the session runs. Earlier blocks stay in memory (and in the store); the
+// viewport just cannot scroll past the cap (a marker says so).
 func (m *model) renderTranscript() string {
 	if !m.transcriptDirty && m.transcript != "" {
 		return m.transcript
 	}
+	from := m.chooseRenderFrom()
+	m.renderFrom = from
 	var out strings.Builder
 	wrote := false
-	for i := range m.blocks {
-		piece := clampLines(m.piece(i), m.viewport.Width())
+	write := func(piece string) {
 		if piece == "" {
-			continue
+			return
 		}
 		if wrote {
 			out.WriteString("\n\n")
@@ -235,7 +305,61 @@ func (m *model) renderTranscript() string {
 		out.WriteString(piece)
 		wrote = true
 	}
+	if from > 0 {
+		write(m.scrollbackMarker())
+	}
+	for i := from; i < len(m.blocks); i++ {
+		write(m.piece(i))
+	}
 	m.transcript = out.String()
 	m.transcriptDirty = false
 	return m.transcript
+}
+
+// chooseRenderFrom returns the first block index whose rendered rows fit in
+// the scrollback window. The last block is always included — it is the one
+// being streamed and may alone exceed the cap.
+func (m *model) chooseRenderFrom() int {
+	if m.scrollback <= 0 || len(m.blocks) == 0 {
+		return 0
+	}
+	rows := 0
+	for i := len(m.blocks) - 1; i >= 0; i-- {
+		n := m.blockRows(i)
+		if rows > 0 && rows+n > m.scrollback {
+			return i + 1
+		}
+		rows += n
+	}
+	return 0
+}
+
+// blockRows returns how many terminal rows block i occupies in the joined
+// transcript (0 for hidden blocks), sharing the piece cache so window
+// selection never re-renders settled blocks.
+func (m *model) blockRows(i int) int {
+	piece := m.piece(i)
+	if piece == "" {
+		return 0
+	}
+	return strings.Count(piece, "\n") + 1
+}
+
+// scrollbackMarker is the dim line at the top of a windowed transcript,
+// telling the user why the earlier messages are not scrollable.
+func (m *model) scrollbackMarker() string {
+	return metaStyle.Render(t(m.loc, "scrollback.hidden"))
+}
+
+// scrollbackLines resolves the rendered-row cap for the viewport from
+// NIF_TUI_SCROLLBACK (0 disables the cap, restoring the old
+// render-everything behavior). The default bounds per-token work even in
+// very long sessions; the stored transcript is unaffected.
+func scrollbackLines() int {
+	if raw := strings.TrimSpace(os.Getenv("NIF_TUI_SCROLLBACK")); raw != "" {
+		if n, err := strconv.Atoi(raw); err == nil {
+			return max(0, n)
+		}
+	}
+	return defaultScrollbackLines
 }
