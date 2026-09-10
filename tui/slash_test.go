@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -157,9 +158,12 @@ func TestSlashCompletionArgumentPositions(t *testing.T) {
 
 	// The first positional has a source → Tab must fetch, not complete inline.
 	m.input.SetValue("/deploy ")
-	_, token, _, source, loading := m.slashCandidates("/deploy ")
+	_, token, _, source, first, loading := m.slashCandidates("/deploy ")
 	if !loading || source == nil || source.Tool != "deploy.envs" {
 		t.Fatalf("deploy first arg: loading=%v source=%v, want a deploy.envs fetch", loading, source)
+	}
+	if !first {
+		t.Fatal("the first positional slot should report first=true")
 	}
 	if token != "" {
 		t.Fatalf("fresh-argument token = %q, want empty", token)
@@ -167,7 +171,7 @@ func TestSlashCompletionArgumentPositions(t *testing.T) {
 
 	// /mouse completes its inline enum values.
 	m.input.SetValue("/mouse o")
-	_, _, candidates, _, loading := m.slashCandidates("/mouse o")
+	_, _, candidates, _, _, loading := m.slashCandidates("/mouse o")
 	if loading {
 		t.Fatal("/mouse completion should not fetch")
 	}
@@ -175,10 +179,15 @@ func TestSlashCompletionArgumentPositions(t *testing.T) {
 		t.Fatalf("/mouse candidates = %v, want [on off]", candidates)
 	}
 
-	// Second positional param (int) has no candidates at all.
-	_, _, candidates, _, _ = m.slashCandidates("/deploy dev force 1")
+	// Second positional param (int) has no candidates at all, and is not the
+	// subcommand slot even for a command that declares subcommands.
+	_, _, candidates, _, _, _ = m.slashCandidates("/deploy dev force 1")
 	if candidates != nil {
 		t.Fatalf("int param should not complete: %v", candidates)
+	}
+	_, _, _, _, first, _ = m.slashCandidates("/mcp add server")
+	if first {
+		t.Fatal("a later positional must not report the first slot")
 	}
 }
 
@@ -211,6 +220,43 @@ func TestSlashSourceStaleResultDropped(t *testing.T) {
 	m.applySlashSource(slashSourceMsg{Token: "stale", Values: []string{"old"}})
 	if len(m.slashComp.candidates) != 0 {
 		t.Fatalf("stale result applied: %v", m.slashComp.candidates)
+	}
+}
+
+// TestSlashCompletionMergesDeclaredSubcommands: /provider's first slot is both
+// the sourced nickname list and the declared subcommand slot, so Tab offers
+// environment/env/strip alongside the provider_list nicknames (the gap that
+// made `/provider strip` undiscoverable).
+func TestSlashCompletionMergesDeclaredSubcommands(t *testing.T) {
+	m := newTestModel()
+	m.mergeSlashRegistry(nil)
+	m.input.SetValue("/provider ")
+
+	_, _, _, source, first, loading := m.slashCandidates("/provider ")
+	if !loading || source == nil || source.Tool != "provider.provider_list" {
+		t.Fatalf("completion: loading=%v source=%v, want a provider_list fetch", loading, source)
+	}
+	if !first {
+		t.Fatal("/provider's argument is the first positional slot")
+	}
+
+	updated, _ := m.handleSlashTab(false)
+	if got := updated.slashComp.extra; !slices.Equal(got, []string{"environment", "env", "strip"}) {
+		t.Fatalf("extra candidates = %v, want [environment env strip]", got)
+	}
+
+	// The fetched nicknames join the declared tokens, deduped and sorted.
+	updated.applySlashSource(slashSourceMsg{Token: "", Values: []string{"strip", "deepseek", "environment"}})
+	want := []string{"deepseek", "env", "environment", "strip"}
+	if got := updated.slashComp.candidates; !slices.Equal(got, want) {
+		t.Fatalf("merged candidates = %v, want %v", got, want)
+	}
+
+	// A later positional (a sourced param on a command with subcommands) must
+	// not pull the subcommand tokens in.
+	_, _, _, _, first, _ = m.slashCandidates("/mcp add ")
+	if first {
+		t.Fatal("/mcp add's server-name slot is not the subcommand slot")
 	}
 }
 
@@ -492,8 +538,7 @@ func TestAliasDispatch(t *testing.T) {
 	}
 }
 
-// TestHelpLineFallback covers the derived line for a command whose locale
-// entry is absent: /help must still name it rather than print a blank.
+// TestHelpLineFallback covers the derived line for a command whose locale// entry is absent: /help must still name it rather than print a blank.
 func TestHelpLineFallback(t *testing.T) {
 	m := newTestModel()
 	line := m.helpLine(slashCommand{

@@ -355,6 +355,7 @@ type slashCompleteState struct {
 	prefix     string   // input text before the token being completed
 	token      string   // partial word being completed
 	candidates []string // full completion strings for the token
+	extra      []string // declared candidates (subcommands) merged with a source's values
 	index      int      // highlighted candidate
 }
 
@@ -386,11 +387,16 @@ func (m model) handleSlashTab(backward bool) (model, tea.Cmd) {
 		return m, nil
 	}
 
-	prefix, token, candidates, source, loading := m.slashCandidates(value)
+	prefix, token, candidates, source, first, loading := m.slashCandidates(value)
 	if loading {
 		// Value candidates come from a source tool; show a placeholder
-		// while the request is in flight.
-		m.slashComp = slashCompleteState{active: true, loading: true, prefix: prefix, token: token}
+		// while the request is in flight. Declared subcommands of the
+		// command join the fetched values when this is the first slot.
+		var extra []string
+		if cmd, ok := m.slash.lookup(strings.Fields(value)[0]); ok && first {
+			extra = m.subcommandTokens(cmd)
+		}
+		m.slashComp = slashCompleteState{active: true, loading: true, prefix: prefix, token: token, extra: extra}
 		m.layout()
 		return m, m.slashSourceCmd(source, token)
 	}
@@ -421,6 +427,20 @@ func (m *model) applySlashCandidate() {
 	m.input.CursorEnd()
 }
 
+// dedupeSorted returns the values without duplicates, sorted.
+func dedupeSorted(values []string) []string {
+	seen := make(map[string]bool, len(values))
+	out := make([]string, 0, len(values))
+	for _, v := range values {
+		if !seen[v] {
+			seen[v] = true
+			out = append(out, v)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
 func filterSlashCandidates(candidates []string, token string) []string {
 	var out []string
 	for _, c := range candidates {
@@ -435,11 +455,13 @@ func filterSlashCandidates(candidates []string, token string) []string {
 // current input: the command word, or an argument of a known command.
 // It returns the text before the token being completed (prefix), the
 // partial token, and either inline candidates or a source to fetch
-// them from (loading = source fetch needed).
-func (m model) slashCandidates(value string) (prefix, token string, candidates []string, source *slashSource, loading bool) {
+// them from (loading = source fetch needed). first reports that the token
+// addresses the command's first positional slot, which is where declared
+// subcommands compete with the param's own values.
+func (m model) slashCandidates(value string) (prefix, token string, candidates []string, source *slashSource, first, loading bool) {
 	fields := strings.Fields(value)
 	if len(fields) == 0 {
-		return value, "", nil, nil, false
+		return value, "", nil, nil, false, false
 	}
 	word := fields[0]
 	if len(fields) == 1 && !strings.HasSuffix(value, " ") {
@@ -448,12 +470,12 @@ func (m model) slashCandidates(value string) (prefix, token string, candidates [
 		names := make([]string, 0, len(m.slash.order))
 		names = append(names, m.slash.order...)
 		sort.Strings(names)
-		return "/", partial, names, nil, false
+		return "/", partial, names, nil, false, false
 	}
 
 	cmd, ok := m.slash.lookup(word)
 	if !ok {
-		return "", "", nil, nil, false
+		return "", "", nil, nil, false, false
 	}
 	// Complete an argument: the current token is the trailing partial word
 	// (empty when the user just typed a space). Walk the preceding fields
@@ -473,7 +495,7 @@ func (m model) slashCandidates(value string) (prefix, token string, candidates [
 	// fresh argument (trailing space) advances one positional slot.
 	lastSpace := strings.LastIndex(value, " ")
 	if lastSpace < 0 {
-		return "", "", nil, nil, false
+		return "", "", nil, nil, false, false
 	}
 	token = value[lastSpace+1:]
 	prefix = value[:lastSpace+1]
@@ -481,23 +503,41 @@ func (m model) slashCandidates(value string) (prefix, token string, candidates [
 		positional++
 	}
 
-	// Positional: the n-th (1-based) non-bool param.
+	// Positional: the n-th (1-based) non-bool param. first is true only when
+	// the addressed param is the command's first positional slot — the slot
+	// declared subcommands share (/provider environment|strip).
+	slot := 0
 	for _, p := range cmd.Params {
 		if p.Kind == "bool" {
 			continue
 		}
+		slot++
 		if positional == 1 {
+			first = slot == 1
 			if p.Source != nil {
-				return prefix, token, nil, p.Source, true
+				return prefix, token, nil, p.Source, first, true
 			}
 			if len(p.Values) > 0 {
-				return prefix, token, p.Values, nil, false
+				return prefix, token, p.Values, nil, first, false
 			}
-			return "", "", nil, nil, false
+			return "", "", nil, nil, first, false
 		}
 		positional--
 	}
-	return "", "", nil, nil, false
+	return "", "", nil, nil, false, false
+}
+
+// subcommandTokens returns a command's declared subcommand tokens (names and
+// aliases) for the slot being completed, so Tab offers them next to a sourced
+// param's fetched values — /provider completes environment/strip and the
+// provider nicknames from provider_list.
+func (m model) subcommandTokens(cmd slashCommand) []string {
+	var out []string
+	for _, sub := range cmd.subcommands {
+		out = append(out, sub.name)
+		out = append(out, sub.aliases...)
+	}
+	return out
 }
 
 func (m model) slashParamByName(cmd slashCommand, name string) (slashParam, bool) {
@@ -531,8 +571,9 @@ func (m *model) applySlashSource(msg slashSourceMsg) {
 		m.dismissSlashComplete()
 		return
 	}
-	sort.Strings(msg.Values) // deterministic cycling regardless of source order
-	m.slashComp.candidates = filterSlashCandidates(msg.Values, msg.Token)
+	values := append(append([]string(nil), m.slashComp.extra...), msg.Values...)
+	values = dedupeSorted(values) // deterministic cycling regardless of source order
+	m.slashComp.candidates = filterSlashCandidates(values, msg.Token)
 	if len(m.slashComp.candidates) == 0 {
 		m.dismissSlashComplete()
 		return
