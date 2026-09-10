@@ -1017,6 +1017,11 @@ func (m model) detailedRuntimeStatus() string {
 		hash := valueOr(m.harnessIdentity.GitHash, t(m.loc, "status.unknown"))
 		lines = append(lines, t(m.loc, "status.detailHarness", m.harnessIdentity.Root, hash))
 	}
+	// This tui's own build, next to the harness line so a stale binary is
+	// obvious. The builder copies sources into an isolated module, so the
+	// binary carries no VCS revision of its own; provenance comes from the
+	// plugins component when this binary is a managed install.
+	lines = append(lines, m.selfStatusLine())
 	lines = append(lines,
 		t(m.loc, "status.detailContext", formatTokens(m.runtime.Context), valueOr(m.runtime.ContextSource, t(m.loc, "status.unknownSource"))),
 		t(m.loc, "status.detailOutput", formatTokens(m.runtime.Output), valueOr(m.runtime.OutputSource, t(m.loc, "status.unknownSource"))),
@@ -1036,6 +1041,31 @@ func (m model) detailedRuntimeStatus() string {
 		lines = append(lines, t(m.loc, "status.detailOverride", m.modelOverride))
 	}
 	return strings.Join(lines, "\n")
+}
+
+// selfStatusLine renders this tui's own identity for /status: version and
+// binary path always, plus the plugin package's pinned ref and commit when
+// the binary is a managed install. The ref@commit is what separates two
+// builds that share the same component version.
+func (m model) selfStatusLine() string {
+	self := m.selfIdentity
+	version := valueOr(self.Version, t(m.loc, "status.unknown"))
+	if self.Binary == "" {
+		return t(m.loc, "status.detailTui", version)
+	}
+	location := self.Binary
+	if self.Package != "" {
+		ref := valueOr(self.Ref, t(m.loc, "status.unknown"))
+		commit := self.Commit
+		if len(commit) > 7 {
+			commit = commit[:7]
+		}
+		if commit != "" {
+			ref += " " + commit
+		}
+		location = fmt.Sprintf("%s (%s @ %s)", location, self.Package, ref)
+	}
+	return t(m.loc, "status.detailTui", version) + " " + location
 }
 
 func valueOr(value, fallback string) string {

@@ -182,6 +182,7 @@ type model struct {
 	providerStatus        providerStatusResponse
 	catalogProviders      []catalogProvider
 	harnessIdentity       harnessIdentity
+	selfIdentity          selfIdentity
 	// MCP server control plane (/mcp): configured servers, the two-stage
 	// delete arm, and the add/edit form.
 	mcpServers       []mcpServerSummary
@@ -833,6 +834,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.providerStatus = msg.ProviderStatus
 		m.catalogProviders = msg.CatalogProviders
 		m.harnessIdentity = msg.Identity
+		m.selfIdentity = msg.Self
 		m.modelOverride = msg.Conversation.ModelOverride
 		m.thinkingEffort = msg.Conversation.ThinkingEffort
 		m.runtime = msg.Runtime

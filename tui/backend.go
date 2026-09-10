@@ -3,6 +3,8 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
@@ -76,6 +78,84 @@ type harnessIdentity struct {
 	GitHash string `json:"gitHash"`
 }
 
+// selfIdentity describes this tui's own binary, for /status. The builder
+// compiles the tui in an isolated generated module with the sources copied
+// in, so Go's VCS stamping records no revision and the binary cannot report
+// its own commit; provenance comes from the plugins component instead,
+// which knows the clone, the pinned ref and the commit it was built from.
+type selfIdentity struct {
+	Version string // the component version registered on the bus
+	Binary  string // resolved path to this executable
+	// Provenance, filled in from the plugins component when the package is
+	// a known install; empty when plugins is absent or the binary is not a
+	// managed install (e.g. `make build` in a checkout).
+	Package string
+	Ref     string
+	Commit  string
+}
+
+// installedPackage mirrors the entries plugins' plugin_installed returns.
+type installedPackage struct {
+	Name       string  `json:"name"`
+	Repo       string  `json:"repo"`
+	Ref        string  `json:"ref"`
+	Dir        string  `json:"dir"`
+	Version    string  `json:"version"`
+	Commit     string  `json:"commit"`
+	AddedAt    float64 `json:"addedAt"`
+	Components []struct {
+		Name        string `json:"name"`
+		Binary      string `json:"binary"`
+		Interactive bool   `json:"interactive"`
+		Spawned     bool   `json:"spawned"`
+	} `json:"components"`
+}
+
+// loadSelfIdentity resolves this binary's path and version, then tries to
+// attribute it to an installed plugin package by matching the component
+// binary path. The plugin lookup is best effort: the tui must stay usable
+// against a harness with no plugins component registered at all.
+func loadSelfIdentity(comp *sdk.Component) selfIdentity {
+	id := selfIdentity{Version: componentVersion}
+	if exe, err := os.Executable(); err == nil {
+		if resolved, err := filepath.EvalSymlinks(exe); err == nil {
+			exe = resolved
+		}
+		id.Binary = exe
+	}
+	if id.Binary == "" {
+		return id
+	}
+
+	// Best effort, and tolerant by construction: a missing plugins
+	// component, a request error, or a non-JSON reply all just leave the
+	// provenance fields empty.
+	var listed struct {
+		Packages []installedPackage `json:"packages"`
+	}
+	if err := requestInto(comp, "plugins", "plugin_installed", map[string]any{}, &listed); err != nil {
+		return id
+	}
+	for _, pkg := range listed.Packages {
+		for _, c := range pkg.Components {
+			if c.Binary == "" {
+				continue
+			}
+			bin := c.Binary
+			if resolved, err := filepath.EvalSymlinks(bin); err == nil {
+				bin = resolved
+			}
+			if bin == id.Binary {
+				id.Package = pkg.Name
+				id.Ref = pkg.Ref
+				id.Commit = pkg.Commit
+				return id
+			}
+		}
+	}
+	return id
+}
+
 type modelLimit struct {
 	Context int `json:"context"`
 	Output  int `json:"output"`
@@ -117,6 +197,7 @@ type bootstrapMsg struct {
 	ProviderStatus   providerStatusResponse
 	CatalogProviders []catalogProvider
 	Identity         harnessIdentity
+	Self             selfIdentity
 	Conversation     conversationState
 	Runtime          runtimeResolution
 	Warnings         []string
@@ -376,6 +457,7 @@ func bootstrapBackendCmd(comp *sdk.Component, session string) tea.Cmd {
 			catalog    []catalogProvider
 			slashCmds  []slashCommand
 			identity   harnessIdentity
+			self       selfIdentity
 			listErr    error
 			statusErr  error
 			catalogErr error
@@ -383,12 +465,15 @@ func bootstrapBackendCmd(comp *sdk.Component, session string) tea.Cmd {
 			idErr      error
 		)
 		var wg sync.WaitGroup
-		wg.Add(5)
+		wg.Add(6)
 		go func() { defer wg.Done(); providers, listErr = loadProviderList(comp) }()
 		go func() { defer wg.Done(); status, statusErr = loadProviderStatus(comp) }()
 		go func() { defer wg.Done(); catalog, catalogErr = loadCatalogProviders(comp) }()
 		go func() { defer wg.Done(); slashCmds, slashErr = loadSlashTable(comp) }()
 		go func() { defer wg.Done(); identity, idErr = loadHarnessIdentity(comp) }()
+		// Best effort and never fatal: the plugin lookup inside degrades to
+		// version + binary path when plugins is not registered.
+		go func() { defer wg.Done(); self = loadSelfIdentity(comp) }()
 		wg.Wait()
 		if listErr != nil {
 			msg.Warnings = append(msg.Warnings, listErr.Error())
@@ -408,6 +493,7 @@ func bootstrapBackendCmd(comp *sdk.Component, session string) tea.Cmd {
 		if idErr == nil {
 			msg.Identity = identity
 		}
+		msg.Self = self
 		msg.SlashCommands = slashCmds
 		msg.SlashErr = slashErr
 		conversation, err := loadConversationState(comp, session)
