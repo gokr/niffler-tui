@@ -1269,36 +1269,38 @@ func TestToolCallGroupingIntoCard(t *testing.T) {
 }
 
 func TestToolRunRenderingCollapsedAndExpanded(t *testing.T) {
+	m := newTestModel()
 	run := &toolRun{collapsed: true, calls: []toolCall{
-		{name: "bash", args: json.RawMessage(`{"cmd":"make"}`)},
-		{name: "bash", args: json.RawMessage(`{"cmd":"git"}`)},
+		{name: "bash", args: json.RawMessage(`{"command":"make"}`)},
+		{name: "bash", args: json.RawMessage(`{"command":"git status"}`)},
 		{name: "core.spawn", args: json.RawMessage(`{"name":"x"}`), err: "denied"},
 	}}
-	// Collapsed: one summary line with count + chips.
-	got := renderToolRun(run, false)
+	// Brief: one summary line with count + chips.
+	got := m.renderToolRun(run, detailBrief)
 	if strings.Contains(got, "\n") {
-		t.Fatalf("collapsed card should be one line:\n%q", got)
+		t.Fatalf("brief card should be one line:\n%q", got)
 	}
 	if !strings.Contains(got, "3 tool calls") || !strings.Contains(got, "core.spawn") {
-		t.Fatalf("collapsed summary missing count/chips: %q", got)
+		t.Fatalf("brief summary missing count/chips: %q", got)
 	}
 	if strings.Contains(got, "denied") {
-		t.Fatal("collapsed card leaked error text")
+		t.Fatal("brief card leaked error text")
 	}
 
-	// Expanded: per-call args + error.
-	got = renderToolRun(run, true)
-	if !strings.Contains(got, "make") || !strings.Contains(got, "denied") {
-		t.Fatalf("expanded card missing detail: %q", got)
+	// Full: per-call headers and error bodies.
+	got = m.renderToolRun(run, detailFull)
+	if !strings.Contains(got, "$ make") || !strings.Contains(got, "$ git status") || !strings.Contains(got, "denied") {
+		t.Fatalf("full card missing detail: %q", got)
 	}
 }
 
 func TestToolRunSingleCallAndGlyph(t *testing.T) {
-	ok := renderToolRun(&toolRun{collapsed: true, calls: []toolCall{{name: "bash"}}}, false)
+	m := newTestModel()
+	ok := m.renderToolRun(&toolRun{collapsed: true, calls: []toolCall{{name: "bash"}}}, detailBrief)
 	if !strings.Contains(ok, "bash") || strings.Contains(ok, "tool calls") {
 		t.Fatalf("single-call summary wrong: %q", ok)
 	}
-	bad := renderToolRun(&toolRun{collapsed: true, calls: []toolCall{{name: "bash", err: "boom"}}}, true)
+	bad := m.renderToolRun(&toolRun{collapsed: true, calls: []toolCall{{name: "bash", err: "boom"}}}, detailFull)
 	if strings.Contains(bad, "✓") {
 		t.Fatal("errored call rendered the ok glyph")
 	}
@@ -1396,7 +1398,13 @@ func TestToolVisibilityCycle(t *testing.T) {
 		t.Fatalf("brief level should render collapsed cards: %q", brief)
 	}
 
-	m.cycleToolVisibility() // brief → full
+	m.cycleToolVisibility() // brief → medium
+	medium := m.renderTranscript()
+	if !strings.Contains(medium, "▾") || strings.Contains(medium, "▸") {
+		t.Fatalf("medium level should show per-call previews: %q", medium)
+	}
+
+	m.cycleToolVisibility() // medium → full
 	full := m.renderTranscript()
 	if !strings.Contains(full, "▾") || strings.Contains(full, "▸") {
 		t.Fatalf("full level should expand every card: %q", full)

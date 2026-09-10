@@ -29,6 +29,7 @@ type storedMessage struct {
 	ToolCallID string           `json:"tool_call_id"`
 	Name       string           `json:"name"`
 	ToolCalls  []storedToolCall `json:"tool_calls"`
+	DurationMs int              `json:"durationMs"`
 }
 
 // storedToolCall is one entry of an assistant message's tool_calls array in
@@ -148,7 +149,7 @@ func replayConversation(messages []storedMessage) []transcriptBlock {
 
 		case "tool":
 			result, errText := storedToolOutcome(msg.Content)
-			if !scratch.completeToolCall(msg.ToolCallID, msg.Name, nil, result, errText) {
+			if !scratch.completeToolCall(msg.ToolCallID, msg.Name, nil, result, errText, msg.DurationMs) {
 				// No pending call matched (legacy entry, or the list was
 				// capped before the requesting assistant message): keep the
 				// outcome visible as an already-complete card.

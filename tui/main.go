@@ -21,6 +21,8 @@ import (
 	"charm.land/bubbles/v2/viewport"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/glamour/v2"
+	glamouransi "charm.land/glamour/v2/ansi"
+	"charm.land/glamour/v2/styles"
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 	"golang.org/x/term"
@@ -102,6 +104,7 @@ type sessionEvent struct {
 	Warning        json.RawMessage `json:"warning"`
 	Trimmed        int             `json:"trimmed"`
 	Usage          usageStats      `json:"usage"`
+	DurationMs     int             `json:"durationMs"`
 }
 
 type connectedMsg struct{}
@@ -245,6 +248,11 @@ type model struct {
 	renderer *glamour.TermRenderer
 	renderW  int
 
+	// thinkingRenderer renders reasoning blocks as markdown too, with prose
+	// recoloured to the thinking accent — fenced code inside thinking keeps
+	// syntax highlighting instead of rendering as flat dim text.
+	thinkingRenderer *glamour.TermRenderer
+
 	// Human approval gate: queued x-harness.approval requests (front of the
 	// queue is the modal on screen) and per-session auto-approve memory.
 	approvals    []approvalRequest
@@ -271,8 +279,9 @@ type model struct {
 	// from the backend — this only changes how much of it is shown.
 	thinkLevel thinkingLevel
 
-	// toolLevel controls how tool-run cards render: brief (collapsed,
-	// default), full (all expanded), or off (hidden). ctrl+e cycles.
+	// toolLevel controls how tool-run cards render: brief (one summary line),
+	// medium (per-tool previews: bash tail, edit diff, read head — default),
+	// full (everything expanded), or off (hidden). ctrl+e cycles.
 	// Display-side only, like thinkLevel.
 	toolLevel toolLevel
 
@@ -405,6 +414,7 @@ func newModel(ctx context.Context, comp *sdk.Component, session, natsURL string)
 		pieceEpoch:   1, // 0 is "never rendered" for blocks
 		usageCache:   map[string]usageTotals{},
 		cwd:          initialCwd(),
+		toolLevel:    toolMedium,
 		// Mouse tracking on by default: wheel scrolling, tool-card clicks, and
 		// application-owned plain-drag selection all work simultaneously.
 		// /mouse off remains a terminal-native fallback.
@@ -1318,17 +1328,18 @@ func (m *model) applySessionEvent(msg sessionEventMsg) tea.Cmd {
 				callID:  event.CallID,
 				pending: true,
 			})
-		} else if m.completeToolCall(event.CallID, event.Tool, event.Args, event.Result, event.Error) {
+		} else if m.completeToolCall(event.CallID, event.Tool, event.Args, event.Result, event.Error, event.DurationMs) {
 			m.markTranscriptDirty()
 		} else {
 			// Phase 2 with no pending entry to complete (or a legacy
 			// single-phase event): append the finished call directly.
 			m.appendToolCall(toolCall{
-				name:   event.Tool,
-				args:   event.Args,
-				result: event.Result,
-				err:    event.Error,
-				callID: event.CallID,
+				name:       event.Tool,
+				args:       event.Args,
+				result:     event.Result,
+				err:        event.Error,
+				callID:     event.CallID,
+				durationMs: event.DurationMs,
 			})
 		}
 
@@ -1675,9 +1686,46 @@ func (m *model) ensureRenderer(width int) {
 		// Fall back to plain text rendering without retrying on every key
 		// event. A terminal resize will attempt construction again.
 		m.renderer = nil
+		m.thinkingRenderer = nil
 		return
 	}
 	m.renderer = r
+	m.thinkingRenderer = newThinkingRenderer(width)
+}
+
+// newThinkingRenderer builds the markdown renderer used for reasoning blocks:
+// the theme's markdown style with prose recoloured to the thinking accent and
+// italic, so fenced code inside thinking keeps its syntax highlighting while
+// the reasoning stays visibly muted (the same treatment Pi gives thinking).
+// A GLAMOUR_STYLE pointing at a custom file falls back to the dark base.
+func newThinkingRenderer(width int) *glamour.TermRenderer {
+	name := currentTheme.glamour
+	if name == "" {
+		name = strings.TrimSpace(os.Getenv("GLAMOUR_STYLE"))
+	}
+	if name == "" {
+		name = styles.DarkStyle
+	}
+	config, ok := styles.DefaultStyles[name]
+	if !ok {
+		config = styles.DefaultStyles[styles.DarkStyle]
+	}
+	if config == nil {
+		return nil
+	}
+	style := *config
+	accent := currentTheme.thinking
+	italic, faint := true, true
+	style.Text = glamouransi.StylePrimitive{Color: &accent, Italic: &italic, Faint: &faint}
+	r, err := glamour.NewTermRenderer(
+		glamour.WithStyles(style),
+		glamour.WithWordWrap(width),
+		glamour.WithPreservedNewLines(),
+	)
+	if err != nil {
+		return nil
+	}
+	return r
 }
 
 func (m model) searchView() string {

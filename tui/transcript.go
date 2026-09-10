@@ -149,11 +149,17 @@ func (m *model) invalidatePieces() {
 // plain text.
 func (m *model) renderBlock(i int) string {
 	block := &m.blocks[i]
-	if block.kind != blockAssistant {
+	if block.kind != blockAssistant && block.kind != blockThinking {
 		return block.text
 	}
 	if block.renderedOK && block.renderedText == block.text {
 		return block.rendered
+	}
+	text := block.text
+	if block.kind == blockThinking {
+		// Reasoning arrives with runaway blank runs and edge newlines; the
+		// transcript always compacted those before rendering.
+		text = compactThinkingText(text)
 	}
 	// While tokens are still streaming, keep showing plain text and defer
 	// the markdown render to the settle tick: re-rendering a large block
@@ -161,14 +167,25 @@ func (m *model) renderBlock(i int) string {
 	// trimmed (models open content with blank lines, and reasoning-adjacent
 	// answers start with them); they would stack onto the block separator
 	// into walls of empty space.
-	if m.renderer != nil && m.streaming {
-		return strings.Trim(block.text, "\n\r")
+	if m.streaming {
+		out := strings.Trim(text, "\n\r")
+		if block.kind == blockThinking {
+			return thinkingStyle.Render(out)
+		}
+		return out
 	}
-	out := strings.Trim(block.text, "\n\r")
-	if m.renderer != nil {
-		if rendered, err := m.renderer.Render(block.text); err == nil {
+	out := strings.Trim(text, "\n\r")
+	renderer := m.renderer
+	if block.kind == blockThinking {
+		renderer = m.thinkingRenderer
+	}
+	if renderer != nil {
+		if rendered, err := renderer.Render(text); err == nil {
 			out = strings.Trim(rendered, "\n")
 		}
+	} else if block.kind == blockThinking {
+		// No markdown renderer: keep the pre-markdown dim italic look.
+		out = thinkingStyle.Render(out)
 	}
 	block.rendered = out
 	block.renderedText = block.text
@@ -197,17 +214,17 @@ func (m *model) renderPiece(i int) string {
 		// newlines are trimmed and blank-line runs capped at one blank
 		// line — streamed reasoning would otherwise stack paragraph
 		// breaks into walls of empty rows, while genuine paragraph gaps
-		// between thinking blocks stay visible.
-		return thinkingStyle.Render(compactThinkingText(block.text))
+		// between thinking blocks stay visible. With a markdown renderer
+		// available the text (including any fenced code) is styled there
+		// instead (see renderBlock).
+		return m.renderBlock(i)
 	case blockTool:
 		if block.run != nil {
-			switch m.toolLevel {
-			case toolOff:
+			detail, ok := m.toolDetail()
+			if !ok {
 				return "" // hidden (tool level off) — not rendered
-			case toolFull:
-				return renderToolRun(block.run, true)
 			}
-			return renderToolRun(block.run, false)
+			return m.renderToolRun(block.run, detail)
 		}
 		return toolStyle.Render("tool> " + block.text)
 	case blockMeta:

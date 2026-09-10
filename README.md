@@ -62,7 +62,7 @@ Keys:
 - `PgUp` / `PgDn`: page through the transcript
 - `Ctrl+Up` / `Ctrl+Down`: scroll the transcript one line at a time
 - `Ctrl+T`: cycle thinking visibility (`full` → `brief` → `off`)
-- `Ctrl+E`: cycle tool-card visibility (`brief` → `full` → `off`)
+- `Ctrl+E`: cycle tool-card detail (`brief` → `medium` → `full` → `off`)
 - `Ctrl+G`: rotate the conversation's LLM thinking effort
   (`auto` → `low` → `medium` → `high`)
 - `Esc`: while busy, the first press arms a "Stop?" prompt and the second
@@ -72,26 +72,33 @@ Keys:
 - `Ctrl+C`: quit
 
 Consecutive tool calls in a turn are folded into a single collapsible
-"tool-run card" with a summary line (✓/⚠ glyph, call count, names), collapsed
-by default so long tool sequences stay unobtrusive. `Ctrl+E` cycles every
-card between brief (collapsed), full (all expanded) and off (hidden); a left
-click toggles the card under the cursor. Mouse tracking is **on by default**:
-the wheel scrolls the transcript, while plain left-button drag selects and
-copies text using application-owned selection. Both therefore work at the
-same time. `/mouse off` remains a terminal-native fallback, but the app then
-receives no wheel events, so the transcript scrolls with
-`PgUp`/`PgDn`/`Ctrl+Up` and the wheel behaves as ordinary terminal scroll
-instead.
+"tool-run card". At `medium` (the default) each call renders with a shape
+that fits its tool: bash shows `$ command`, the tail of the output with a
+`... (N earlier lines, ctrl+e to expand)` marker, and the exit status plus
+duration; edit shows the old/new text as a red/green diff with `+A -R` line
+counts; read and write show the head of the file with a collapsed-line
+hint; other tools fall back to their name, arguments and result head.
+`brief` reduces every card to a one-line summary (✓/⚠ glyph, call count,
+names) for quiet long tool sequences; `full` expands every call without
+collapsing output; `off` hides cards entirely. `Ctrl+E` cycles the levels
+and a left click toggles the card under the cursor (brief→medium→full for
+that card). Mouse tracking is **on by default**: the wheel scrolls the
+transcript, while plain left-button drag selects and copies text using
+application-owned selection. Both therefore work at the same time.
+`/mouse off` remains a terminal-native fallback, but the app then receives
+no wheel events, so the transcript scrolls with `PgUp`/`PgDn`/`Ctrl+Up` and
+the wheel behaves as ordinary terminal scroll instead.
 
 ### Thinking
 
-Model reasoning renders as gray italic text above each assistant reply,
-placed per round in the transcript. `Ctrl+T` cycles how much of it is shown:
-`full` (everything), `brief` (one dim `▸ thinking…` line per block) and `off`
-(hidden entirely). Reasoning is compacted for display: edge newlines are
-trimmed and blank-line runs are capped at one blank line, so paragraph
-breaks between thinking blocks stay visible without stacking into walls of
-empty rows.
+Model reasoning renders above each assistant reply, placed per round in the
+transcript. It is markdown-rendered through a thinking-tinted style: prose
+stays dim italic while fenced code inside reasoning keeps syntax
+highlighting. `Ctrl+T` cycles how much of it is shown: `full` (everything),
+`brief` (one dim `▸ thinking…` line per block) and `off` (hidden entirely).
+Reasoning is compacted for display: edge newlines are trimmed and blank-line
+runs are capped at one blank line, so paragraph breaks between thinking
+blocks stay visible without stacking into walls of empty rows.
 
 `Ctrl+G` rotates the conversation's LLM thinking *effort* —
 `auto` (provider default) → `low` → `medium` → `high`. The selection is

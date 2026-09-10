@@ -8,6 +8,19 @@ project aims for [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Per-tool previews and markdown-rendered thinking** — tool-run cards gain
+  a `medium` level between `brief` and `full` (now the default; `ctrl+e`
+  cycles brief → medium → full → off). At medium each call renders like its
+  tool: bash shows `$ command` with the tail of the output, a
+  `... (N earlier lines, ctrl+e to expand)` marker, and the exit status plus
+  duration; edit reconstructs the call's old/new text as a red/green diff
+  with `+A -R` counts; read and write show the head of the file with a
+  collapsed-lines hint; unknown tools fall back to name, arguments and
+  result head. `full` stops collapsing; `brief` keeps the one-line summary.
+  Clicking a card bumps it one level. Tool durations are plumbed through
+  live events and replay telemetry. Reasoning blocks now render through a
+  thinking-tinted glamour style, so fenced code inside thinking keeps syntax
+  highlighting while prose stays dim italic.
 - **Color themes (`/theme`)** — the UI chrome (header, transcript roles, tool
   cards, forms, approval gate, context gauge) and the markdown style assistant
   output renders with now come from a selectable theme. Ten palettes ship:

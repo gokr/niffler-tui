@@ -29,12 +29,13 @@ const (
 // call and a done event (result/error) completes it. A call stays pending
 // between the two; legacy single-phase events arrive already complete.
 type toolCall struct {
-	name    string
-	callID  string
-	args    json.RawMessage
-	result  json.RawMessage
-	err     string
-	pending bool
+	name       string
+	callID     string
+	args       json.RawMessage
+	result     json.RawMessage
+	err        string
+	pending    bool
+	durationMs int // tool execution time, from the done event telemetry
 }
 
 // toolRun is a group of consecutive tool calls rendered as one card.
@@ -63,7 +64,7 @@ func runGlyph(run *toolRun) string {
 // blocks; matching is by call id (by name for legacy events without one).
 // Returns false when nothing pending matches — the caller appends the
 // finished call directly instead.
-func (m *model) completeToolCall(callID, name string, args, result json.RawMessage, err string) bool {
+func (m *model) completeToolCall(callID, name string, args, result json.RawMessage, err string, durationMs int) bool {
 	for i := len(m.blocks) - 1; i >= 0; i-- {
 		b := &m.blocks[i]
 		if b.kind != blockTool || b.run == nil {
@@ -87,6 +88,7 @@ func (m *model) completeToolCall(callID, name string, args, result json.RawMessa
 			}
 			c.result = result
 			c.err = err
+			c.durationMs = durationMs
 			b.pieceOK = false // the card changed with the same text
 			m.markTranscriptDirty()
 			return true
@@ -119,13 +121,16 @@ func (m *model) appendToolCall(call toolCall) {
 type toolLevel int
 
 const (
-	toolBrief toolLevel = iota // collapsed cards (default)
-	toolFull                   // every card expanded
-	toolOff                    // hide tool cards entirely
+	toolBrief  toolLevel = iota // one summary line per run (quietest)
+	toolMedium                  // per-tool previews: bash tail, edit diff, read head
+	toolFull                    // every call fully expanded
+	toolOff                     // hide tool cards entirely
 )
 
 func (l toolLevel) String() string {
 	switch l {
+	case toolMedium:
+		return "medium"
 	case toolFull:
 		return "full"
 	case toolOff:
@@ -134,73 +139,134 @@ func (l toolLevel) String() string {
 	return "brief"
 }
 
+// toolDetail is the resolved amount of per-call output a card shows; it is
+// the tool level with the card's own click-to-expand state folded in.
+type toolDetail int
+
+const (
+	detailBrief   toolDetail = iota // summary line only
+	detailPreview                   // per-tool preview (bash tail, edit diff, …)
+	detailFull                      // full per-call output
+)
+
+// toolDetail resolves the active display detail for the global tool level;
+// the per-card click-to-expand bump happens in renderToolRun.
+func (m model) toolDetail() (toolDetail, bool) {
+	switch m.toolLevel {
+	case toolMedium:
+		return detailPreview, true
+	case toolFull:
+		return detailFull, true
+	case toolOff:
+		return 0, false
+	}
+	return detailBrief, true
+}
+
 // cycleToolVisibility advances the tool-card display level
-// (brief → full → off → brief). Per-card clicks still toggle collapse,
-// visible while the level is brief.
+// (brief → medium → full → off → brief). Per-card clicks still toggle the
+// collapse state, which bumps the level one step for that card.
 func (m *model) cycleToolVisibility() {
-	m.toolLevel = (m.toolLevel + 1) % 3
+	m.toolLevel = (m.toolLevel + 1) % 4
 	m.invalidatePieces()
 }
 
-// renderToolRun renders one card. expanded forces the expanded form
-// (tool level full); otherwise the card's own collapsed state decides.
-// Collapsed: a single summary line. Expanded: one line per call (glyph +
-// name + compact args) followed by its result or error, indented.
-func renderToolRun(run *toolRun, expanded bool) string {
+// renderToolRun renders one card at the given detail. brief shows the
+// summary line only; preview and full add per-tool call/result bodies (see
+// renderToolPreview) — the growing part of the transcript is cached as one
+// piece either way.
+func (m model) renderToolRun(run *toolRun, detail toolDetail) string {
 	var b strings.Builder
+	// A card the user expanded by click shows one level more than the
+	// global setting (brief→preview, preview→full).
+	if !run.collapsed && detail < detailFull {
+		detail++
+	}
 	chevron := "▸"
-	if expanded || !run.collapsed {
+	if detail != detailBrief {
 		chevron = "▾"
 	}
-	head := chevron + " " + runGlyph(run)
-	if len(run.calls) == 1 {
-		head += run.calls[0].name
-		if run.calls[0].pending {
-			head += "…"
-		}
-	} else {
-		head += fmt.Sprintf("%d tool calls", len(run.calls))
+	glyph := runGlyph(run)
+
+	// Single-call cards upgrade their head to the tool's own call line once
+	// detail is available, so a bash card reads "$ make test" instead of
+	// just "bash".
+	var previews []toolPreview
+	if detail != detailBrief {
+		previews = make([]toolPreview, len(run.calls))
 		for i := range run.calls {
-			if i >= maxToolChips {
-				head += fmt.Sprintf("  +%d", len(run.calls)-i)
-				break
-			}
-			head += "  " + run.calls[i].name
-			if run.calls[i].pending {
+			previews[i] = m.renderToolPreview(&run.calls[i], detail == detailFull)
+		}
+	}
+
+	head := chevron + " " + glyph
+	if len(run.calls) == 1 {
+		if detail != detailBrief {
+			head += previews[0].head
+		} else {
+			head += run.calls[0].name
+			if run.calls[0].pending {
 				head += "…"
 			}
 		}
+	} else {
+		head += runSummary(run)
 	}
 	b.WriteString(toolStyle.Render(head))
 
-	if !expanded && run.collapsed {
+	if detail == detailBrief {
 		return b.String()
 	}
 
+	if len(run.calls) == 1 {
+		writePreviewBody(&b, previews[0].body)
+		return b.String()
+	}
 	for i := range run.calls {
-		c := &run.calls[i]
 		b.WriteString("\n")
 		b.WriteString(toolStyle.Render("  "))
-		if c.pending {
-			b.WriteString(toolStyle.Render("⚙ "))
-		} else if c.err != "" {
-			b.WriteString(errorStyle.Render("⚠ "))
-		} else {
-			b.WriteString(toolStyle.Render("✓ "))
-		}
-		b.WriteString(toolStyle.Render(c.name))
-		if args := compactJSON(c.args); args != "" {
-			b.WriteString("  " + truncate(args, toolPreviewLen))
-		}
-		if c.err != "" {
-			b.WriteString("\n")
-			b.WriteString(errorStyle.Render("    error: " + truncate(c.err, maxToolText)))
-		} else if res := compactJSON(c.result); res != "" && res != "null" {
-			b.WriteString("\n")
-			b.WriteString(metaStyle.Render("    " + truncate(res, maxToolText)))
-		}
+		b.WriteString(callGlyph(&run.calls[i]))
+		b.WriteString(previews[i].head)
+		writePreviewBody(&b, previews[i].body)
 	}
 	return b.String()
+}
+
+// runSummary is the multi-call head: call count plus name chips.
+func runSummary(run *toolRun) string {
+	head := fmt.Sprintf("%d tool calls", len(run.calls))
+	for i := range run.calls {
+		if i >= maxToolChips {
+			head += fmt.Sprintf("  +%d", len(run.calls)-i)
+			break
+		}
+		head += "  " + run.calls[i].name
+		if run.calls[i].pending {
+			head += "…"
+		}
+	}
+	return head
+}
+
+// writePreviewBody indents and appends a tool preview body below its call
+// line. Body lines are already styled by the tool renderer.
+func writePreviewBody(b *strings.Builder, body []string) {
+	for _, line := range body {
+		b.WriteString("\n")
+		b.WriteString("    ")
+		b.WriteString(line)
+	}
+}
+
+// callGlyph is the per-call status marker (pending / error / ok).
+func callGlyph(c *toolCall) string {
+	switch {
+	case c.pending:
+		return toolStyle.Render("⚙ ")
+	case c.err != "":
+		return errorStyle.Render("⚠ ")
+	}
+	return toolStyle.Render("✓ ")
 }
 
 // handleMouseClick toggles the tool-run card under a transcript click. The
