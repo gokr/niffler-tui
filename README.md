@@ -166,6 +166,12 @@ tables, and syntax-highlighted fenced code blocks via Glamour). While tokens
 stream, blocks show as plain text and upgrade to styled Markdown when output
 pauses, avoiding an expensive full Markdown render on every token.
 
+On startup and after every conversation switch (`/session`, `/new`, or an
+entry in the browser), the output area is rebuilt from the session's stored
+messages — user and assistant turns, reasoning, grouped tool cards with
+their arguments and results, and turn errors — so the previous conversation
+is visible and scrollable instead of starting blank.
+
 History is persisted per session as JSONL under
 `$XDG_STATE_HOME/niffler-tui/history-<session>.jsonl` (or
 `~/.local/state/niffler-tui/`), capped at 200 entries. Delete the file to

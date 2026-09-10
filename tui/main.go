@@ -191,6 +191,12 @@ type model struct {
 	transcriptDirty bool
 	viewportContent string
 
+	// historyGen stamps stored-transcript replays (startup and /session
+	// switching); a reply whose stamp is stale is dropped, so switching away
+	// while a load is in flight cannot paste the old conversation into the
+	// new one (see conversationHistoryMsg).
+	historyGen int
+
 	// Markdown renderer for assistant output. Rebuilt when the viewport
 	// width changes; block render caches are invalidated on rebuild.
 	renderer *glamour.TermRenderer
@@ -503,6 +509,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.addBlock(blockMeta, t(m.loc, "note.connected", m.natsURL, m.session))
 		m.syncViewport(true)
 		cmds = append(cmds, bootstrapBackendCmd(m.comp, m.session))
+		// Rebuild the output area from the stored transcript: the session
+		// (default "console") resumes where the last run left it, and without
+		// this the previous messages are invisible and unscrollable.
+		cmds = append(cmds, m.startHistoryLoad())
 
 	case connectStoppedMsg:
 		return m, nil
@@ -520,6 +530,35 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.openSessionSelector(msg.Sessions)
 		return m, nil
+
+	case conversationHistoryMsg:
+		// A replay belongs to the session and load it was fetched for; a
+		// switch (or A→B→A) that happened while the store read was in
+		// flight must not paste the old conversation into the new one.
+		if msg.Session != m.session || msg.Gen != m.historyGen {
+			break
+		}
+		if msg.Err != nil {
+			m.contextNote = t(m.loc, "note.historyFailed", msg.Err.Error())
+			break
+		}
+		if len(msg.Blocks) == 0 {
+			break
+		}
+		// Insert at the recorded anchor, not the top: blocks that existed
+		// when the load started (the startup "connected" banner) stay above
+		// the history, and a message sent while the load was in flight stays
+		// below it.
+		anchor := min(max(msg.Anchor, 0), len(m.blocks))
+		merged := make([]transcriptBlock, 0, len(m.blocks)+len(msg.Blocks))
+		merged = append(merged, m.blocks[:anchor]...)
+		merged = append(merged, msg.Blocks...)
+		merged = append(merged, m.blocks[anchor:]...)
+		m.blocks = merged
+		m.markTranscriptDirty()
+		// Pin to the newest message: startup and switches should show the
+		// tail of the conversation, with the rest scrollable above it.
+		m.syncViewport(true)
 
 	case tea.WindowSizeMsg:
 		m.width = msg.Width

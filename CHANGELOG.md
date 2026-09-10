@@ -23,6 +23,19 @@ project aims for [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **Startup and `/session` switching showed a blank output area** — the TUI
+  resumed the same conversation on the backend but never replayed its
+  messages, so the previous turns were invisible and unscrollable (switching
+  sessions looked like switching to an empty one). The stored transcript
+  (store kind `message`) is now replayed into the output area at connect and
+  after every `/session`, `/new` and browser switch: user and assistant
+  turns, reasoning blocks, grouped tool cards with their arguments and
+  results (arguments are recovered from the assistant message's
+  `tool_calls`, the outcomes from the following tool messages), and turn
+  errors. Replays are generation-stamped, so a reply that lands after a
+  further switch is dropped, and are inserted at the point the load started,
+  so a message sent while the store read is in flight is preserved below the
+  history.
 - **/mcp selector and form never rendered** — the MCP modes switched state
   and handled keys but were missing from the `View()` switch, so `/mcp`
   showed only the header line; all three modes (server browser, registry

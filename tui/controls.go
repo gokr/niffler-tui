@@ -11,9 +11,11 @@ import (
 )
 
 // switchSession resets the model for a different conversation (session) id:
-// clears the transcript, per-session state (history, model override, runtime,
-// approvals) and input, then reloads the new session's history. The caller
-// must re-bootstrap (bootstrapBackendCmd) to repopulate provider/model/runtime.
+// clears the transcript, per-session state (sent-message history, model
+// override, runtime, approvals) and input, then reloads the new session's
+// sent-message history. The caller must re-bootstrap (bootstrapBackendCmd)
+// and replay the stored transcript (switchSessionWithHistory) to repopulate
+// provider/model/runtime and show the previous messages.
 func (m model) switchSession(id string) model {
 	m.session = id
 	m.blocks = nil
@@ -246,12 +248,14 @@ func (m model) executeLocalCommand(command string) (tea.Model, tea.Cmd) {
 		if id == "" {
 			id = newSessionID()
 		}
-		return m.switchSession(id), bootstrapBackendCmd(m.comp, id)
+		m, historyCmd := m.switchSessionWithHistory(id)
+		return m, tea.Batch(historyCmd, bootstrapBackendCmd(m.comp, id))
 
 	case "session", "sessions":
 		if argument != "" {
 			id := strings.TrimSpace(argument)
-			return m.switchSession(id), bootstrapBackendCmd(m.comp, id)
+			m, historyCmd := m.switchSessionWithHistory(id)
+			return m, tea.Batch(historyCmd, bootstrapBackendCmd(m.comp, id))
 		}
 		// Open the conversation browser; the store list is fetched in the
 		// background and the selector rebuilds when it arrives.
@@ -798,7 +802,8 @@ func (m model) handleControlKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		switch selected.kind {
 		case selectorNewSession:
 			id := newSessionID()
-			return m.switchSession(id), bootstrapBackendCmd(m.comp, id)
+			m, historyCmd := m.switchSessionWithHistory(id)
+			return m, tea.Batch(historyCmd, bootstrapBackendCmd(m.comp, id))
 		case selectorSession:
 			if selected.id == m.session {
 				// Re-selecting the current session just dismisses the
@@ -807,7 +812,8 @@ func (m model) handleControlKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 				m.layout()
 				return m, nil
 			}
-			return m.switchSession(selected.id), bootstrapBackendCmd(m.comp, selected.id)
+			m, historyCmd := m.switchSessionWithHistory(selected.id)
+			return m, tea.Batch(historyCmd, bootstrapBackendCmd(m.comp, selected.id))
 		}
 		return m, nil
 	}

@@ -140,6 +140,11 @@ Glamour 语法高亮的代码块）。token 流式期间，块以纯文本显示
 后升级为带样式的 Markdown，避免每个 token 都做一次昂贵的完整 Markdown
 渲染。
 
+启动时以及每次切换会话后（`/session`、`/new` 或浏览器中的条目），输出
+区域会根据会话存储的消息重建——用户与 Assistant 回合、推理内容、带参数
+与结果的工具卡片分组，以及回合错误——因此之前的对话可见且可回滚查看，
+而不再是一片空白。
+
 历史按会话以 JSONL 持久化在
 `$XDG_STATE_HOME/niffler-tui/history-<session>.jsonl`（或
 `~/.local/state/niffler-tui/`），上限 200 条。删除该文件即清空。
