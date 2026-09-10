@@ -23,6 +23,19 @@ project aims for [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- **Header and bottom-row layout (Pi-inspired)** — the header's runtime line
+  now carries the session's cumulative `↑ in ↓ out` token totals and the
+  prompt-cache hit rate next to the context gauge (the cache counter is
+  restored from the persisted conversation header, and per-conversation stats
+  survive switching back and forth within a run). The transient turn state
+  moved from the bottom row into the divider above the input, embedded a few
+  characters into the line (`── ⠋ working ────`), which frees the bottom row
+  for a single line: the conversation workspace (`~`-shortened, tail-kept
+  when narrow) and any status note. The command list and key hints are gone
+  from that row — `/help` and Tab completion cover them, and `help.keys` now
+  lists every binding (alt+enter/ctrl+j, ctrl+r, ctrl+t, ctrl+e, ctrl+g,
+  pgup/pgdn, drag-select, esc, ctrl+c). The input placeholder ("message
+  (alt+enter: newline)") is removed too.
 - **Local commands are declared once** — the built-in registry
   (`builtinSlashCommands`) now carries everything about a command: its
   handler, its aliases (`aliasOf`), its declared subcommands and its params.

@@ -677,7 +677,7 @@ func TestRuntimeStatusAndContextUsage(t *testing.T) {
 	if m.contextUsed != 250_000 || contextPercent(m.contextUsed, m.runtime.Context) != 0.25 {
 		t.Fatalf("context = used:%d limit:%d", m.contextUsed, m.runtime.Context)
 	}
-	line := runtimeStatusLine(LocaleEN, m.runtime, "deepseek-v4-pro", m.contextUsed, 80)
+	line := runtimeStatusLine(LocaleEN, m.runtime, "deepseek-v4-pro", m.contextUsed, "", 80)
 	if ansi.StringWidth(line) > 79 || !strings.Contains(ansi.Strip(line), "25%") {
 		t.Fatalf("runtime line width/content = %d %q", ansi.StringWidth(line), ansi.Strip(line))
 	}
@@ -694,6 +694,7 @@ func TestRuntimeStatusAndContextUsage(t *testing.T) {
 
 func TestCacheHitStatsAccumulate(t *testing.T) {
 	m := newTestModel()
+	m.session = "game"
 
 	// Round 1: a status event with a cached-input breakdown.
 	m.applySessionEvent(sessionEventMsg{kind: "status", event: sessionEvent{
@@ -703,6 +704,15 @@ func TestCacheHitStatsAccumulate(t *testing.T) {
 	}})
 	if m.cacheHits != 8_000 || m.cachePrompt != 10_000 {
 		t.Fatalf("round 1 = hits:%d prompt:%d", m.cacheHits, m.cachePrompt)
+	}
+	if m.inputTokens != 10_000 || m.outputTokens != 0 {
+		t.Fatalf("round 1 tokens = in:%d out:%d", m.inputTokens, m.outputTokens)
+	}
+
+	// The header chip combines the arrows and the hit rate.
+	chip := m.usageChip()
+	if !strings.Contains(chip, "↑ 10") || !strings.Contains(chip, "↓ —") || !strings.Contains(chip, "cache 80%") {
+		t.Fatalf("usage chip = %q", chip)
 	}
 
 	// The same round repeated on the assistant event must not double-count.
@@ -737,10 +747,23 @@ func TestCacheHitStatsAccumulate(t *testing.T) {
 		t.Fatal("cache line shown without a provider breakdown")
 	}
 
-	// A session switch resets the accumulated ratio.
+	// A session switch snapshots the counters and starts the new session's
+	// (zero when unseen) set.
 	switched := m.switchSession("other")
-	if switched.cacheHits != 0 || switched.cachePrompt != 0 || switched.lastCachePrompt != 0 {
-		t.Fatalf("session switch kept cache stats: %d/%d", switched.cacheHits, switched.cachePrompt)
+	if switched.cacheHits != 0 || switched.cachePrompt != 0 ||
+		switched.inputTokens != 0 || switched.outputTokens != 0 ||
+		switched.lastUsagePrompt != 0 || switched.lastUsageCompletion != 0 {
+		t.Fatalf("session switch kept usage stats: %d/%d in/out %d/%d",
+			switched.cacheHits, switched.cachePrompt, switched.inputTokens, switched.outputTokens)
+	}
+	if snap := switched.usageCache["game"]; snap.cacheHits != 17_600 ||
+		snap.cachePrompt != 22_000 || snap.input != 22_000 {
+		t.Fatalf("outgoing usage not snapshotted: %+v", snap)
+	}
+	// Returning to the conversation restores its counters.
+	back := switched.switchSession("game")
+	if back.cacheHits != 17_600 || back.cachePrompt != 22_000 || back.inputTokens != 22_000 {
+		t.Fatalf("returning session lost usage: %+v", back.usageSnapshot())
 	}
 }
 
@@ -1718,7 +1741,7 @@ func TestRuntimeOutputLimitSurfaced(t *testing.T) {
 	if !strings.Contains(status, "output: 32.8k (fallback)") {
 		t.Fatalf("detailed status missing output limit: %q", status)
 	}
-	line := runtimeStatusLine(LocaleEN, m.runtime, "", 0, 80)
+	line := runtimeStatusLine(LocaleEN, m.runtime, "", 0, "", 80)
 	if ansi.StringWidth(line) > 79 {
 		t.Fatalf("runtime line too wide: %d", ansi.StringWidth(line))
 	}

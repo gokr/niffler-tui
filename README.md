@@ -151,9 +151,17 @@ The header shows the conversation id, the `think:`/`tool:`/`effort:` chips,
 and the effective provider and model plus a context gauge. Context occupancy
 uses model-reported total tokens when available, survives session resume
 through Niffler's conversation metadata, and changes colour at the same 75%
-warning / 90% trimming thresholds as core. Provider selection changes
-Niffler's global default; model selection is scoped to the current
+warning / 90% trimming thresholds as core. The same line carries the
+session's cumulative token totals (`↑ in ↓ out`) and the prompt-cache hit
+rate (restored from the conversation header on resume). Provider selection
+changes Niffler's global default; model selection is scoped to the current
 conversation.
+
+The input zone is bordered by rules; the transient turn state (spinner and
+`working`, stopping, the two-stage stop prompt) is embedded a few characters
+into the top rule, Pi-style. The single bottom row shows the conversation
+workspace and any transient note — the command and key hints live in `/help`
+and Tab completion instead.
 
 ## Plugin slash commands
 

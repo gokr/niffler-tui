@@ -2,9 +2,11 @@ package main
 
 import (
 	"fmt"
+	"strings"
 
 	"charm.land/bubbles/v2/progress"
 	"charm.land/lipgloss/v2"
+	"github.com/charmbracelet/x/ansi"
 )
 
 func formatTokens(value int) string {
@@ -47,7 +49,7 @@ func contextBar(percent float64, width int) string {
 	return bar.ViewAs(max(0.0, min(1.0, percent)))
 }
 
-func runtimeStatusLine(loc Locale, runtime runtimeResolution, modelOverride string, used int, width int) string {
+func runtimeStatusLine(loc Locale, runtime runtimeResolution, modelOverride string, used int, stats string, width int) string {
 	provider := runtime.Provider
 	if provider == "" {
 		provider = t(loc, "runtime.provider")
@@ -78,5 +80,61 @@ func runtimeStatusLine(loc Locale, runtime runtimeResolution, modelOverride stri
 			contextText = t(loc, "runtime.ctxEmpty", contextBar(0, 10), formatTokens(runtime.Context))
 		}
 	}
-	return truncate(selection+"  │  "+contextText, max(1, width-1))
+	limit := max(1, width-1)
+	full := selection + "  │  " + contextText + statsSuffix(stats)
+	if ansi.StringWidth(full) <= limit {
+		return full
+	}
+	// Tight header: shrink the provider/model text before the live measures so
+	// the context gauge and the usage chip survive on narrow terminals. The
+	// model name is the more useful half of the selection, so it outlives the
+	// provider prefix.
+	minimal := "› " + modelName
+	if modelOverride != "" {
+		minimal += t(loc, "runtime.session")
+	}
+	shrink := func(room int) string {
+		if ansi.StringWidth(selection) <= room {
+			return selection
+		}
+		if ansi.StringWidth(minimal) <= room {
+			return minimal
+		}
+		return truncate(minimal, room)
+	}
+	const minSelection = 8
+	tail := "  │  " + contextText + statsSuffix(stats)
+	if room := limit - ansi.StringWidth(tail); room >= minSelection {
+		return shrink(room) + tail
+	}
+	tail = "  │  " + contextText
+	if room := limit - ansi.StringWidth(tail); room >= minSelection {
+		return shrink(room) + tail
+	}
+	return truncate(full, limit)
+}
+
+// statsSuffix appends the session usage chip (↑ in ↓ out, cache hit rate) to
+// the runtime line when there is anything to show.
+func statsSuffix(stats string) string {
+	if stats == "" {
+		return ""
+	}
+	return "  │  " + stats
+}
+
+// usageChip is the session usage summary shown in the header next to the
+// context gauge: cumulative tokens in/out (↑/↓) and the prompt-cache hit
+// rate when the provider has reported cached-input details.
+func (m model) usageChip() string {
+	var parts []string
+	if m.inputTokens > 0 || m.outputTokens > 0 {
+		parts = append(parts, t(m.loc, "runtime.tokens",
+			formatTokens(m.inputTokens), formatTokens(m.outputTokens)))
+	}
+	if m.cachePrompt > 0 {
+		pct := float64(m.cacheHits) / float64(m.cachePrompt) * 100
+		parts = append(parts, t(m.loc, "runtime.cache", fmt.Sprintf("%.0f", pct)))
+	}
+	return strings.Join(parts, "  ")
 }

@@ -51,6 +51,14 @@ const (
 	viewportFlushInterval = 33 * time.Millisecond
 )
 
+// usageTotals is one conversation's cumulative usage counters, snapshotted
+// when switching sessions so returning to a conversation keeps its stats.
+type usageTotals struct {
+	input, output              int
+	cacheHits, cachePrompt     int
+	lastPrompt, lastCompletion int
+}
+
 type promptTokensDetails struct {
 	CachedTokens int `json:"cached_tokens"`
 }
@@ -182,18 +190,28 @@ type model struct {
 	modelOverride    string
 	promptTokens     int
 	contextUsed      int
-	// lastCachePrompt is the prompt-token total of the round whose cache
-	// numbers were last accumulated, so the same round arriving on both a
-	// status and an assistant event is only counted once.
-	lastCachePrompt int
-	// cacheHits/cachePrompt accumulate the per-round cached and total prompt
-	// tokens reported by the llm component over the current session, so the
-	// status detail can show a session-wide cache-hit ratio instead of just
-	// the last round's snapshot. Rounded back to zero on session switch.
-	cacheHits      int
-	cachePrompt    int
+	// inputTokens/outputTokens accumulate the session's billed tokens (the
+	// header's ↑/↓ chip); cacheHits/cachePrompt accumulate the prompt-cache
+	// economics (header and /status).
+	// lastUsagePrompt/lastUsageCompletion identify the round whose usage was
+	// last folded in, so a round reported on both a status and an assistant
+	// event is only counted once.
+	lastUsagePrompt     int
+	lastUsageCompletion int
+	inputTokens         int
+	outputTokens        int
+	cacheHits           int
+	cachePrompt         int
+	// usageCache snapshots the counters per conversation for the duration of
+	// one TUI run, so switching sessions and back keeps the stats stable; the
+	// persisted cache totals seed it on a conversation's first visit.
+	usageCache     map[string]usageTotals
 	contextNote    string
 	controlPending bool
+
+	// cwd is the conversation workspace shown in the bottom row (loaded from
+	// the persisted conversation header).
+	cwd string
 
 	// transcript is the cached joined rendering of the scroll window (see
 	// renderTranscript); viewportContent is the last string pushed into the
@@ -341,7 +359,6 @@ func newModel(ctx context.Context, comp *sdk.Component, session, natsURL string)
 	input := textarea.New()
 	input.Prompt = "> "
 	loc := detectLocale()
-	input.Placeholder = t(loc, "input.placeholder")
 	input.CharLimit = 0
 	input.MaxHeight = maxInputHeight
 	input.DynamicHeight = true
@@ -386,6 +403,8 @@ func newModel(ctx context.Context, comp *sdk.Component, session, natsURL string)
 		slash:        newSlashRegistry(),
 		scrollback:   scrollbackLines(),
 		pieceEpoch:   1, // 0 is "never rendered" for blocks
+		usageCache:   map[string]usageTotals{},
+		cwd:          initialCwd(),
 		// Mouse tracking on by default: wheel scrolling, tool-card clicks, and
 		// application-owned plain-drag selection all work simultaneously.
 		// /mouse off remains a terminal-native fallback.
@@ -829,6 +848,21 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.contextUsed = msg.Conversation.ContextUsed
 		m.promptTokens = msg.Conversation.PromptTokens
+		if msg.Conversation.Cwd != "" {
+			m.cwd = msg.Conversation.Cwd
+		}
+		// First visit to this conversation in this run: seed the persisted
+		// prompt-cache economics from its header. The in/out token totals are
+		// per-run (core does not persist them), so they start at zero.
+		if m.usageCache == nil {
+			m.usageCache = map[string]usageTotals{}
+		}
+		if _, seen := m.usageCache[m.session]; !seen {
+			m.cacheHits = msg.Conversation.CacheRead
+			m.cachePrompt = msg.Conversation.CachePrompt
+			m.lastUsagePrompt, m.lastUsageCompletion = 0, 0
+			m.usageCache[m.session] = m.usageSnapshot()
+		}
 		// The slash registry is global; apply it even though the rest of the
 		// snapshot is session-scoped.
 		if msg.SlashErr == nil {
@@ -1407,16 +1441,38 @@ func (m *model) updateRuntimeFromEvent(event sessionEvent) {
 	} else if event.Usage.PromptTokens > 0 {
 		m.contextUsed = event.Usage.PromptTokens + event.Usage.CompletionTokens
 	}
-	// Accumulate the round's cache economics. Status and assistant events
-	// both carry the usage object; guard against double-counting a round
-	// that reports through both by tracking the prompt total it belongs to.
-	if event.Usage.Details != nil && event.Usage.Details.CachedTokens > 0 {
-		if event.Usage.PromptTokens != m.lastCachePrompt {
-			m.cacheHits += event.Usage.Details.CachedTokens
-			m.cachePrompt += event.Usage.PromptTokens
-			m.lastCachePrompt = event.Usage.PromptTokens
+	// Accumulate session usage once per LLM round: status and assistant events
+	// both carry the round's usage object, so the (prompt, completion) pair
+	// identifies it and keeps the round from counting twice. The totals feed
+	// the header's ↑/↓ and cache chips.
+	if u := event.Usage; u.PromptTokens > 0 || u.CompletionTokens > 0 {
+		if u.PromptTokens != m.lastUsagePrompt || u.CompletionTokens != m.lastUsageCompletion {
+			m.lastUsagePrompt = u.PromptTokens
+			m.lastUsageCompletion = u.CompletionTokens
+			m.inputTokens += u.PromptTokens
+			m.outputTokens += u.CompletionTokens
+			if u.Details != nil && u.Details.CachedTokens > 0 {
+				m.cacheHits += u.Details.CachedTokens
+				m.cachePrompt += u.PromptTokens
+			}
 		}
 	}
+}
+
+// usageSnapshot/restoreUsage move the session usage counters in and out of
+// usageCache on a conversation switch.
+func (m *model) usageSnapshot() usageTotals {
+	return usageTotals{
+		input: m.inputTokens, output: m.outputTokens,
+		cacheHits: m.cacheHits, cachePrompt: m.cachePrompt,
+		lastPrompt: m.lastUsagePrompt, lastCompletion: m.lastUsageCompletion,
+	}
+}
+
+func (m *model) restoreUsage(u usageTotals) {
+	m.inputTokens, m.outputTokens = u.input, u.output
+	m.cacheHits, m.cachePrompt = u.cacheHits, u.cachePrompt
+	m.lastUsagePrompt, m.lastUsageCompletion = u.lastPrompt, u.lastCompletion
 }
 
 func (m *model) finishTurn(reply, errorText string) {
@@ -1643,7 +1699,7 @@ func (m model) View() tea.View {
 	// treatment (ctrl+e cycles tool cards; ctrl+g cycles the LLM effort).
 	toolChip := toolLevelStyle.Render(t(m.loc, "chip.tool", t(m.loc, "level."+m.toolLevel.String())))
 	effortChip := effortStyle.Render(t(m.loc, "chip.effort", t(m.loc, "level."+m.effortLabel())))
-	runtimeLine := runtimeStatusLine(m.loc, m.runtime, m.modelOverride, m.contextUsed,
+	runtimeLine := runtimeStatusLine(m.loc, m.runtime, m.modelOverride, m.contextUsed, m.usageChip(),
 		max(0, m.width-1-ansi.StringWidth(header)-ansi.StringWidth(thinkChip)-ansi.StringWidth(toolChip)-ansi.StringWidth(effortChip)-3*ansi.StringWidth(headerSep)))
 	headerLine := header + headerSep + thinkChip + headerSep + toolChip + headerSep + effortChip + headerSep + runtimeLine
 	makeView := func(content string) tea.View {
@@ -1709,42 +1765,105 @@ func (m model) View() tea.View {
 		return makeView(strings.Join(parts, "\n"))
 	}
 
-	status := t(m.loc, "status.ready")
-	if !m.connected {
-		status = m.spinner.View() + " " + t(m.loc, "status.connecting", m.natsURL)
-	} else if m.busy {
-		// While busy, the status line carries the two-stage stop prompt:
-		// first ESC arms Stop?, second ESC force-cancels the turn.
-		switch {
-		case m.stopping:
-			status = m.spinner.View() + " " + t(m.loc, "status.stopping")
-		case m.stopArmed:
-			status = errorStyle.Render(t(m.loc, "status.stopArmed"))
-		default:
-			status = m.spinner.View() + " " + t(m.loc, "status.working")
-		}
-	} else if m.controlPending {
-		status = t(m.loc, "status.updating")
+	// Pi-style input zone: the transient activity state (spinner + working,
+	// stopping, connecting, …) is embedded in the divider above the input,
+	// which keeps the bottom row free for the workspace and notes.
+	parts := []string{
+		headerLine, m.viewport.View(), "",
+		m.inputRule(m.activityLabel()), m.input.View(), m.inputRule(""),
 	}
-
-	if m.contextNote != "" {
-		status += " | " + m.contextNote
-	} else {
-		status += " " + t(m.loc, "status.hint")
-	}
-
-	// Pi-style input zone: a blank spacer keeps streamed output from
-	// crowding the input, and colored rules above/below mark it clearly.
-	rule := inputBorderStyle.Render(strings.Repeat("─", max(1, m.width-1)))
-	parts := []string{headerLine, m.viewport.View(), "", rule, m.input.View(), rule}
 	if m.searchActive {
 		parts = append(parts, m.searchView())
 	}
 	if m.slashComp.active {
 		parts = append(parts, m.slashCompletionView())
 	}
-	parts = append(parts, metaStyle.Render(truncate(status, max(1, m.width-1))))
+	parts = append(parts, metaStyle.Render(truncate(m.bottomLine(), max(1, m.width-1))))
 	return makeView(strings.Join(parts, "\n"))
+}
+
+// activityLabel is the transient turn state shown embedded in the input's
+// top divider (Pi-style: a few characters into the line). Empty while idle,
+// when the bottom row only carries the workspace and any note.
+func (m model) activityLabel() string {
+	switch {
+	case !m.connected:
+		return m.spinner.View() + " " + t(m.loc, "status.connecting", m.natsURL)
+	case m.stopping:
+		return m.spinner.View() + " " + t(m.loc, "status.stopping")
+	case m.stopArmed:
+		return errorStyle.Render(t(m.loc, "status.stopArmed"))
+	case m.busy:
+		return m.spinner.View() + " " + t(m.loc, "status.working")
+	case m.controlPending:
+		return t(m.loc, "status.updating") + "…"
+	}
+	return ""
+}
+
+// inputRule renders one of the dividers around the input. A non-empty label
+// is embedded a few characters into the line and truncated to fit; an
+// empty label is a plain rule. The state also remains visible through the
+// bottom row's note, so a too-narrow terminal only loses the decoration.
+func (m model) inputRule(label string) string {
+	width := max(1, m.width-1)
+	if label != "" {
+		const lead = "── "
+		leadW := ansi.StringWidth(lead)
+		if room := width - leadW - 1; room >= 1 {
+			label = truncate(label, room)
+			rest := width - leadW - ansi.StringWidth(label) - 1
+			return inputBorderStyle.Render(lead) + label + " " +
+				inputBorderStyle.Render(strings.Repeat("─", max(0, rest)))
+		}
+	}
+	return inputBorderStyle.Render(strings.Repeat("─", width))
+}
+
+// bottomLine is the single bottom row: the conversation workspace (the
+// session's cwd) and the transient note, if any. The command/key hints live
+// in /help and completion instead of consuming this row.
+func (m model) bottomLine() string {
+	line := displayPath(m.cwd, max(12, m.width/2))
+	if m.contextNote != "" {
+		if line != "" {
+			line += "  │  "
+		}
+		line += m.contextNote
+	}
+	return line
+}
+
+// initialCwd is the workspace fallback before the conversation header loads
+// (and for brand-new conversations): the directory the TUI was started in.
+func initialCwd() string {
+	wd, err := os.Getwd()
+	if err != nil {
+		return ""
+	}
+	return wd
+}
+
+// displayPath shortens a filesystem path for the bottom row: the home
+// directory collapses to ~, and paths wider than limit keep their tail with
+// a leading ellipsis (the project name matters more than the prefix).
+func displayPath(path string, limit int) string {
+	if path == "" {
+		return ""
+	}
+	if home, err := os.UserHomeDir(); err == nil && home != "" {
+		if path == home {
+			path = "~"
+		} else if strings.HasPrefix(path, home+string(os.PathSeparator)) {
+			path = "~" + path[len(home):]
+		}
+	}
+	if limit > 0 {
+		if w := ansi.StringWidth(path); w > limit {
+			path = ansi.TruncateLeft(path, w-(limit-1), "…")
+		}
+	}
+	return path
 }
 
 func compactJSON(raw json.RawMessage) string {

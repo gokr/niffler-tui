@@ -17,7 +17,16 @@ import (
 // and replay the stored transcript (switchSessionWithHistory) to repopulate
 // provider/model/runtime and show the previous messages.
 func (m model) switchSession(id string) model {
+	// Snapshot the outgoing conversation's usage counters and restore the
+	// incoming one's (zero on first visit), so the header stats stay stable
+	// across switches.
+	if m.usageCache == nil {
+		m.usageCache = map[string]usageTotals{}
+	}
+	m.usageCache[m.session] = m.usageSnapshot()
 	m.session = id
+	m.restoreUsage(m.usageCache[id])
+	m.cwd = initialCwd()
 	m.blocks = nil
 	m.markTranscriptDirty()
 	m.renderFrom = 0
@@ -37,9 +46,6 @@ func (m model) switchSession(id string) model {
 	m.runtime = runtimeResolution{}
 	m.promptTokens = 0
 	m.contextUsed = 0
-	m.cacheHits = 0
-	m.cachePrompt = 0
-	m.lastCachePrompt = 0
 	// controlPending guards the control-plane UI; a completion for the old
 	// session (e.g. a conversation model save) is dropped by its session
 	// guard, so the flag must not survive the switch.
@@ -229,7 +235,6 @@ func localLocale(m model, cmd slashCommand, argument string) (tea.Model, tea.Cmd
 		return m, nil
 	}
 	m.loc = loc
-	m.input.Placeholder = t(loc, "input.placeholder")
 	persistLocale(loc)
 	m.addBlock(blockMeta, t(m.loc, "locale.switched", arg))
 	m.syncViewport(true)

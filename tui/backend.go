@@ -104,6 +104,9 @@ type conversationState struct {
 	Context        int
 	ContextUsed    int
 	PromptTokens   int
+	Cwd            string
+	CachePrompt    int
+	CacheRead      int
 }
 
 type bootstrapMsg struct {
@@ -272,6 +275,9 @@ func loadConversationState(comp *sdk.Component, session string) (conversationSta
 			Context        int    `json:"context"`
 			ContextUsed    int    `json:"contextUsed"`
 			PromptTokens   int    `json:"promptTokens"`
+			Cwd            string `json:"cwd"`
+			CachePrompt    int    `json:"cachePrompt"`
+			CacheRead      int    `json:"cacheRead"`
 		} `json:"value"`
 		Code string `json:"code"`
 	}
@@ -289,6 +295,9 @@ func loadConversationState(comp *sdk.Component, session string) (conversationSta
 		Provider:       response.Value.Provider, Model: response.Value.Model,
 		Context: response.Value.Context, ContextUsed: response.Value.ContextUsed,
 		PromptTokens: response.Value.PromptTokens,
+		Cwd:          response.Value.Cwd,
+		CachePrompt:  response.Value.CachePrompt,
+		CacheRead:    response.Value.CacheRead,
 	}, nil
 }
 
