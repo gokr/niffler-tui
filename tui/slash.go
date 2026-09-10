@@ -159,7 +159,7 @@ func builtinSlashCommands() []slashCommand {
 		}},
 		{Name: "status", Description: "show provider/model/context details", builtin: true, run: localStatus},
 		{Name: "components", Description: "show what this conversation can call", builtin: true, run: localComponents, Params: []slashParam{
-			{Name: "filter", Kind: "enum", Values: []string{"all", "direct", "discovered", "undiscovered"}},
+			{Name: "filter", Kind: "enum", Values: []string{"all", "direct", "discovered", "undiscovered", "unknown"}},
 		}},
 		{Name: "discover", Description: "append component schemas to this conversation", builtin: true, run: localDiscover, Params: []slashParam{
 			{Name: "target", Kind: "string", Description: "component name, or tool=NAME"},

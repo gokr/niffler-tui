@@ -35,8 +35,8 @@ func renderComponents(comps []visibilityComponent, exposure *exposureDoc, filter
 	if filter == "" {
 		filter = "all"
 	}
-	if filter != "all" && filter != "direct" && filter != "discovered" && filter != "undiscovered" {
-		return "", fmt.Errorf("expected all, direct, discovered or undiscovered")
+	if filter != "all" && filter != "direct" && filter != "discovered" && filter != "undiscovered" && filter != "unknown" {
+		return "", fmt.Errorf("expected all, direct, discovered, undiscovered or unknown")
 	}
 	direct, seen := map[string]bool{}, map[string]bool{}
 	key := func(c, n string) string { return c + "\x00" + n }
@@ -60,6 +60,10 @@ func renderComponents(comps []visibilityComponent, exposure *exposureDoc, filter
 		sort.Slice(c.Tools, func(i, j int) bool { return c.Tools[i].Name < c.Tools[j].Name })
 		var tools []string
 		for _, t := range c.Tools {
+			// With no snapshot nothing is known about exposure, so the
+			// state is "unknown" rather than a confident "undiscovered" —
+			// but the filter must still be able to select it, or the
+			// four accepted filters can all render an empty listing.
 			state := "undiscovered"
 			switch {
 			case t.Schema.Harness.Hidden:
@@ -71,6 +75,11 @@ func renderComponents(comps []visibilityComponent, exposure *exposureDoc, filter
 			case seen[key(c.Name, t.Name)]:
 				state = "discovered"
 			}
+			if exposure == nil && filter == "undiscovered" {
+				// "undiscovered" is the user's word for "not callable
+				// yet"; without a snapshot that is everything visible.
+				state = "undiscovered"
+			}
 			if filter == "all" || filter == state {
 				tools = append(tools, fmt.Sprintf("  %s [%s]", t.Name, state))
 			}
@@ -80,6 +89,12 @@ func renderComponents(comps []visibilityComponent, exposure *exposureDoc, filter
 		}
 		lines = append(lines, fmt.Sprintf("%s (%d/%d tools)", c.Name, len(tools), len(c.Tools)))
 		lines = append(lines, tools...)
+	}
+	// A filter that matched nothing must say so; returning "" renders as a
+	// blank block, which reads as a bug in the command rather than an
+	// empty result set.
+	if len(lines) == 0 {
+		return fmt.Sprintf("No %s tools.", filter), nil
 	}
 	return strings.Join(lines, "\n"), nil
 }
