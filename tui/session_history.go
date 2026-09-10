@@ -12,6 +12,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
@@ -56,18 +57,60 @@ type conversationHistoryMsg struct {
 	Err     error
 }
 
+// historyPageSize is the store list tool's cap: one response may carry at
+// most this many documents (core's resume loader uses the same bound, and a
+// bigger response could outgrow the bus payload).
+const historyPageSize = 1000
+
 // loadConversationHistory lists a conversation's message documents in
 // stored order (ids are zero-padded, so key order == chronological order).
-// The store list tool caps a response at 1000 entries — the same cap core's
-// resume loader uses.
+//
+// The store list tool returns the FIRST page and has no cursor, so a
+// conversation that fills the page would otherwise be replayed from its
+// oldest messages. When the first page is full we binary-search the padded
+// id space for the highest stored sequence (tiny one-item probes) and fetch
+// the tail window instead: resuming a long conversation must land on its
+// latest messages. Older messages stay available in the store for core.
 func loadConversationHistory(comp *sdk.Component, session string) ([]storedMessage, error) {
+	fetch := func(prefix string, limit int) ([]storedMessage, error) {
+		return listConversationMessages(comp, session, prefix, limit)
+	}
+	messages, err := fetch("", historyPageSize)
+	if err != nil {
+		return nil, err
+	}
+	if len(messages) < historyPageSize {
+		return messages, nil // complete history
+	}
+	last, err := lastMessageSeq(fetch)
+	if err != nil {
+		return nil, err
+	}
+	if start := historyTailStart(last); start != "" {
+		return fetch(start, historyPageSize)
+	}
+	return messages, nil // the full page was already the whole history
+}
+
+// historyTailStart returns the id suffix of the tail window ending at last,
+// or "" when the first page already covers the conversation.
+func historyTailStart(last int) string {
+	if last <= historyPageSize {
+		return ""
+	}
+	return seqPrefix(last - historyPageSize + 1)
+}
+
+// listConversationMessages fetches one page of a conversation's messages
+// starting at the given id suffix ("" = from the first message).
+func listConversationMessages(comp *sdk.Component, session, suffix string, limit int) ([]storedMessage, error) {
 	var response struct {
 		Items []struct {
 			Value storedMessage `json:"value"`
 		} `json:"items"`
 	}
 	err := requestInto(comp, "store", "list", map[string]any{
-		"kind": "message", "idPrefix": session + ":", "limit": 1000,
+		"kind": "message", "idPrefix": session + ":" + suffix, "limit": limit,
 	}, &response)
 	if err != nil {
 		return nil, err
@@ -77,6 +120,34 @@ func loadConversationHistory(comp *sdk.Component, session string) ([]storedMessa
 		messages = append(messages, item.Value)
 	}
 	return messages, nil
+}
+
+// lastMessageSeq finds the highest stored message sequence for a
+// conversation. The list tool returns the first item at-or-after a prefix,
+// which makes "an item exists >= N" monotone in N: a binary search over the
+// six-digit sequence space needs ~20 one-item probes. Sequences beyond
+// 999999 are out of scope at conversation scale.
+func lastMessageSeq(fetch func(prefix string, limit int) ([]storedMessage, error)) (int, error) {
+	lo, hi := 0, 999_999
+	for lo < hi {
+		mid := (lo + hi + 1) / 2
+		items, err := fetch(seqPrefix(mid), 1)
+		if err != nil {
+			return 0, err
+		}
+		if len(items) > 0 {
+			lo = mid
+		} else {
+			hi = mid - 1
+		}
+	}
+	return lo, nil
+}
+
+// seqPrefix renders a message sequence as the zero-padded id suffix core
+// uses (six digits), so lexicographic key order matches numeric order.
+func seqPrefix(seq int) string {
+	return fmt.Sprintf("%06d", seq)
 }
 
 func conversationHistoryCmd(comp *sdk.Component, session string, gen, anchor int) tea.Cmd {

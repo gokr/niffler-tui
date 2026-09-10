@@ -168,6 +168,9 @@ func builtinSlashCommands() []slashCommand {
 		{Name: "mouse", Description: "wheel scrolling and drag selection", builtin: true, run: localMouse, Params: []slashParam{
 			{Name: "state", Kind: "enum", Values: []string{"on", "off"}},
 		}},
+		{Name: "cards", Description: "background shading behind tool runs", builtin: true, run: localCards, Params: []slashParam{
+			{Name: "state", Kind: "enum", Values: []string{"on", "off"}},
+		}},
 		{Name: "theme", Description: "choose the UI color theme", builtin: true, run: localTheme, Params: []slashParam{
 			{Name: "name", Kind: "string", Description: "theme name (empty opens the picker)", Values: themeNames},
 		}},

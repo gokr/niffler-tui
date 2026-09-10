@@ -13,6 +13,8 @@ import (
 	"fmt"
 	"strings"
 
+	"charm.land/lipgloss/v2"
+
 	tea "charm.land/bubbletea/v2"
 )
 
@@ -174,8 +176,23 @@ func (m *model) cycleToolVisibility() {
 // renderToolRun renders one card at the given detail. brief shows the
 // summary line only; preview and full add per-tool call/result bodies (see
 // renderToolPreview) — the growing part of the transcript is cached as one
-// piece either way.
+// piece either way. Card lines are wrapped in the theme's card style so the
+// run reads as one block; cardStyle is applied only when the theme sets a
+// background (see applyTheme), so background-less themes are unchanged.
 func (m model) renderToolRun(run *toolRun, detail toolDetail) string {
+	return m.cardStyle().Render(m.renderToolRunLines(run, detail))
+}
+
+// cardStyle returns the style backing tool runs: a background when the
+// active theme defines one, an empty style otherwise.
+func (m model) cardStyle() lipgloss.Style {
+	if !m.toolCards {
+		return lipgloss.NewStyle()
+	}
+	return toolCardStyle
+}
+
+func (m model) renderToolRunLines(run *toolRun, detail toolDetail) string {
 	var b strings.Builder
 	// A card the user expanded by click shows one level more than the
 	// global setting (brief→preview, preview→full).

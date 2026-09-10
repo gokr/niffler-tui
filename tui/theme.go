@@ -44,6 +44,8 @@ type theme struct {
 	slashFg     string
 	slashBg     string
 	tool        string
+	toolBg      string // card background behind a tool run's lines
+	toolBgSet   bool   // true once toolBg is meaningful for this theme
 	meta        string
 	error       string
 	approval    string // approval gate border + title accent
@@ -87,6 +89,8 @@ var themeRegistry = map[string]theme{
 		slashFg:     "0",
 		slashBg:     "7",
 		tool:        "3",
+		toolBg:      "236",
+		toolBgSet:   true,
 		meta:        "8",
 		error:       "9",
 		approval:    "3",
@@ -113,6 +117,8 @@ var themeRegistry = map[string]theme{
 		slashFg:     "#FFFFFF",
 		slashBg:     "#1E293B",
 		tool:        "#B45309",
+		toolBg:      "#F1F3F5",
+		toolBgSet:   true,
 		meta:        "#6B7280",
 		error:       "#B91C1C",
 		approval:    "#B45309",
@@ -138,6 +144,8 @@ var themeRegistry = map[string]theme{
 		slashFg:     "#FDF6E3",
 		slashBg:     "#7C6F64",
 		tool:        "#A16207",
+		toolBg:      "#F2EADC",
+		toolBgSet:   true,
 		meta:        "#8C8273",
 		error:       "#B3261E",
 		approval:    "#A16207",
@@ -163,6 +171,8 @@ var themeRegistry = map[string]theme{
 		slashFg:     "#FDF6E3",
 		slashBg:     "#586E75",
 		tool:        "#B58900",
+		toolBg:      "#EEE8D5",
+		toolBgSet:   true,
 		meta:        "#657B83",
 		error:       "#DC322F",
 		approval:    "#B58900",
@@ -188,6 +198,8 @@ var themeRegistry = map[string]theme{
 		slashFg:     "#002B36",
 		slashBg:     "#93A1A1",
 		tool:        "#B58900",
+		toolBg:      "#073642",
+		toolBgSet:   true,
 		meta:        "#586E75",
 		error:       "#DC322F",
 		approval:    "#B58900",
@@ -213,6 +225,8 @@ var themeRegistry = map[string]theme{
 		slashFg:     "#282828",
 		slashBg:     "#EBDBB2",
 		tool:        "#FABD2F",
+		toolBg:      "#32302F",
+		toolBgSet:   true,
 		meta:        "#928374",
 		error:       "#FB4934",
 		approval:    "#FABD2F",
@@ -238,6 +252,8 @@ var themeRegistry = map[string]theme{
 		slashFg:     "#2E3440",
 		slashBg:     "#D8DEE9",
 		tool:        "#EBCB8B",
+		toolBg:      "#3B4252",
+		toolBgSet:   true,
 		meta:        "#4C566A",
 		error:       "#BF616A",
 		approval:    "#EBCB8B",
@@ -264,6 +280,8 @@ var themeRegistry = map[string]theme{
 		slashFg:     "#282A36",
 		slashBg:     "#F8F8F2",
 		tool:        "#F1FA8C",
+		toolBg:      "#343746",
+		toolBgSet:   true,
 		meta:        "#6272A4",
 		error:       "#FF5555",
 		approval:    "#F1FA8C",
@@ -290,6 +308,8 @@ var themeRegistry = map[string]theme{
 		slashFg:     "#1A1B26",
 		slashBg:     "#C0CAF5",
 		tool:        "#E0AF68",
+		toolBg:      "#24283B",
+		toolBgSet:   true,
 		meta:        "#565F89",
 		error:       "#F7768E",
 		approval:    "#E0AF68",
@@ -315,6 +335,8 @@ var themeRegistry = map[string]theme{
 		slashFg:     "#1E1E2E",
 		slashBg:     "#CDD6F4",
 		tool:        "#F9E2AF",
+		toolBg:      "#313244",
+		toolBgSet:   true,
 		meta:        "#6C7086",
 		error:       "#F38BA8",
 		approval:    "#F9E2AF",
@@ -394,6 +416,14 @@ func applyTheme(name string) bool {
 	codeStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(th.code))
 	activeSlashStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(th.slashFg)).Background(lipgloss.Color(th.slashBg))
 	toolStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(th.tool))
+	// toolCardStyle backs a tool run's lines so cards read as one block
+	// instead of blending into the surrounding transcript. Themes without a
+	// card background (toolBgSet false) leave the terminal default alone.
+	if th.toolBgSet {
+		toolCardStyle = lipgloss.NewStyle().Background(lipgloss.Color(th.toolBg))
+	} else {
+		toolCardStyle = lipgloss.NewStyle()
+	}
 	metaStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(th.meta))
 	errorStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(th.error))
 	approvalBoxStyle = lipgloss.NewStyle().

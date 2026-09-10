@@ -2,6 +2,7 @@ package main
 
 import (
 	"errors"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -267,5 +268,51 @@ func TestConversationHistoryMsgKeepsSelectorMode(t *testing.T) {
 	}
 	if len(got.blocks) != 1 {
 		t.Fatalf("blocks = %+v", got.blocks)
+	}
+}
+
+func TestSeqPrefixAndTailStart(t *testing.T) {
+	if got := seqPrefix(42); got != "000042" {
+		t.Fatalf("seqPrefix(42) = %q", got)
+	}
+	if got := historyTailStart(0); got != "" {
+		t.Fatalf("empty history tail start = %q", got)
+	}
+	if got := historyTailStart(historyPageSize); got != "" {
+		t.Fatalf("exactly-full history tail start = %q", got)
+	}
+	if got := historyTailStart(historyPageSize + 1); got != seqPrefix(2) {
+		t.Fatalf("overflow tail start = %q, want %q", got, seqPrefix(2))
+	}
+	if got := historyTailStart(2500); got != seqPrefix(1501) {
+		t.Fatalf("tail start = %q, want %q", got, seqPrefix(1501))
+	}
+}
+
+func TestLastMessageSeqBinarySearch(t *testing.T) {
+	ids := map[int]bool{1: true, 2: true, 5: true, 999: true, 1000: true, 1001: true, 4242: true}
+	fetch := func(prefix string, _ int) ([]storedMessage, error) {
+		start, err := strconv.Atoi(prefix)
+		if err != nil {
+			t.Fatalf("probe prefix %q is not numeric: %v", prefix, err)
+		}
+		for n := start; n <= 1_000_000; n++ {
+			if ids[n] {
+				return []storedMessage{{Role: "user"}}, nil
+			}
+		}
+		return nil, nil
+	}
+	got, err := lastMessageSeq(fetch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != 4242 {
+		t.Fatalf("lastMessageSeq = %d, want 4242", got)
+	}
+
+	empty := func(string, int) ([]storedMessage, error) { return nil, nil }
+	if got, _ := lastMessageSeq(empty); got != 0 {
+		t.Fatalf("empty conversation seq = %d, want 0", got)
 	}
 }

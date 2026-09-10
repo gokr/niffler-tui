@@ -125,16 +125,17 @@ func TestGenericPreviewUsesResultText(t *testing.T) {
 	}
 	result, _ := json.Marshal(map[string]any{"text": strings.Join(lines, "\n")})
 	c := &toolCall{
-		name:   "grep",
+		name:   "mystery",
 		args:   json.RawMessage(`{"pattern":"match"}`),
 		result: result,
 	}
 	pv := m.renderToolPreview(c, false)
-	if head := ansi.Strip(pv.head); !strings.Contains(head, "grep") || !strings.Contains(head, "match") {
+	if head := ansi.Strip(pv.head); !strings.Contains(head, "mystery") || !strings.Contains(head, "match") {
 		t.Fatalf("generic head = %q", head)
 	}
 	body := ansi.Strip(strings.Join(pv.body, "\n"))
-	if !strings.Contains(body, "match 1") || !strings.Contains(body, "match 12") ||
+	lastPreview := fmt.Sprintf("match %d", toolReadLines) // preview size may be tuned
+	if !strings.Contains(body, "match 1") || !strings.Contains(body, lastPreview) ||
 		!strings.Contains(body, "more lines") {
 		t.Fatalf("generic preview body = %q", body)
 	}
@@ -144,6 +145,52 @@ func TestGenericPreviewUsesResultText(t *testing.T) {
 	full := ansi.Strip(strings.Join(m.renderToolPreview(c, true).body, "\n"))
 	if !strings.Contains(full, "match 20") || strings.Contains(full, "more lines") {
 		t.Fatalf("generic full body = %q", full)
+	}
+}
+
+func TestGrepPreviewHighlightsMatches(t *testing.T) {
+	m := newTestModel()
+	m.loc = LocaleEN
+	result, _ := json.Marshal(map[string]any{
+		"text": "(exit 0)\ntui/main.go:42:\tpattern := argString(args)\nother.go:7:no hit here\n",
+	})
+	c := &toolCall{
+		name:   "grep",
+		args:   json.RawMessage(`{"pattern":"argString","path":"tui"}`),
+		result: result,
+	}
+	pv := m.renderToolPreview(c, false)
+	head := ansi.Strip(pv.head)
+	if !strings.Contains(head, `grep "argString"`) || !strings.Contains(head, "in tui") {
+		t.Fatalf("grep head = %q", head)
+	}
+	body := strings.Join(pv.body, "\n")
+	if !strings.Contains(ansi.Strip(body), "tui/main.go:42:") || !strings.Contains(ansi.Strip(body), "(exit 0)") {
+		t.Fatalf("grep body = %q", ansi.Strip(body))
+	}
+	// The matched substring is emphasised: the raw body carries an SGR code
+	// around it that the location prefix does not.
+	if !strings.Contains(body, "argString") || !strings.Contains(body, "\x1b[") {
+		t.Fatalf("grep match not styled = %q", body)
+	}
+}
+
+func TestFilesPreview(t *testing.T) {
+	m := newTestModel()
+	m.loc = LocaleEN
+	result, _ := json.Marshal(map[string]any{"text": "a.go\nb.go\nc.go\n"})
+	c := &toolCall{
+		name:   "files",
+		args:   json.RawMessage(`{"path":"tui","glob":"*.go"}`),
+		result: result,
+	}
+	pv := m.renderToolPreview(c, false)
+	head := ansi.Strip(pv.head)
+	if !strings.Contains(head, "files tui") || !strings.Contains(head, "(*.go)") {
+		t.Fatalf("files head = %q", head)
+	}
+	if body := ansi.Strip(strings.Join(pv.body, "\n")); !strings.Contains(body, "a.go") {
+		t.Fatalf("files body = %q", body)
 	}
 }
 

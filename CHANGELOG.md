@@ -8,6 +8,14 @@ project aims for [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Read highlighting, grep/files cards, and `/cards`** — read previews now
+  syntax-highlight by file extension (chroma, with a style matching the
+  theme's markdown code blocks), `grep` renders `grep "pattern" in path`
+  with the location dimmed and each match emphasised, and `files` (niffler's
+  ls/find) renders its path list. `/cards [on|off]` (also from this cycle)
+  shades tool runs with the theme's card background so a run reads as one
+  block; it is a per-run display toggle, and themes without a card
+  background are unaffected.
 - **Per-tool previews and markdown-rendered thinking** — tool-run cards gain
   a `medium` level between `brief` and `full` (now the default; `ctrl+e`
   cycles brief → medium → full → off). At medium each call renders like its
@@ -70,6 +78,18 @@ project aims for [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **Restarting resumed the wrong conversation** — the TUI always started on
+  `console` (or `NIF_SESSION`) because nothing recorded the session the user
+  had switched to. The active conversation is now persisted per harness
+  (keyed by the bus URL, next to the theme/locale files) on every `/session`
+  switch, `/new` and browser pick, and a plain restart resumes it. Explicit
+  `-session` and `NIF_SESSION` still win.
+- **Long conversations replayed from their oldest messages** — the store's
+  list tool returns the first 1000 documents and has no cursor, so a session
+  with more than 1000 messages was replayed from the beginning and its
+  recent turns were missing. When the first page is full the TUI now
+  binary-searches the padded message-id space with tiny one-item probes and
+  fetches the tail window instead, so resumes land on the latest messages.
 - **Streaming slowed to a crawl as sessions grew** — every token frame
   re-rendered and re-clamped the whole transcript and handed the
   ever-growing string to the viewport, whose internal metrics scan every

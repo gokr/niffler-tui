@@ -143,6 +143,8 @@ Local commands are handled by the TUI and are never sent to the model:
 - `/mouse [on|off]` — mouse tracking (default on: wheel, click, and
   plain-drag selection work together; off uses terminal-native selection but
   provides no app wheel)
+- `/cards [on|off]` — shade tool runs with the theme's card background so a
+  run reads as one block (per-run display toggle)
 - `/help` — command summary, generated from the registered command table so
   it always lists every built-in (and every plugin command)
 

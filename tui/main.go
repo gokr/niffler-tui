@@ -4,6 +4,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -286,6 +287,11 @@ type model struct {
 	// Display-side only, like thinkLevel.
 	toolLevel toolLevel
 
+	// toolCards backs tool runs with the theme's card background so adjacent
+	// runs and surrounding output stop blending together. Toggled by /cards;
+	// themes without a card background ignore it.
+	toolCards bool
+
 	// thinkingEffort is the per-conversation LLM thinking-effort selection
 	// ("" = provider default | low | medium | high), persisted via
 	// core.session {thinking} like the model override. ctrl+g cycles it.
@@ -333,6 +339,7 @@ var (
 	codeStyle        = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("2"))
 	activeSlashStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("0")).Background(lipgloss.Color("7"))
 	toolStyle        = lipgloss.NewStyle().Foreground(lipgloss.Color("3"))
+	toolCardStyle    = lipgloss.NewStyle()
 	metaStyle        = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
 	errorStyle       = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("9"))
 )
@@ -416,6 +423,7 @@ func newModel(ctx context.Context, comp *sdk.Component, session, natsURL string)
 		usageCache:   map[string]usageTotals{},
 		cwd:          initialCwd(),
 		toolLevel:    toolMedium,
+		toolCards:    true,
 		// Mouse tracking on by default: wheel scrolling, tool-card clicks, and
 		// application-owned plain-drag selection all work simultaneously.
 		// /mouse off remains a terminal-native fallback.
@@ -1954,8 +1962,64 @@ func resolveNATSURL() string {
 	return defaultNATSURL
 }
 
+// sessionFilePath is the state file remembering the last active conversation
+// for one harness. It is keyed by the bus URL so two harnesses sharing the
+// per-user state dir never resume each other's conversations.
+func sessionFilePath(natsURL string) string {
+	dir := strings.TrimSpace(os.Getenv("XDG_STATE_HOME"))
+	if dir == "" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return ""
+		}
+		dir = filepath.Join(home, ".local", "state")
+	}
+	name := "session"
+	if natsURL != "" {
+		sum := sha256.Sum256([]byte(natsURL))
+		name = fmt.Sprintf("session-%x", sum[:6])
+	}
+	return filepath.Join(dir, "niffler-tui", name)
+}
+
+// loadLastSession returns the conversation the TUI was last switched to
+// against this harness, or "" when none was recorded.
+func loadLastSession(natsURL string) string {
+	path := sessionFilePath(natsURL)
+	if path == "" {
+		return ""
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	return sanitizeSessionID(strings.TrimSpace(string(data)))
+}
+
+// persistSession records the active conversation so the next launch resumes
+// it (best effort; explicit -session/NIF_SESSION still win).
+func persistSession(natsURL, id string) {
+	if id == "" {
+		return
+	}
+	path := sessionFilePath(natsURL)
+	if path == "" {
+		return
+	}
+	if dir := filepath.Dir(path); dir != "" {
+		_ = os.MkdirAll(dir, 0o755)
+	}
+	_ = os.WriteFile(path, []byte(id+"\n"), 0o644)
+}
+
 func main() {
+	// The saved last session is keyed by the bus URL, so two harnesses (each
+	// with its own store) never resume each other's conversation.
+	natsURL := resolveNATSURL()
 	defaultSession := strings.TrimSpace(os.Getenv("NIF_SESSION"))
+	if defaultSession == "" {
+		defaultSession = loadLastSession(natsURL)
+	}
 	if defaultSession == "" {
 		defaultSession = "console"
 	}
@@ -1971,7 +2035,6 @@ func main() {
 		*session = "console"
 	}
 
-	natsURL := resolveNATSURL()
 	if err := os.Setenv("NIF_NATS_URL", natsURL); err != nil {
 		fmt.Fprintln(os.Stderr, "niffler-tui: set bus URL:", err)
 		os.Exit(1)

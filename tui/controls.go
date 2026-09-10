@@ -27,6 +27,9 @@ func (m model) switchSession(id string) model {
 	m.session = id
 	m.restoreUsage(m.usageCache[id])
 	m.cwd = initialCwd()
+	// Remember the active conversation so a restart resumes it (explicit
+	// -session/NIF_SESSION still win at startup).
+	persistSession(m.natsURL, id)
 	m.blocks = nil
 	m.markTranscriptDirty()
 	m.renderFrom = 0
@@ -201,6 +204,27 @@ func localMouse(m model, cmd slashCommand, argument string) (tea.Model, tea.Cmd)
 		m.addBlock(blockMeta, t(m.loc, "chat.mouseOn"))
 	} else {
 		m.addBlock(blockMeta, t(m.loc, "chat.mouseOff"))
+	}
+	m.syncViewport(true)
+	return m, nil
+}
+
+// localCards toggles the card background behind tool runs. Themes without a
+// card background are unaffected, so this is a display-only preference.
+func localCards(m model, cmd slashCommand, argument string) (tea.Model, tea.Cmd) {
+	argument = strings.TrimSpace(argument)
+	if argument == "" {
+		m.toolCards = !m.toolCards
+	} else {
+		m.toolCards = argument == "on"
+	}
+	// Card rendering is cached per block; the whole transcript must rebuild.
+	m.invalidatePieces()
+	m.markTranscriptDirty()
+	if m.toolCards {
+		m.addBlock(blockMeta, t(m.loc, "chat.cardsOn"))
+	} else {
+		m.addBlock(blockMeta, t(m.loc, "chat.cardsOff"))
 	}
 	m.syncViewport(true)
 	return m, nil

@@ -12,6 +12,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"strings"
 
 	"charm.land/lipgloss/v2"
@@ -28,7 +29,7 @@ type toolPreview struct {
 // generic output show their head, diffs show the start of the change.
 const (
 	toolPreviewLines = 5
-	toolReadLines    = 12
+	toolReadLines    = 3
 	toolDiffLines    = 12
 )
 
@@ -77,10 +78,16 @@ func argInt(args map[string]any, key string) int {
 	return 0
 }
 
+func argBool(args map[string]any, key string) bool {
+	value, ok := args[key].(bool)
+	return ok && value
+}
+
 // toolResultText is the human-facing result text: the result object's "text"
-// field when present (the same projection the model sees), else the compact
-// JSON, else — for replayed results, which are stored as plain text — the
-// text itself.
+// field when present (the same projection the model sees), a bare JSON
+// string decoded as-is (edit's read/read_many return the text directly),
+// else the compact JSON, else — for replayed results, which are stored as
+// plain text — the text itself.
 func toolResultText(c *toolCall) string {
 	if len(c.result) == 0 {
 		return ""
@@ -90,6 +97,12 @@ func toolResultText(c *toolCall) string {
 	}
 	if err := json.Unmarshal(c.result, &object); err == nil && object.Text != "" {
 		return object.Text
+	}
+	// A bare string result must be decoded, not re-encoded: compacting it
+	// would show the quotes and literal \n escapes instead of the file.
+	var plain string
+	if err := json.Unmarshal(c.result, &plain); err == nil {
+		return plain
 	}
 	if compact := compactJSON(c.result); compact != "null" {
 		return compact
@@ -142,6 +155,10 @@ func (m model) renderToolPreview(c *toolCall, full bool) toolPreview {
 		return m.renderEditPreview(c, full)
 	case "read":
 		return m.renderReadPreview(c, full)
+	case "grep":
+		return m.renderGrepPreview(c, full)
+	case "files":
+		return m.renderFilesPreview(c, full)
 	case "write":
 		return m.renderWritePreview(c, full)
 	default:
@@ -293,7 +310,13 @@ func (m model) renderReadPreview(c *toolCall, full bool) toolPreview {
 	if c.err != "" {
 		body = append(body, errorStyle.Render(c.err))
 	} else {
-		lines := resultLines(toolResultText(c))
+		text := toolResultText(c)
+		lines := resultLines(text)
+		// Highlight by file extension (Pi-style); a path chroma cannot
+		// classify keeps the plain text.
+		if highlighted := highlightedLines(path, text); highlighted != nil {
+			lines = highlighted
+		}
 		kept, skipped := collapseLines(lines, previewLimit(full, toolReadLines), false)
 		body = append(body, kept...)
 		if skipped > 0 && !full {
@@ -338,6 +361,129 @@ func (m model) renderGenericPreview(c *toolCall, full bool) toolPreview {
 	}
 	if c.pending {
 		head += "…"
+	}
+
+	var body []string
+	if c.err != "" {
+		body = append(body, errorStyle.Render(c.err))
+	} else {
+		lines := resultLines(toolResultText(c))
+		kept, skipped := collapseLines(lines, previewLimit(full, toolReadLines), false)
+		body = append(body, kept...)
+		if skipped > 0 && !full {
+			body = append(body, metaStyle.Render(
+				t(m.loc, "tool.moreLines", fmt.Sprint(skipped))))
+		}
+	}
+	return toolPreview{head: head, body: body}
+}
+
+// renderGrepPreview is the grep card: "grep pattern in path (glob)" with the
+// ripgrep output, the location prefix dimmed and each pattern match
+// emphasised. The result carries the same "(exit N)" status line as bash.
+func (m model) renderGrepPreview(c *toolCall, full bool) toolPreview {
+	args := toolArgs(c)
+	pattern := argString(args, "pattern")
+	target := argString(args, "path", "file_path")
+	if target == "" {
+		target = "."
+	}
+	head := toolTitleStyle().Render("grep ") + `"` + pattern + `"`
+	head += metaStyle.Render(" in " + target)
+	if glob := argString(args, "glob"); glob != "" {
+		head += metaStyle.Render(" (" + glob + ")")
+	}
+
+	status, output := splitShellStatus(toolResultText(c))
+	re := grepPattern(pattern, argBool(args, "case_insensitive"))
+	lines := resultLines(output)
+	styled := make([]string, 0, len(lines))
+	for _, line := range lines {
+		styled = append(styled, styleGrepLine(line, re))
+	}
+
+	var body []string
+	if c.err != "" {
+		body = append(body, errorStyle.Render(c.err))
+	} else {
+		kept, skipped := collapseLines(styled, previewLimit(full, toolReadLines), false)
+		body = append(body, kept...)
+		if skipped > 0 && !full {
+			body = append(body, metaStyle.Render(
+				t(m.loc, "tool.moreLines", fmt.Sprint(skipped))))
+		}
+	}
+	if status != "" {
+		body = append(body, metaStyle.Render(status))
+	}
+	return toolPreview{head: head, body: body}
+}
+
+// styleGrepLine colours one "path:line:text" ripgrep match line; context
+// lines (which use '-' separators) and other shapes stay plain.
+func styleGrepLine(line string, re *regexp.Regexp) string {
+	location, rest, ok := strings.Cut(line, ":")
+	if !ok {
+		return line
+	}
+	lineno, match, ok := strings.Cut(rest, ":")
+	if !ok {
+		return line
+	}
+	return metaStyle.Render(location+":"+lineno+":") + highlightPattern(match, re)
+}
+
+// grepPattern compiles the search pattern for display emphasis only; Rust
+// regex features Go rejects simply skip the emphasis.
+func grepPattern(pattern string, insensitive bool) *regexp.Regexp {
+	if pattern == "" {
+		return nil
+	}
+	if insensitive {
+		pattern = "(?i)" + pattern
+	}
+	re, err := regexp.Compile(pattern)
+	if err != nil {
+		return nil
+	}
+	return re
+}
+
+// highlightPattern wraps every match in the tool accent.
+func highlightPattern(text string, re *regexp.Regexp) string {
+	if re == nil {
+		return text
+	}
+	spans := re.FindAllStringIndex(text, -1)
+	if len(spans) == 0 {
+		return text
+	}
+	var b strings.Builder
+	last := 0
+	for _, span := range spans {
+		b.WriteString(text[last:span[0]])
+		b.WriteString(toolMatchStyle().Render(text[span[0]:span[1]]))
+		last = span[1]
+	}
+	b.WriteString(text[last:])
+	return b.String()
+}
+
+func toolMatchStyle() lipgloss.Style {
+	return lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(currentTheme.tool))
+}
+
+// renderFilesPreview is the files card (niffler's ls/find equivalent):
+// "files path (glob)" followed by the listed paths.
+func (m model) renderFilesPreview(c *toolCall, full bool) toolPreview {
+	args := toolArgs(c)
+	target := argString(args, "path", "file_path")
+	if target == "" {
+		target = "."
+	}
+	head := toolTitleStyle().Render("files ") + target
+	if glob := argString(args, "glob"); glob != "" {
+		head += metaStyle.Render(" (" + glob + ")")
 	}
 
 	var body []string
