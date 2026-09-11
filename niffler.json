@@ -1,6 +1,6 @@
 {
   "name": "niffler-tui",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Bubble Tea terminal chat client for Niffler sessions.",
   "license": "MIT",
   "components": [

@@ -6,7 +6,15 @@ project aims for [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-09-11
+
 ### Added
+
+- **`/restart` command** — quits with a reserved exit code so the installed
+  `niffler-tui` wrapper re-runs the binary and picks up rebuilt plugin
+  installs; an in-flight turn remains in the session runner and is replayed
+  when the client returns. Without the wrapper, `/restart` exits cleanly with
+  the documented code.
 
 - **Slash commands in the input history** — up-arrow and ctrl+r only
   recalled prompts: the Enter handler returned after dispatch for any line
@@ -299,13 +307,13 @@ project aims for [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
-- **Card background dropped on grouped tool-run lines** — a multiline card
-  is shaded by wrapping it in the theme's card style, but each styled
-  fragment inside ends with a full SGR reset and lipgloss does not re-emit
-  the background after one, so in grouped (multi-call) runs the shading
-  stopped after the command text. The background is now re-applied after
-  every reset and each line is padded to the card width; background-less
-  styles and `/cards off` keep the plain path.
+- **Card background gaps across grouped and wrapped tool-run lines** — tool
+  cards are wrapped before their background is painted and every physical row
+  is padded to the viewport's safe width. ANSI resets from lipgloss, syntax
+  highlighting and shell output are followed by a background repaint, so
+  multiline scripts, short continuation rows, narrow terminals and resized
+  cards remain solid rectangles. Background-less styles and `/cards off` keep
+  the plain path.
 
 - **Restarting resumed the wrong conversation** — the TUI always started on
   `console` (or `NIF_SESSION`) because nothing recorded the session the user

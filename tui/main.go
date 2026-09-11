@@ -32,7 +32,7 @@ import (
 
 const (
 	componentName    = "tui"
-	componentVersion = "0.1.0"
+	componentVersion = "0.2.0"
 	turnTimeout      = 31 * time.Minute
 	reconnectDelay   = 2 * time.Second
 	maxToolText      = 4000
