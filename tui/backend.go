@@ -802,6 +802,36 @@ func mcpServersCmd(comp *sdk.Component) tea.Cmd {
 	}
 }
 
+// toolProfileSummary is one stored tool profile as core's `profile` tool
+// reports it for pickers: the selector list plus the resolved cost of the
+// profile against the live catalog.
+type toolProfileSummary struct {
+	Name      string   `json:"name"`
+	Tools     []string `json:"tools"`
+	Note      string   `json:"note"`
+	ToolCount int      `json:"toolCount"`
+	EstTokens int      `json:"estTokens"`
+	Missing   []string `json:"missing"`
+}
+
+type profilesResponse struct {
+	Profiles []toolProfileSummary `json:"profiles"`
+}
+
+// profilesMsg carries the stored tool profiles for the /profile picker.
+type profilesMsg struct {
+	Profiles []toolProfileSummary
+	Err      error
+}
+
+func profilesCmd(comp *sdk.Component) tea.Cmd {
+	return func() tea.Msg {
+		var response profilesResponse
+		err := requestInto(comp, "core", "profile", map[string]any{"op": "list"}, &response)
+		return profilesMsg{Profiles: response.Profiles, Err: err}
+	}
+}
+
 // mcpActionMsg reports a completed MCP control action (add/edit/remove/
 // refresh/toggle); the transcript shows the label and the /mcp selector
 // reloads.

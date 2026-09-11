@@ -1079,6 +1079,17 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.layout()
 		}
 
+	case profilesMsg:
+		if msg.Err == nil {
+			if m.mode == modeProfiles {
+				m.openProfileSelectorWith(msg.Profiles)
+			}
+		} else {
+			m.contextNote = msg.Err.Error()
+			m.mode = modeChat
+			m.layout()
+		}
+
 	case mcpSearchMsg:
 		if msg.Err != nil {
 			m.contextNote = msg.Err.Error()
@@ -1653,7 +1664,7 @@ func (m *model) layout() {
 	// The chat frame is header + viewport + blank spacer + rule + input +
 	// rule + status — six fixed rows besides the viewport and input.
 	m.viewport.SetHeight(max(1, height-6-m.input.Height()-extra))
-	if m.mode == modeProviders || m.mode == modeCatalogProviders || m.mode == modeModels || m.mode == modeSessions || m.mode == modeThemes {
+	if m.mode == modeProviders || m.mode == modeCatalogProviders || m.mode == modeModels || m.mode == modeSessions || m.mode == modeThemes || m.mode == modeProfiles {
 		m.selector.setSize(width-1, max(6, height-4))
 	}
 	if m.mode == modeConnectForm {
@@ -1794,7 +1805,7 @@ func (m model) View() tea.View {
 		parts := []string{headerLine}
 		switch m.mode {
 		case modeProviders, modeCatalogProviders, modeModels, modeSessions,
-			modeMcp, modeMcpSearch, modeThemes:
+			modeMcp, modeMcpSearch, modeThemes, modeProfiles:
 			control = m.selector.list.View()
 			parts = append(parts, control)
 			footer := t(m.loc, "footer.filterChoose")

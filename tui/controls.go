@@ -134,6 +134,13 @@ func localDiscover(m model, cmd slashCommand, argument string) (tea.Model, tea.C
 }
 
 func localProfile(m model, cmd slashCommand, argument string) (tea.Model, tea.Cmd) {
+	// A bare /profile opens the picker (the help text and README promise a
+	// listing with the current choice marked); an argument still applies
+	// directly, which also validates the name against the store.
+	if strings.TrimSpace(argument) == "" {
+		m.openProfileSelector()
+		return m, profilesCmd(m.comp)
+	}
 	return m, m.toolVisibilityCmd(cmd.Name, argument)
 }
 
@@ -525,6 +532,25 @@ func (m *model) openThemeSelector() {
 	m.layout()
 }
 
+// openProfileSelector opens the /profile picker with a loading placeholder;
+// the profilesMsg handler rebuilds it with the loaded list. The stored
+// profiles come from core, so the picker needs a round trip first.
+func (m *model) openProfileSelector() {
+	m.openProfileSelectorWith(nil)
+}
+
+// openProfileSelectorWith builds the /profile picker from the loaded list.
+func (m *model) openProfileSelectorWith(profiles []toolProfileSummary) {
+	title := t(m.loc, "selector.profiles")
+	if profiles == nil {
+		title = t(m.loc, "selector.profilesLoading")
+	}
+	m.selector = newSelector(title,
+		profileSelectorItems(m.loc, m.toolProfile, profiles), m.width, m.height-3)
+	m.mode = modeProfiles
+	m.layout()
+}
+
 func (m model) configuredCatalogProviders() []catalogProvider {
 	configured := make(map[string]bool, len(m.providers)+1)
 	for _, provider := range m.providers {
@@ -903,6 +929,27 @@ func (m model) handleControlKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.mode = modeChat
 		m.layout()
 		m.addBlock(blockMeta, t(m.loc, "theme.switched", name))
+		m.syncViewport(true)
+		return m, nil
+	case modeProfiles:
+		// The profile applies to conversations created from here on, so it
+		// is client state rather than a per-conversation override (see
+		// /profile NAME, which shares the same field).
+		switch selected.kind {
+		case selectorProfileDefault:
+			m.toolProfile = ""
+		case selectorProfile:
+			m.toolProfile = selected.id
+		default:
+			return m, nil
+		}
+		m.mode = modeChat
+		m.layout()
+		if m.toolProfile == "" {
+			m.addBlock(blockMeta, t(m.loc, "profile.cleared"))
+		} else {
+			m.addBlock(blockMeta, t(m.loc, "profile.selected", m.toolProfile))
+		}
 		m.syncViewport(true)
 		return m, nil
 	case modeSessions:

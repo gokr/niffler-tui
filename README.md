@@ -127,8 +127,9 @@ Local commands are handled by the TUI and are never sent to the model:
 - `/discover <component>|tool=NAME` — expose a component's tools (or one named
   tool) to this conversation, so the model can call them directly
 - `/profile [name|default]` — tool profile applied to new conversations;
-  `default` clears it, a bare `/profile` lists the available profiles and the
-  current choice
+  `default` clears it, and a bare `/profile` opens a picker listing the stored
+  profiles with the current choice marked and each one's resolved tool count
+  and token cost (`default` is offered as the "no profile" entry)
 - `/new [id]` — start a fresh conversation
 - `/session` — conversation browser; switch or resume sessions, or start a
   new one

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"net/url"
 	"strconv"
 	"strings"
@@ -23,6 +24,7 @@ const (
 	modeMcpSearch
 	modeMcpForm
 	modeThemes
+	modeProfiles
 )
 
 type selectorItemKind int
@@ -44,6 +46,8 @@ const (
 	selectorMcpAdd
 	selectorMcpEntry
 	selectorTheme
+	selectorProfile
+	selectorProfileDefault
 )
 
 type selectorItem struct {
@@ -353,6 +357,42 @@ func themeSelectorItems(current string) []list.Item {
 			kind: selectorTheme,
 			id:   name, title: title,
 			description: themeDescription(name),
+		})
+	}
+	return items
+}
+
+// profileSelectorItems builds the /profile picker: the "no profile" entry
+// first (which clears the selection), then every stored profile marked with
+// the resolved tool count and estimated token cost so the budget impact is
+// visible while choosing.
+func profileSelectorItems(loc Locale, current string, profiles []toolProfileSummary) []list.Item {
+	noProfile := t(loc, "selector.profileDefault")
+	if current == "" {
+		noProfile = "● " + noProfile
+	}
+	items := make([]list.Item, 0, len(profiles)+1)
+	items = append(items, selectorItem{
+		kind: selectorProfileDefault,
+		id:   "", title: noProfile,
+		description: t(loc, "selector.profileDefaultDesc"),
+	})
+	for _, profile := range profiles {
+		title := profile.Name
+		if profile.Name == current {
+			title = "● " + title
+		}
+		desc := t(loc, "selector.profileTools", fmt.Sprint(profile.ToolCount),
+			formatTokens(profile.EstTokens))
+		if profile.Note != "" {
+			desc += " — " + profile.Note
+		}
+		if len(profile.Missing) > 0 {
+			desc += "  " + t(loc, "selector.profileMissing", fmt.Sprint(len(profile.Missing)))
+		}
+		items = append(items, selectorItem{
+			kind: selectorProfile, id: profile.Name, title: title,
+			description: desc, payload: profile,
 		})
 	}
 	return items
