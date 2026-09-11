@@ -680,6 +680,14 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			if strings.HasPrefix(content, "/") {
 				m.input.SetValue("")
+				// Slash commands are kept in the input history (Pi-style):
+				// up-arrow and ctrl+r recall the last commands as well as
+				// prompts. Recorded before dispatch, so a /session or /new
+				// switch still stores it in the session it was typed in.
+				if m.addHistory(content) {
+					appendHistoryEntry(m.historyFile, content)
+				}
+				m.histIdx = -1
 				return m.executeLocalCommand(content)
 			}
 			if !m.connected {
@@ -689,6 +697,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				// Steer the running turn (Pi-style): the runner folds this into the
 				// live conversation and may keep working; we render it locally so it
 				// is visible in the flow even though busy stays true until "done".
+				// Busy-Enter is not a fresh send, so it stays out of the input
+				// history (see TestSteerWhileBusy).
 				m.input.SetValue("")
 				m.histIdx = -1
 				m.addBlock(blockUser, "Steer: "+content)

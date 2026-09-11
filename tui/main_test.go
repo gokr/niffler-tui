@@ -2748,3 +2748,27 @@ func TestMcpModesRender(t *testing.T) {
 		t.Fatalf("modeMcpSearch view missing entries:\n%s", view)
 	}
 }
+
+// TestSlashCommandsEnterInputHistory guards the Pi-style behavior: local
+// commands are recallable with up-arrow/ctrl+r, and persisted, just like
+// prompts. Credentials only ever exist in forms (which are never recorded).
+func TestSlashCommandsEnterInputHistory(t *testing.T) {
+	m := newTestModel()
+	m.historyFile = filepath.Join(t.TempDir(), "history.jsonl")
+	m.input.SetValue("/status")
+
+	updated, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	got := updated.(model)
+	if len(got.history) != 1 || got.history[0] != "/status" {
+		t.Fatalf("history = %v, want [/status]", got.history)
+	}
+	if entries := loadHistory(m.historyFile); len(entries) != 1 || entries[0] != "/status" {
+		t.Fatalf("persisted history = %v", entries)
+	}
+	if got.histIdx != -1 {
+		t.Fatalf("histIdx = %d, want -1", got.histIdx)
+	}
+	if got.input.Value() != "" {
+		t.Fatalf("input = %q, want cleared", got.input.Value())
+	}
+}

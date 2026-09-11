@@ -153,8 +153,11 @@ argument values (inline candidates, or values fetched lazily from the
 declared source tool). Unknown commands suggest near-miss names.
 
 Selectors use `/` to filter, arrows to move, `Enter` to choose, and `Esc` to
-return to chat. The provider form masks its API-key field; slash commands and
-credentials are not written to sent-message history or the transcript.
+return to chat. The provider form masks its API-key field; credentials
+entered in forms are never written to sent-message history or the
+transcript. Submitted lines — prompts and slash commands alike — are kept
+in the per-session input history, so up-arrow and ctrl+r recall commands
+like `/status` or `/mcp search ...` too.
 
 The header shows the conversation id, the `think:`/`tool:`/`effort:` chips,
 and the effective provider and model plus a context gauge. Context occupancy
