@@ -62,15 +62,27 @@ func shadedCells(line string) []bool {
 			if end < 0 {
 				break
 			}
-			params := line[i+2 : i+end]
-			switch {
-			case params == "" || params == "0":
-				shade = false
-			case strings.HasPrefix(params, "48;"):
-				shade = true
+			params := strings.Split(line[i+2:i+end], ";")
+			for p := 0; p < len(params); p++ {
+				switch params[p] {
+				case "", "0", "49":
+					shade = false
+				case "38", "48", "58":
+					if params[p] == "48" {
+						shade = true
+					}
+					// RGB/indexed colour values aren't SGR attributes:
+					// a zero channel must not be mistaken for a reset.
+					if p+1 < len(params) {
+						switch params[p+1] {
+						case "5":
+							p += 2
+						case "2":
+							p += 4
+						}
+					}
+				}
 			}
-			// Other SGR attributes (bold, foreground) never clear the
-			// background, so they are ignored here.
 			i += end + 1
 			continue
 		}

@@ -11,6 +11,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"strings"
 
 	"charm.land/lipgloss/v2"
@@ -175,6 +176,12 @@ func (m *model) cycleToolVisibility() {
 	m.invalidatePieces()
 }
 
+// cardSGR matches style sequences from lipgloss, syntax highlighting and
+// shell output. Repaint after every SGR, not just ESC[m: ESC[0m, ESC[49m
+// and combined resets can all clear a background too. Foreground and other
+// attributes remain intact; the card owns only the background.
+var cardSGR = regexp.MustCompile(`\x1b\[[0-9;:]*m`)
+
 // renderToolRun renders one card at the given detail. brief shows the
 // summary line only; preview and full add per-tool call/result bodies (see
 // renderToolPreview) — the growing part of the transcript is cached as one
@@ -188,29 +195,28 @@ func (m model) renderToolRun(run *toolRun, detail toolDetail) string {
 	if bg == "" {
 		return body
 	}
-	// Each fragment inside a card line (glyph, call head, body line) is
-	// styled independently and so ends with a full SGR reset; lipgloss does
-	// not re-emit the background after such a reset, which would leave the
-	// rest of the line unshaded. Re-applying the background after every
-	// reset keeps the card unbroken to the end of the command text — not
-	// just the trailing pad.
+	// Layout BEFORE painting: wrapping a padded/styled block later leaves
+	// short continuation rows unfilled. Use the viewport's safe width (it
+	// already reserves the terminal's last column), not the longest command.
+	// Expand tabs as lipgloss does, before measuring and wrapping them.
+	body = strings.ReplaceAll(body, "\t", "    ")
+	width := m.viewport.Width()
+	body = clampLines(body, width)
 	lines := strings.Split(body, "\n")
-	width := 0
-	for i, line := range lines {
-		line = strings.ReplaceAll(line, "\x1b[m", "\x1b[m"+bg)
-		lines[i] = line
-		if w := ansi.StringWidth(line); w > width {
-			width = w
+	if width <= 0 {
+		for _, line := range lines {
+			width = max(width, ansi.StringWidth(line))
 		}
 	}
-	// Shade the full card width: lipgloss pads a multiline block to its
-	// widest line, so reproduce that here (per line, after the background
-	// repaint) rather than rendering each line on its own, which has no
-	// width to pad to.
 	for i, line := range lines {
+		line = cardSGR.ReplaceAllStringFunc(line, func(sgr string) string {
+			return sgr + bg
+		})
 		if pad := width - ansi.StringWidth(line); pad > 0 {
 			line += strings.Repeat(" ", pad)
 		}
+		// Each physical row arms and resets its own background, so viewport
+		// clipping/scrolling can start anywhere without inheriting SGR state.
 		lines[i] = style.Render(line)
 	}
 	return strings.Join(lines, "\n")
