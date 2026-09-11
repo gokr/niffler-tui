@@ -52,6 +52,13 @@ const (
 	// coalesced: the first token schedules a flush and all tokens until it
 	// fires land in the same frame.
 	viewportFlushInterval = 33 * time.Millisecond
+
+	// restartExitCode is what /restart exits with. The niffler-tui wrapper
+	// script installed on PATH watches for exactly this code and re-runs the
+	// binary, so a restart picks up a rebuilt install (a plugin update
+	// replaces var/bin/tui while the running client keeps the old build).
+	// Run without the wrapper, /restart simply exits with this code.
+	restartExitCode = 85
 )
 
 // usageTotals is one conversation's cumulative usage counters, snapshotted
@@ -320,6 +327,11 @@ type model struct {
 	// running LLM stream via llm.cancel.<sessionId>, ending the turn.
 	stopArmed bool
 	stopping  bool
+
+	// restart marks a /restart request: the client quits with
+	// restartExitCode so a wrapper script can re-run it. Plain tea.Quit
+	// (ctrl+c, window close) exits 0 and stays exited.
+	restart bool
 }
 
 var (
@@ -2144,10 +2156,18 @@ func main() {
 
 	m := newModel(ctx, comp, *session, natsURL)
 	program = tea.NewProgram(m)
-	if _, err := program.Run(); err != nil {
+	final, err := program.Run()
+	if err != nil {
 		fmt.Fprintln(os.Stderr, "niffler-tui:", err)
 		comp.Close()
 		os.Exit(1)
 	}
 	comp.Close()
+	// /restart hands the restart to whoever launched us: the installed
+	// wrapper loops on this exit code and re-runs the binary from disk, so
+	// the fresh process picks up a rebuilt install. Run() returns the final
+	// model, which carries the flag set by the command.
+	if fm, ok := final.(model); ok && fm.restart {
+		os.Exit(restartExitCode)
+	}
 }

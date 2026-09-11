@@ -151,6 +151,9 @@ Local commands are handled by the TUI and are never sent to the model:
   provides no app wheel)
 - `/cards [on|off]` — shade tool runs with the theme's card background so a
   run reads as one block (per-run display toggle)
+- `/restart` — quit with a reserved exit code so the installed `niffler-tui`
+  wrapper re-runs the binary, picking up a rebuilt install after an update;
+  run without that wrapper it simply exits
 - `/help` — command summary, generated from the registered command table so
   it always lists every built-in (and every plugin command)
 

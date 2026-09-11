@@ -177,6 +177,7 @@ func builtinSlashCommands() []slashCommand {
 		{Name: "locale", Description: "switch the UI language", builtin: true, run: localLocale, Params: []slashParam{
 			{Name: "lang", Kind: "enum", Values: []string{"en", "zh", "zh-TW"}},
 		}},
+		{Name: "restart", Description: "restart the client (picks up a rebuilt binary)", builtin: true, run: localRestart},
 		{Name: "help", Description: "show this help", builtin: true, run: localHelp},
 		{Name: "?", Description: "show this help", builtin: true, aliasOf: "help", run: localHelp},
 	}

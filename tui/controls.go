@@ -274,6 +274,18 @@ func localLocale(m model, cmd slashCommand, argument string) (tea.Model, tea.Cmd
 
 // localHelp renders the command summary: the registry listing (one line per
 // canonical built-in) plus the registered plugin commands.
+// localRestart quits with restartExitCode so the launcher (the installed
+// niffler-tui wrapper) re-runs the binary — the point is picking up a rebuilt
+// install after a plugin update, which the running process cannot do itself.
+// Without such a wrapper this simply exits. Any in-flight turn keeps running
+// in its session runner and is replayed from the store after the restart.
+func localRestart(m model, cmd slashCommand, argument string) (tea.Model, tea.Cmd) {
+	m.restart = true
+	m.addBlock(blockMeta, t(m.loc, "chat.restarting"))
+	m.syncViewport(true)
+	return m, tea.Quit
+}
+
 func localHelp(m model, cmd slashCommand, argument string) (tea.Model, tea.Cmd) {
 	lines := []string{t(m.loc, "help.title")}
 	for _, builtin := range m.slash.helpCommands() {
