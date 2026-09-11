@@ -25,6 +25,7 @@ const (
 	modeMcpForm
 	modeThemes
 	modeProfiles
+	modeProfileForm
 )
 
 type selectorItemKind int
@@ -48,6 +49,7 @@ const (
 	selectorTheme
 	selectorProfile
 	selectorProfileDefault
+	selectorProfileNew
 )
 
 type selectorItem struct {
@@ -395,6 +397,9 @@ func profileSelectorItems(loc Locale, current string, profiles []toolProfileSumm
 			description: desc, payload: profile,
 		})
 	}
+	items = append(items, selectorItem{
+		kind: selectorProfileNew, title: t(loc, "profileForm.new"),
+	})
 	return items
 }
 

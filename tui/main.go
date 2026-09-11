@@ -135,6 +135,7 @@ type renderSettleMsg struct{}
 type viewportFlushMsg struct{}
 
 type model struct {
+	profileForm profileForm
 	toolProfile string // client selection for subsequently created conversations
 	ctx         context.Context
 	comp        *sdk.Component
@@ -816,6 +817,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.clearMouseSelection()
 
 	case tea.PasteMsg:
+		if m.mode == modeProfileForm {
+			return m.updateProfileForm(msg)
+		}
 		// Bracketed-paste arrives as PasteMsg, not KeyPressMsg, so without
 		// interception it bypasses the control-mode guard and lands in the
 		// chat textarea. Route it to the active control instead.
@@ -1079,7 +1083,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.layout()
 		}
 
+	case profileSavedMsg:
+		return m.applyProfileSaved(msg)
+
 	case profilesMsg:
+		if m.mode != modeProfiles {
+			return m, nil
+		}
 		if msg.Err == nil {
 			if m.mode == modeProfiles {
 				m.openProfileSelectorWith(msg.Profiles)
@@ -1673,6 +1683,9 @@ func (m *model) layout() {
 	if m.mode == modeOAuth && m.oauthLogin != nil {
 		m.oauthLogin.setWidth(width)
 	}
+	if m.mode == modeProfileForm {
+		m.profileForm.setWidth(width)
+	}
 	m.ensureRenderer(width - 1)
 }
 
@@ -1830,6 +1843,8 @@ func (m model) View() tea.View {
 				footer = m.contextNote
 			}
 			parts = append(parts, metaStyle.Render(truncate(footer, max(1, m.width-1))))
+		case modeProfileForm:
+			parts = append(parts, m.profileForm.view(m.width))
 		case modeMcpForm:
 			parts = append(parts, m.mcpForm.view(m.width))
 		case modeConnectForm:

@@ -612,6 +612,9 @@ func (m model) handleControlKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
+	if m.mode == modeProfileForm {
+		return m.updateProfileForm(msg)
+	}
 	if m.mode == modeOAuth {
 		if m.oauthLogin == nil {
 			m.mode = modeChat
@@ -936,6 +939,11 @@ func (m model) handleControlKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		// is client state rather than a per-conversation override (see
 		// /profile NAME, which shares the same field).
 		switch selected.kind {
+		case selectorProfileNew:
+			m.profileForm = newProfileForm(m.width, m.loc)
+			m.mode = modeProfileForm
+			m.layout()
+			return m, m.profileForm.focusField(0)
 		case selectorProfileDefault:
 			m.toolProfile = ""
 		case selectorProfile:

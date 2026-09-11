@@ -29,6 +29,17 @@ const (
 )
 
 var catalogEn = map[string]string{
+	"profileForm.new":                "＋ New profile…",
+	"profileForm.name":               "Name",
+	"profileForm.selectors":          "Selectors",
+	"profileForm.note":               "Note (optional)",
+	"profileForm.hint":               "Comma/space-separated: component, component.tool, -tool. Blank = base direct set. Not a security boundary. Applies to new conversations only.",
+	"profileForm.keys":               "tab/shift+tab: field • enter: next/save • ctrl+s: save • esc: cancel",
+	"profileForm.saving":             "Validating and saving… please wait",
+	"profileForm.badName":            "Name is required, without whitespace; default is reserved.",
+	"profileForm.exists":             "Profile {0} already exists; choose another name.",
+	"profileForm.missing":            "Unresolved selectors: {0}. Use component.tool for an individual tool.",
+	"profileForm.failed":             "Profile save was not acknowledged.",
 	"status.connecting":              "connecting to {0}",
 	"status.stopping":                "stopping…",
 	"status.stopArmed":               "Stop?  (press esc again to cancel)",
@@ -258,6 +269,17 @@ var catalogEn = map[string]string{
 }
 
 var catalogZh = map[string]string{
+	"profileForm.new":                "＋ 新建工具配置…",
+	"profileForm.name":               "名称",
+	"profileForm.selectors":          "选择器",
+	"profileForm.note":               "备注（可选）",
+	"profileForm.hint":               "用逗号或空格分隔：组件、组件.工具、-工具。留空使用基础直接工具集。不是安全边界；仅用于新对话。",
+	"profileForm.keys":               "tab/shift+tab: 字段 • enter: 下一项/保存 • ctrl+s: 保存 • esc: 取消",
+	"profileForm.saving":             "正在验证并保存…请稍候",
+	"profileForm.badName":            "名称必填且不能有空白；default 为保留名称。",
+	"profileForm.exists":             "配置 {0} 已存在；请使用其他名称。",
+	"profileForm.missing":            "未解析的选择器：{0}。单个工具请使用组件.工具。",
+	"profileForm.failed":             "未收到保存成功确认。",
 	"status.connecting":              "正在连接 {0}",
 	"status.stopping":                "正在停止…",
 	"status.stopArmed":               "停止？  （再按一次 esc 取消）",
@@ -487,6 +509,17 @@ var catalogZh = map[string]string{
 }
 
 var catalogZhTW = map[string]string{
+	"profileForm.new":                "＋ 新增工具設定…",
+	"profileForm.name":               "名稱",
+	"profileForm.selectors":          "選擇器",
+	"profileForm.note":               "備註（可選）",
+	"profileForm.hint":               "以逗號或空白分隔：元件、元件.工具、-工具。留空使用基本直接工具集。不是安全邊界；僅用於新對話。",
+	"profileForm.keys":               "tab/shift+tab: 欄位 • enter: 下一項/儲存 • ctrl+s: 儲存 • esc: 取消",
+	"profileForm.saving":             "正在驗證並儲存…請稍候",
+	"profileForm.badName":            "名稱必填且不能有空白；default 為保留名稱。",
+	"profileForm.exists":             "設定 {0} 已存在；請使用其他名稱。",
+	"profileForm.missing":            "未解析的選擇器：{0}。單一工具請使用元件.工具。",
+	"profileForm.failed":             "未收到儲存成功確認。",
 	"status.connecting":              "正在連線 {0}",
 	"status.stopping":                "正在停止…",
 	"status.stopArmed":               "停止？  （再按一次 esc 取消）",

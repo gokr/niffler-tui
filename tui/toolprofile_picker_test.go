@@ -61,9 +61,10 @@ func TestProfilePickerMarksAndClearsSelection(t *testing.T) {
 	m.width, m.height = 80, 24
 	m.openProfileSelectorWith(testProfiles())
 
+	// The no-profile entry, every stored profile, and the creation entry.
 	items := m.selector.list.Items()
-	if len(items) != 3 {
-		t.Fatalf("picker items = %d, want 2 profiles + the no-profile entry", len(items))
+	if len(items) != 4 {
+		t.Fatalf("picker items = %d, want 2 profiles + no-profile + new", len(items))
 	}
 	if items[0].(selectorItem).kind != selectorProfileDefault {
 		t.Fatalf("first item = %v, want the no-profile entry", items[0])

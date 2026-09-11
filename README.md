@@ -129,7 +129,12 @@ Local commands are handled by the TUI and are never sent to the model:
 - `/profile [name|default]` — tool profile applied to new conversations;
   `default` clears it, and a bare `/profile` opens a picker listing the stored
   profiles with the current choice marked and each one's resolved tool count
-  and token cost (`default` is offered as the "no profile" entry)
+  and token cost (`default` is offered as the "no profile" entry). The picker's
+  `＋ New profile…` entry opens a form that validates each selector against the
+  live catalog before storing: a bare selector names a component, a single tool
+  is `component.tool` (so `edit.read`, not `read`), and `-tool` excludes. There
+  is no security boundary here — a profile only trims or adds tools for
+  conversations created while it is selected.
 - `/new [id]` — start a fresh conversation
 - `/session` — conversation browser; switch or resume sessions, or start a
   new one
