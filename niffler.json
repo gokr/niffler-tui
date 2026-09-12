@@ -17,6 +17,7 @@
         "tui/highlight.go",
         "tui/i18n.go",
         "tui/mcp_form.go",
+        "tui/lsp_form.go",
         "tui/oauth.go",
         "tui/profile_form.go",
         "tui/provider_form.go",

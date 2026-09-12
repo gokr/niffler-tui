@@ -152,6 +152,9 @@ func builtinSlashCommands() []slashCommand {
 			{Name: "id", Kind: "string", Description: "model id or 'default'"},
 		}},
 		{Name: "connect", Description: "store a provider connection", builtin: true, run: localConnect},
+		{Name: "lsp", Description: "manage language-server registry entries", builtin: true, run: localLsp, subcommands: lspSubcommands, Params: []slashParam{
+			{Name: "subcommand", Kind: "enum", Values: subcommandNames(lspSubcommands)},
+		}},
 		{Name: "mcp", Description: "manage external MCP servers", builtin: true, run: localMcp, subcommands: mcpSubcommands, Params: []slashParam{
 			{Name: "subcommand", Kind: "enum", Values: subcommandNames(mcpSubcommands)},
 			{Name: "name", Kind: "string", Description: "server name",
@@ -186,6 +189,13 @@ func builtinSlashCommands() []slashCommand {
 // mcpSubcommands are /mcp's declared subcommands. The entry references this
 // table for its `subcommand` enum, for dispatch, and for Tab completion, so
 // the accepted set cannot drift from the documented one.
+// lspSubcommands are /lsp's declared subcommands.
+var lspSubcommands = []slashSubcommand{
+	{name: "add", run: lspAdd},
+	{name: "edit", run: lspEdit},
+	{name: "remove", run: lspRemove},
+}
+
 var mcpSubcommands = []slashSubcommand{
 	{name: "add", run: mcpAdd},
 	{name: "edit", run: mcpEdit},

@@ -197,6 +197,11 @@ type model struct {
 	mcpServers       []mcpServerSummary
 	mcpConfirmDelete string
 	mcpForm          mcpForm
+	// LSP registry control plane (/lsp): configured language servers, the
+	// two-stage delete arm, and the add/edit form.
+	lspServers       []lspServerSummary
+	lspConfirmDelete string
+	lspForm          lspForm
 	models           []modelSummary
 	modelsCatalog    string
 	runtime          runtimeResolution
@@ -845,6 +850,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.mcpForm, cmd = m.mcpForm.update(msg)
 			return m, cmd
 		}
+		if m.mode == modeLspForm {
+			var cmd tea.Cmd
+			m.lspForm, cmd = m.lspForm.update(msg)
+			return m, cmd
+		}
 		if m.mode == modeOAuth && m.oauthLogin != nil {
 			var cmd tea.Cmd
 			var input textinput.Model
@@ -1174,6 +1184,48 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.addBlock(blockError, t(m.loc, "mcp.warning", msg.Warning))
 		}
 		m.syncViewport(true)
+
+	case lspServersMsg:
+		m.controlPending = false
+		if msg.Err == nil {
+			m.lspServers = msg.Servers
+			if m.mode == modeLsp {
+				m.openLspServerSelector()
+			}
+		} else {
+			m.contextNote = msg.Err.Error()
+			m.mode = modeChat
+			m.layout()
+		}
+
+	case lspActionMsg:
+		m.controlPending = false
+		m.lspForm.saving = false
+		label := "lsp: " + msg.Name
+		switch msg.Action {
+		case "add":
+			label = t(m.loc, "lsp.saved", msg.Name)
+		case "remove":
+			label = t(m.loc, "lsp.removed", msg.Name)
+		}
+		if msg.Err != nil {
+			if msg.Action == "add" {
+				m.lspForm.err = msg.Err.Error()
+				m.mode = modeLspForm
+			} else {
+				m.addBlock(blockError, msg.Err.Error())
+				m.mode = modeChat
+			}
+			m.syncViewport(true)
+			break
+		}
+		m.mode = modeChat
+		m.lspConfirmDelete = ""
+		m.addBlock(blockMeta, label)
+		m.syncViewport(true)
+		// the registry changed: /lsp's next open re-fetches; keep the local
+		// snapshot warm for the picker title
+		m.lspServers = nil
 
 	case thinkingEffortMsg:
 		m.applyThinkingEffort(msg)
@@ -1849,6 +1901,12 @@ func (m model) View() tea.View {
 					footer = errorStyle.Render(t(m.loc, "footer.confirmRemove", m.mcpConfirmDelete))
 				}
 			}
+			if m.mode == modeLsp {
+				footer = t(m.loc, "footer.lsp")
+				if m.lspConfirmDelete != "" {
+					footer = errorStyle.Render(t(m.loc, "footer.confirmRemove", m.lspConfirmDelete))
+				}
+			}
 			if m.controlPending {
 				footer = t(m.loc, "status.updating") + "…"
 			} else if m.contextNote != "" {
@@ -1859,6 +1917,8 @@ func (m model) View() tea.View {
 			parts = append(parts, m.profileForm.view(m.width))
 		case modeMcpForm:
 			parts = append(parts, m.mcpForm.view(m.width))
+		case modeLspForm:
+			parts = append(parts, m.lspForm.view(m.width))
 		case modeConnectForm:
 			parts = append(parts, m.providerForm.view(m.width))
 		case modeOAuth:

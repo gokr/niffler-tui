@@ -121,6 +121,9 @@ Local commands are handled by the TUI and are never sent to the model:
   custom OpenAI-compatible endpoint
 - `/mcp [add|edit|on|off|refresh|search]` — manage external MCP servers; a bare
   `/mcp` opens the server browser
+- `/lsp [add|edit|remove]` — manage language-server registry entries (config,
+  not code: register e.g. gopls for .go and the lsp tool gains diagnostics and
+  precise navigation for it); a bare `/lsp` opens the server browser
 - `/status` — detailed effective provider/model/context provenance and usage
 - `/components [all|direct|discovered|undiscovered]` — what this conversation
   can actually call, per component, with each tool's exposure state

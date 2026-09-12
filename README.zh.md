@@ -106,6 +106,7 @@ Niffler 的 builder 不使用这个 `go.mod`；它创建隔离的模块，replac
   OpenAI 兼容端点
 - `/mcp [add|edit|on|off|refresh|search]` —— 管理外部 MCP 服务器；不带参数的
   `/mcp` 打开服务器浏览器
+- `/lsp [add|edit|remove]` — 管理语言服务器注册表（配置即支持：为 .go 注册 gopls 后，lsp 工具即获得诊断与精确导航）；裸 `/lsp` 打开服务器浏览器
 - `/status` —— 详细的有效提供商/模型/上下文来源与用量
 - `/components [all|direct|discovered|undiscovered]` —— 本会话实际可调用的工具，
   按组件列出，并显示每个工具的暴露状态

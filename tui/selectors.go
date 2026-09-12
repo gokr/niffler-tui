@@ -23,6 +23,8 @@ const (
 	modeMcp
 	modeMcpSearch
 	modeMcpForm
+	modeLsp
+	modeLspForm
 	modeThemes
 	modeProfiles
 	modeProfileForm
@@ -46,6 +48,8 @@ const (
 	selectorMcpServer
 	selectorMcpAdd
 	selectorMcpEntry
+	selectorLspServer
+	selectorLspAdd
 	selectorTheme
 	selectorProfile
 	selectorProfileDefault
@@ -445,4 +449,38 @@ func fmtTimeShort(ts float64) string {
 	}
 	t := time.Unix(int64(ts), 0)
 	return t.Format("2006-01-02 15:04")
+}
+
+// lspSelectorItems renders the /lsp browser: one entry per configured
+// language server (with its extension map and builtin/user provenance),
+// plus an add item. Enter/e on a server opens the edit form (a built-in
+// opens as an override), d/x arms a two-stage delete of user entries.
+func lspSelectorItems(loc Locale, servers []lspServerSummary, confirmDelete string) []list.Item {
+	items := make([]list.Item, 0, len(servers)+1)
+	for _, server := range servers {
+		exts := make([]string, 0, len(server.Extensions))
+		for ext := range server.Extensions {
+			exts = append(exts, ext)
+		}
+		sortStrings(exts)
+		title := server.Name
+		if server.Source != "user" {
+			title += " " + t(loc, "lsp.builtinTag")
+		}
+		description := strings.Join(server.Command, " ") + " · " + strings.Join(exts, ", ")
+		if server.Name == confirmDelete {
+			title = t(loc, "mcp.confirmDelete") + " " + title
+		}
+		items = append(items, selectorItem{
+			kind: selectorLspServer,
+			id:   server.Name, title: title, description: description,
+			payload: server,
+		})
+	}
+	items = append(items, selectorItem{
+		kind: selectorLspAdd,
+		id:   "__lsp_add__", title: t(loc, "selector.lspAdd"),
+		description: t(loc, "selector.lspAddDesc"),
+	})
+	return items
 }

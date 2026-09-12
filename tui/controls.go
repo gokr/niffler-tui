@@ -389,6 +389,66 @@ func localMcp(m model, cmd slashCommand, argument string) (tea.Model, tea.Cmd) {
 	return sub.run(m, cmd, rest)
 }
 
+func localLsp(m model, cmd slashCommand, argument string) (tea.Model, tea.Cmd) {
+	if !m.connected {
+		m.contextNote = t(m.loc, "note.notConnected")
+		return m, nil
+	}
+	if m.busy {
+		m.contextNote = t(m.loc, "note.betweenTurnsProvider")
+		return m, nil
+	}
+	argument = strings.TrimSpace(argument)
+	if argument == "" {
+		m.openLspSelector()
+		return m, lspServersCmd(m.comp)
+	}
+	first, rest := splitCommand(argument)
+	sub, ok := cmd.localSubcommand(first)
+	if !ok {
+		m.addBlock(blockError, t(m.loc, "lsp.unknownSubcommand", first))
+		m.syncViewport(true)
+		return m, nil
+	}
+	return sub.run(m, cmd, rest)
+}
+
+func lspAdd(m model, cmd slashCommand, argument string) (tea.Model, tea.Cmd) {
+	m.lspForm = newLspForm(m.width, m.loc)
+	m.mode = modeLspForm
+	m.layout()
+	return m, nil
+}
+
+func lspEdit(m model, cmd slashCommand, argument string) (tea.Model, tea.Cmd) {
+	name, _ := splitCommand(argument)
+	if name == "" {
+		// no name: open the picker; selecting a server edits it
+		m.openLspSelector()
+		return m, lspServersCmd(m.comp)
+	}
+	for _, s := range m.lspServers {
+		if s.Name == name {
+			m.lspForm = newEditLspForm(s, m.width, m.loc)
+			m.mode = modeLspForm
+			m.layout()
+			return m, nil
+		}
+	}
+	m.contextNote = t(m.loc, "lsp.notConfigured", name)
+	return m, lspServersCmd(m.comp)
+}
+
+func lspRemove(m model, cmd slashCommand, argument string) (tea.Model, tea.Cmd) {
+	name, _ := splitCommand(argument)
+	if name == "" {
+		m.openLspSelector()
+		return m, lspServersCmd(m.comp)
+	}
+	m.controlPending = true
+	return m, lspRemoveCmd(m.comp, name)
+}
+
 func mcpAdd(m model, cmd slashCommand, argument string) (tea.Model, tea.Cmd) {
 	m.mcpForm = newMcpForm(m.width, m.loc)
 	m.mode = modeMcpForm
@@ -518,6 +578,25 @@ func (m *model) openMcpServerSelector() {
 	m.layout()
 }
 
+// openLspPlaceholder
+// openLspSelector opens the /lsp browser with a loading placeholder; the
+// lspServersMsg handler rebuilds it with the loaded list.
+func (m *model) openLspSelector() {
+	m.selector = newSelector(t(m.loc, "selector.lspLoading"), nil, m.width, m.height-3)
+	m.mode = modeLsp
+	m.lspConfirmDelete = ""
+	m.layout()
+}
+
+// openLspServerSelector rebuilds the /lsp list from the current snapshot.
+func (m *model) openLspServerSelector() {
+	m.selector = newSelector(t(m.loc, "selector.lspServers"),
+		lspSelectorItems(m.loc, m.lspServers, m.lspConfirmDelete), m.width, m.height-3)
+	m.mode = modeLsp
+	m.layout()
+}
+
+// openLspPlaceholder
 // sessionListSelecting opens the conversation browser with a loading
 // placeholder; the selector is rebuilt with the loaded list in the
 // sessionListMsg handler.
@@ -707,6 +786,81 @@ func (m model) handleControlKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		var cmd tea.Cmd
 		m.mcpForm, cmd = m.mcpForm.update(msg)
 		return m, cmd
+	}
+
+	if m.mode == modeLspForm {
+		switch msg.String() {
+		case "esc":
+			m.mode = modeChat
+			m.layout()
+			return m, nil
+		case "tab", "down":
+			return m, m.lspForm.nextField(1)
+		case "shift+tab", "up":
+			return m, m.lspForm.nextField(-1)
+		case "ctrl+s":
+			return m.submitLspForm()
+		case "enter":
+			if m.lspForm.focus == lspFieldCount-1 {
+				return m.submitLspForm()
+			}
+			return m, m.lspForm.nextField(1)
+		}
+		var cmd tea.Cmd
+		m.lspForm, cmd = m.lspForm.update(msg)
+		return m, cmd
+	}
+
+	// LSP server management (modeLsp): a = add, e/enter = edit (built-ins
+	// open as overrides), d/x = remove (two-stage, user entries only).
+	if m.mode == modeLsp {
+		key := msg.String()
+		if key == "esc" {
+			m.lspConfirmDelete = ""
+			m.mode = modeChat
+			m.layout()
+			return m, nil
+		}
+		selected, ok := m.selector.selected()
+		armed := m.lspConfirmDelete
+		if armed != "" && (!ok || selected.id != armed) {
+			m.lspConfirmDelete = ""
+		}
+		if ok && selected.kind == selectorLspAdd && (key == "a" || key == "enter") {
+			m.lspForm = newLspForm(m.width, m.loc)
+			m.mode = modeLspForm
+			m.layout()
+			return m, nil
+		}
+		if ok && selected.kind == selectorLspServer && !m.busy {
+			server, isServer := selected.payload.(lspServerSummary)
+			switch key {
+			case "e", "enter":
+				if isServer {
+					m.lspForm = newEditLspForm(server, m.width, m.loc)
+					m.mode = modeLspForm
+					m.lspConfirmDelete = ""
+					m.layout()
+					return m, nil
+				}
+			case "d", "x":
+				if !isServer {
+					return m, nil
+				}
+				if server.Source != "user" {
+					m.contextNote = t(m.loc, "lsp.builtinRemoveNote")
+					return m, nil
+				}
+				if armed != "" {
+					m.lspConfirmDelete = ""
+					m.controlPending = true
+					return m, lspRemoveCmd(m.comp, selected.id)
+				}
+				m.lspConfirmDelete = selected.id
+				m.openLspServerSelector()
+				return m, nil
+			}
+		}
 	}
 
 	// MCP registry search (modeMcpSearch): enter/a on an installable entry
@@ -1035,6 +1189,24 @@ func (m model) submitMcpForm() (tea.Model, tea.Cmd) {
 		return m, mcpEditCmd(m.comp, values)
 	}
 	return m, mcpAddCmd(m.comp, values)
+}
+
+// submitLspForm saves the /lsp form. Saving always writes a user registry
+// entry (adding a new server, or overriding a built-in of the same name);
+// the component takes it live on the next lsp call.
+func (m model) submitLspForm() (tea.Model, tea.Cmd) {
+	if m.controlPending || m.lspForm.saving {
+		return m, nil
+	}
+	values, err := m.lspForm.values()
+	if err != nil {
+		m.lspForm.err = err.Error()
+		return m, nil
+	}
+	m.lspForm.err = ""
+	m.lspForm.saving = true
+	m.controlPending = true
+	return m, lspSaveCmd(m.comp, values)
 }
 
 // probeThenAddProviderCmd chains a provider_models probe (explicit

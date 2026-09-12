@@ -802,6 +802,90 @@ func mcpServersCmd(comp *sdk.Component) tea.Cmd {
 	}
 }
 
+// lspServerSummary is one configured language server as the lsp
+// component's lsp_servers tool reports it. Source is "user" for entries in
+// the editable registry file, "builtin" for shipped defaults (overridable
+// by adding the same name).
+type lspServerSummary struct {
+	Name       string            `json:"name"`
+	Command    []string          `json:"command"`
+	Extensions map[string]string `json:"extensions"`
+	Source     string            `json:"source"`
+}
+
+type lspServersResponse struct {
+	Servers []lspServerSummary `json:"servers"`
+	Path    string             `json:"path"`
+}
+
+func loadLspServers(comp *sdk.Component) (lspServersResponse, error) {
+	var response lspServersResponse
+	err := requestInto(comp, "lsp", "lsp_servers", map[string]any{}, &response)
+	return response, err
+}
+
+// lspServersMsg carries the configured language servers for the /lsp
+// selector.
+type lspServersMsg struct {
+	Servers []lspServerSummary
+	Err     error
+}
+
+func lspServersCmd(comp *sdk.Component) tea.Cmd {
+	return func() tea.Msg {
+		response, err := loadLspServers(comp)
+		return lspServersMsg{Servers: response.Servers, Err: err}
+	}
+}
+
+// lspActionMsg reports a completed /lsp control action (add/remove); the
+// transcript shows the label and the /lsp selector reloads.
+type lspActionMsg struct {
+	Action string
+	Name   string
+	Err    error
+}
+
+// lspFormValues is what the /lsp form submits. The command is split on
+// whitespace (LSP server commands are simple argv); the language id for
+// each extension is the extension minus its dot.
+type lspFormValues struct {
+	Name       string
+	Command    string
+	Extensions map[string]string
+}
+
+func lspSaveCmd(comp *sdk.Component, values lspFormValues) tea.Cmd {
+	return func() tea.Msg {
+		var cmdArgs []string
+		for _, tok := range strings.Fields(values.Command) {
+			cmdArgs = append(cmdArgs, tok)
+		}
+		_, err := comp.Request("lsp", "lsp_registry", map[string]any{
+			"action":     "add",
+			"name":       values.Name,
+			"command":    cmdArgs,
+			"extensions": values.Extensions,
+		}, controlTimeout)
+		if err != nil {
+			err = fmt.Errorf("lsp.lsp_registry: %w", err)
+		}
+		return lspActionMsg{Action: "add", Name: values.Name, Err: err}
+	}
+}
+
+func lspRemoveCmd(comp *sdk.Component, name string) tea.Cmd {
+	return func() tea.Msg {
+		_, err := comp.Request("lsp", "lsp_registry", map[string]any{
+			"action": "remove", "name": name,
+		}, controlTimeout)
+		if err != nil {
+			err = fmt.Errorf("lsp.lsp_registry: %w", err)
+		}
+		return lspActionMsg{Action: "remove", Name: name, Err: err}
+	}
+}
+
 // toolProfileSummary is one stored tool profile as core's `profile` tool
 // reports it for pickers: the selector list plus the resolved cost of the
 // profile against the live catalog.
