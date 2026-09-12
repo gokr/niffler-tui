@@ -6,6 +6,23 @@ project aims for [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-09-12
+
+### Added
+
+- **`/lsp` command** — manage the language-server registry from the TUI:
+  `/lsp` opens the server browser (configured servers with provenance —
+  built-in vs user override), `a`/enter on the add item opens the form,
+  `e`/enter on a server opens the edit form (the name is locked, since the
+  registry is keyed by it; editing a built-in writes a user override), and
+  `d`/`x` removes user entries behind the two-stage confirm. The form is
+  three fields — name, launch command (split on whitespace), extensions as
+  a comma list — because the registry is data: adding a language is a
+  config write, never code. Save goes through the approval-gated
+  `lsp_registry add` (like `/mcp add`) and is live on the next `lsp` call;
+  listing is the ungated `lsp_servers`. Full en/zh/zh-TW i18n and form
+  unit tests.
+
 ## [0.2.0] - 2026-09-11
 
 ### Added
