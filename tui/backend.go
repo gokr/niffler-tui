@@ -199,7 +199,11 @@ type bootstrapMsg struct {
 	Identity         harnessIdentity
 	Self             selfIdentity
 	Conversation     conversationState
-	Runtime          runtimeResolution
+	// ConversationExists reports whether the conversation header is already
+	// in the store; false means the first turn will create it (and may pin
+	// the workspace — see model.sessionNeedsCreate).
+	ConversationExists bool
+	Runtime            runtimeResolution
 	Warnings         []string
 	// Slash is the merged slash-command registry (store checkpoint first,
 	// catalog snapshot fallback); SlashErr reports a load failure. The
@@ -345,7 +349,7 @@ func loadCatalogProviders(comp *sdk.Component) ([]catalogProvider, error) {
 	return response.Providers, nil
 }
 
-func loadConversationState(comp *sdk.Component, session string) (conversationState, error) {
+func loadConversationState(comp *sdk.Component, session string) (conversationState, bool, error) {
 	var response struct {
 		OK    bool `json:"ok"`
 		Value struct {
@@ -365,10 +369,10 @@ func loadConversationState(comp *sdk.Component, session string) (conversationSta
 	if err := requestInto(comp, "store", "get", map[string]any{
 		"kind": "conversation", "id": session,
 	}, &response); err != nil {
-		return conversationState{}, err
+		return conversationState{}, false, err
 	}
 	if !response.OK {
-		return conversationState{}, nil
+		return conversationState{}, false, nil
 	}
 	return conversationState{
 		ModelOverride:  response.Value.ModelOverride,
@@ -379,7 +383,7 @@ func loadConversationState(comp *sdk.Component, session string) (conversationSta
 		Cwd:          response.Value.Cwd,
 		CachePrompt:  response.Value.CachePrompt,
 		CacheRead:    response.Value.CacheRead,
-	}, nil
+	}, true, nil
 }
 
 // sessionSummary is one conversation listed from the store for /session.
@@ -496,11 +500,12 @@ func bootstrapBackendCmd(comp *sdk.Component, session string) tea.Cmd {
 		msg.Self = self
 		msg.SlashCommands = slashCmds
 		msg.SlashErr = slashErr
-		conversation, err := loadConversationState(comp, session)
+		conversation, exists, err := loadConversationState(comp, session)
 		if err != nil {
 			msg.Warnings = append(msg.Warnings, err.Error())
 		} else {
 			msg.Conversation = conversation
+			msg.ConversationExists = exists
 		}
 		resolved, err := resolveRuntime(comp, conversation.ModelOverride)
 		if err != nil {

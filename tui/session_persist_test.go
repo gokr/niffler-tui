@@ -27,26 +27,26 @@ func TestLastSessionPersistRoundtrip(t *testing.T) {
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
 	const url = "nats://127.0.0.1:4222"
 
-	if got := loadLastSession(url); got != "" {
+	if got := loadLastSession(url, "cwd-x"); got != "" {
 		t.Fatalf("empty state dir returned %q", got)
 	}
-	persistSession(url, "conv-123")
-	if got := loadLastSession(url); got != "conv-123" {
+	persistSession(url, "cwd-x", "conv-123")
+	if got := loadLastSession(url, "cwd-x"); got != "conv-123" {
 		t.Fatalf("roundtrip = %q", got)
 	}
 
 	// A different harness (bus URL) keeps its own last session.
-	if got := loadLastSession("nats://127.0.0.1:49999"); got != "" {
+	if got := loadLastSession("nats://127.0.0.1:49999", "cwd-x"); got != "" {
 		t.Fatalf("other harness resumed %q", got)
 	}
 
 	// Recorded ids are sanitized on load, so a hand-edited file can never
 	// inject a bus-unsafe session id.
-	path := sessionFilePath(url)
+	path := sessionFilePath(url, "cwd-x")
 	if err := os.WriteFile(path, []byte("weird/../id\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	got := loadLastSession(url)
+	got := loadLastSession(url, "cwd-x")
 	if got == "" || strings.ContainsAny(got, "/.") {
 		t.Fatalf("unsanitized session id loaded: %q", got)
 	}
@@ -66,7 +66,7 @@ func TestSwitchSessionPersistsLastSession(t *testing.T) {
 	if switched.session != "conv-later" {
 		t.Fatalf("session = %q", switched.session)
 	}
-	if got := loadLastSession(m.natsURL); got != "conv-later" {
+	if got := loadLastSession(m.natsURL, m.launchDir); got != "conv-later" {
 		t.Fatalf("switch did not persist: %q", got)
 	}
 }

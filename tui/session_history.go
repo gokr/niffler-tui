@@ -176,6 +176,26 @@ func (m *model) startHistoryLoad() tea.Cmd {
 // stored transcript replay, so /session (and the browser's session entries)
 // show the previous conversation instead of a blank output area.
 func (m model) switchSessionWithHistory(id string) (model, tea.Cmd) {
+	// Ownership: claim the target for this UI before switching. A live UI
+	// already holding the conversation is reported instead of silently
+	// joining its stream (core's ui registry; coordination only — when the
+	// registry is unreachable the switch proceeds uncoordinated). Our
+	// previous claim is released only after the new one is secured, so a
+	// failed switch never leaves us conversationless.
+	if m.uiID != "" && m.comp != nil {
+		claimed, ownerNumber, err := uiClaimRequest(m.comp, m.uiID, id)
+		if err == nil && !claimed {
+			m.addBlock(blockMeta, fmt.Sprintf(
+				"Open in Niffler %d — pick another conversation or run /new.", ownerNumber))
+			m.syncViewport(true)
+			return m, nil
+		}
+		if err == nil && m.session != "" && m.session != id {
+			_, _ = m.comp.Request("core", "ui", map[string]any{
+				"op": "release_session", "ui": m.uiID, "session": m.session},
+				controlTimeout)
+		}
+	}
 	m = m.switchSession(id)
 	cmd := m.startHistoryLoad()
 	return m, cmd

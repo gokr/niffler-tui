@@ -4,7 +4,9 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -144,8 +146,17 @@ type viewportFlushMsg struct{}
 type model struct {
 	profileForm profileForm
 	toolProfile string // client selection for subsequently created conversations
-	ctx         context.Context
-	comp        *sdk.Component
+	// UI identity + lease (core's ui registry): the component name is
+	// "tui-<hex>" so approval routing is private to this terminal, and the
+	// registry number is the "Niffler 1" header label. launchDir keys the
+	// resume-state file and pins new conversations' workspaces.
+	uiID               string
+	uiName             string
+	uiNumber           int
+	launchDir          string
+	sessionNeedsCreate bool // no conversation header yet: first turn pins cwd
+	ctx                context.Context
+	comp               *sdk.Component
 	session     string
 	natsURL     string
 	loc         Locale
@@ -483,7 +494,7 @@ func (m *model) setTheme(name string) bool {
 }
 
 func (m model) Init() tea.Cmd {
-	return tea.Batch(m.focusCmd, m.connectCmd(), m.spinner.Tick)
+	return tea.Batch(m.focusCmd, m.connectCmd(), m.spinner.Tick, leaseTickCmd())
 }
 
 func (m model) connectCmd() tea.Cmd {
@@ -513,6 +524,116 @@ func (m *model) applyRuntimeRefresh(msg runtimeRefreshedMsg) bool {
 	return true
 }
 
+// --- UI lease (core's ui registry) -----------------------------------------
+//
+// Every TUI announces a client UUID (component name "tui-<hex>") and
+// re-registers every few seconds. Core assigns a display number ("Niffler
+// 1", ...) and brokers conversation ownership: a second TUI resuming the
+// same conversation is told who holds it instead of silently joining the
+// stream. Coordination only — a registry hiccup never blocks chatting.
+
+const uiLeaseRenewInterval = 5 * time.Second
+
+type uiAttachMsg struct {
+	session     string
+	registered  bool
+	number      int
+	claimed     bool
+	ownerNumber int
+	err         error
+}
+
+type uiRenewMsg struct {
+	session     string
+	number      int
+	claimed     bool
+	ownerNumber int
+	err         error
+}
+
+type leaseTickMsg struct{}
+
+func leaseTickCmd() tea.Cmd {
+	return tea.Tick(uiLeaseRenewInterval, func(time.Time) tea.Msg { return leaseTickMsg{} })
+}
+
+// uiRegisterRequest calls the ui registry. A warm lease keeps the number; a
+// lapsed one returns a fresh number, which is the expiry signal.
+func uiRegisterRequest(comp *sdk.Component, uiID string) (int, error) {
+	var reg struct {
+		OK     bool `json:"ok"`
+		Number int  `json:"number"`
+	}
+	if err := requestInto(comp, "core", "ui", map[string]any{"op": "register", "ui": uiID}, &reg); err != nil {
+		return 0, err
+	}
+	if !reg.OK {
+		return 0, fmt.Errorf("ui register refused")
+	}
+	return reg.Number, nil
+}
+
+func uiClaimRequest(comp *sdk.Component, uiID, session string) (claimed bool, ownerNumber int, err error) {
+	var claim struct {
+		OK     bool   `json:"ok"`
+		Owner  string `json:"owner"`
+		Number int    `json:"number"`
+	}
+	err = requestInto(comp, "core", "ui", map[string]any{
+		"op": "claim", "ui": uiID, "session": session}, &claim)
+	if err != nil {
+		return false, 0, err
+	}
+	return claim.OK, claim.Number, nil
+}
+
+// uiAttachCmd registers this UI and claims the startup conversation.
+func uiAttachCmd(comp *sdk.Component, uiID, session string) tea.Cmd {
+	return func() tea.Msg {
+		msg := uiAttachMsg{session: session}
+		number, err := uiRegisterRequest(comp, uiID)
+		if err != nil {
+			msg.err = err // uncoordinated: chatting still works
+			return msg
+		}
+		msg.registered, msg.number = true, number
+		msg.claimed, msg.ownerNumber, msg.err = uiClaimRequest(comp, uiID, session)
+		return msg
+	}
+}
+
+// uiRenewCmd re-registers and re-claims the displayed conversation
+// (idempotent for the owner; tells us when someone else took it).
+func uiRenewCmd(comp *sdk.Component, uiID, session string) tea.Cmd {
+	return func() tea.Msg {
+		msg := uiRenewMsg{session: session}
+		number, err := uiRegisterRequest(comp, uiID)
+		if err != nil {
+			msg.err = err
+			return msg
+		}
+		msg.number = number
+		msg.claimed, msg.ownerNumber, msg.err = uiClaimRequest(comp, uiID, session)
+		return msg
+	}
+}
+
+// uiStartupDecision is the pure ownership rule for a refused attach/renew:
+// keep the conversation when we own it (or coordination is unavailable);
+// otherwise start a fresh conversation and say why. Pure so the ownership
+// UX is unit-testable without a bus.
+func uiStartupDecision(msg uiAttachMsg, newID string) (switchTo, note string) {
+	if msg.err != nil || msg.claimed {
+		return "", ""
+	}
+	if msg.ownerNumber > 0 {
+		return newID, fmt.Sprintf(
+			"This conversation is open in Niffler %d — started a new conversation.",
+			msg.ownerNumber)
+	}
+	return newID, "This conversation is open in another UI — started a new conversation."
+}
+
 func (m model) sendTurn(content string) tea.Cmd {
 	return func() tea.Msg {
 		args := map[string]any{
@@ -523,7 +644,20 @@ func (m model) sendTurn(content string) tea.Cmd {
 			// persisted conversation override after a provider/default change.
 			"model": m.modelOverride,
 		}
+		// A conversation with no header yet gets this TUI's launch directory
+		// pinned as its (immutable) workspace: starting niffler-tui inside a
+		// project means the conversation works on that project. The retry
+		// below covers the small race where a model-only call created the
+		// header between bootstrap and this turn (its workspace is already
+		// fixed, so cwd would be refused as immutable).
+		if m.sessionNeedsCreate {
+			args["cwd"] = m.cwd
+		}
 		result, err := m.comp.Request("core", "session", args, turnTimeout)
+		if err != nil && m.sessionNeedsCreate {
+			delete(args, "cwd")
+			result, err = m.comp.Request("core", "session", args, turnTimeout)
+		}
 		if err != nil {
 			return turnDoneMsg{session: m.session, err: fmt.Errorf("session turn: %w", err)}
 		}
@@ -597,14 +731,64 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.connected = true
 		m.addBlock(blockMeta, t(m.loc, "note.connected", m.natsURL, m.session))
 		m.syncViewport(true)
-		cmds = append(cmds, bootstrapBackendCmd(m.comp, m.session))
-		// Rebuild the output area from the stored transcript: the session
-		// (default "console") resumes where the last run left it, and without
-		// this the previous messages are invisible and unscrollable.
-		cmds = append(cmds, m.startHistoryLoad())
+		// Attach to the ui registry first: the attach decides whether we
+		// keep the resumed conversation or start a fresh one (someone else
+		// may hold it), and the bootstrap below must target the session we
+		// actually end up on.
+		cmds = append(cmds, uiAttachCmd(m.comp, m.uiID, m.session))
 
 	case connectStoppedMsg:
 		return m, nil
+
+	case uiAttachMsg:
+		if msg.registered {
+			m.uiNumber = msg.number
+		}
+		switchTo, note := uiStartupDecision(msg, newSessionID())
+		if switchTo != "" {
+			var histCmd tea.Cmd
+			m, histCmd = m.switchSessionWithHistory(switchTo)
+			// The switch cleared the transcript; the explanation must land
+			// after that reset to stay visible.
+			m.addBlock(blockMeta, note)
+			m.syncViewport(true)
+			cmds = append(cmds, histCmd)
+		}
+		// Bootstrap + transcript replay for whichever session we ended on.
+		cmds = append(cmds, bootstrapBackendCmd(m.comp, m.session))
+		cmds = append(cmds, m.startHistoryLoad())
+		return m, tea.Batch(cmds...)
+
+	case uiRenewMsg:
+		if msg.number > 0 {
+			m.uiNumber = msg.number
+		}
+		if msg.session == m.session && !msg.claimed && msg.err == nil && msg.ownerNumber > 0 {
+			// The lease lapsed while we were frozen (fresh number on
+			// re-register) and another UI claimed the conversation meanwhile:
+			// move to a fresh one instead of silently co-owning.
+			switchTo, note := uiStartupDecision(uiAttachMsg{
+				session: msg.session, registered: true,
+				claimed: false, ownerNumber: msg.ownerNumber,
+			}, newSessionID())
+			if switchTo != "" {
+				var histCmd tea.Cmd
+				m, histCmd = m.switchSessionWithHistory(switchTo)
+				m.addBlock(blockMeta, note)
+				m.syncViewport(true)
+				cmds = append(cmds, histCmd, bootstrapBackendCmd(m.comp, m.session),
+					m.startHistoryLoad())
+				return m, tea.Batch(cmds...)
+			}
+		}
+		return m, tea.Batch(cmds...)
+
+	case leaseTickMsg:
+		cmds = append(cmds, leaseTickCmd())
+		if m.connected && m.uiID != "" {
+			cmds = append(cmds, uiRenewCmd(m.comp, m.uiID, m.session))
+		}
+		return m, tea.Batch(cmds...)
 
 	case sessionListMsg:
 		// The user may have left the browser while the store list was
@@ -949,6 +1133,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.Conversation.Cwd != "" {
 			m.cwd = msg.Conversation.Cwd
 		}
+		// No header yet: the first turn pins the launch directory as the
+		// conversation workspace (see sendTurn). An existing header means
+		// the workspace is already fixed — never re-pin it.
+		m.sessionNeedsCreate = !msg.ConversationExists
 		// First visit to this conversation in this run: seed the persisted
 		// prompt-cache economics from its header. The in/out token totals are
 		// per-run (core does not persist them), so they start at zero.
@@ -1348,6 +1536,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.session != m.session {
 			break
 		}
+		// The conversation header exists now (this or a prior model-only
+		// call created it); later turns must not re-pin the workspace.
+		m.sessionNeedsCreate = false
 		if msg.err != nil {
 			m.finishTurn("", msg.err.Error())
 		} else {
@@ -1890,7 +2081,11 @@ func (m model) searchView() string {
 }
 
 func (m model) View() tea.View {
-	header := headerStyle.Render("Niffler") + metaStyle.Render(" / "+m.session)
+	label := "Niffler"
+	if m.uiNumber > 0 {
+		label = fmt.Sprintf("Niffler %d", m.uiNumber)
+	}
+	header := headerStyle.Render(label) + metaStyle.Render(" / "+m.session)
 	const headerSep = "  │  "
 	// Thinking level chip: standalone color so the mode reads at a glance
 	// (ctrl+t cycles full → brief → off).
@@ -1912,7 +2107,7 @@ func (m model) View() tea.View {
 		if m.mouse {
 			view.MouseMode = tea.MouseModeCellMotion
 		}
-		view.WindowTitle = "Niffler TUI - " + m.session
+		view.WindowTitle = fmt.Sprintf("%s TUI - %s", label, m.session)
 		return view
 	}
 
@@ -2109,6 +2304,19 @@ func truncate(s string, limit int) string {
 	return ansi.Truncate(s, limit, "…")
 }
 
+// newUIID returns a random hex id for this UI process. It becomes the
+// component-name suffix ("tui-<id>"), which is what makes approval routing
+// genuinely private per terminal.
+func newUIID() string {
+	b := make([]byte, 6)
+	if _, err := rand.Read(b); err != nil {
+		// crypto/rand does not fail on Linux/macOS; a time fallback keeps
+		// startup going even if it somehow did.
+		return fmt.Sprintf("%x", time.Now().UnixNano())
+	}
+	return hex.EncodeToString(b)
+}
+
 func resolveNATSURL() string {
 	if url := strings.TrimSpace(os.Getenv("NIF_NATS_URL")); url != "" {
 		return url
@@ -2130,9 +2338,10 @@ func resolveNATSURL() string {
 }
 
 // sessionFilePath is the state file remembering the last active conversation
-// for one harness. It is keyed by the bus URL so two harnesses sharing the
-// per-user state dir never resume each other's conversations.
-func sessionFilePath(natsURL string) string {
+// for one harness AND workspace: two harnesses sharing the per-user state dir
+// never resume each other's conversations, and starting niffler-tui in a
+// different project does not resume the previous project's conversation.
+func sessionFilePath(natsURL, workspace string) string {
 	dir := strings.TrimSpace(os.Getenv("XDG_STATE_HOME"))
 	if dir == "" {
 		home, err := os.UserHomeDir()
@@ -2142,17 +2351,17 @@ func sessionFilePath(natsURL string) string {
 		dir = filepath.Join(home, ".local", "state")
 	}
 	name := "session"
-	if natsURL != "" {
-		sum := sha256.Sum256([]byte(natsURL))
+	if natsURL != "" || workspace != "" {
+		sum := sha256.Sum256([]byte(natsURL + "\x00" + workspace))
 		name = fmt.Sprintf("session-%x", sum[:6])
 	}
 	return filepath.Join(dir, "niffler-tui", name)
 }
 
-// loadLastSession returns the conversation the TUI was last switched to
-// against this harness, or "" when none was recorded.
-func loadLastSession(natsURL string) string {
-	path := sessionFilePath(natsURL)
+// loadLastSession returns the conversation the TUI was last switched to for
+// this harness+workspace, or "" when none was recorded.
+func loadLastSession(natsURL, workspace string) string {
+	path := sessionFilePath(natsURL, workspace)
 	if path == "" {
 		return ""
 	}
@@ -2165,11 +2374,11 @@ func loadLastSession(natsURL string) string {
 
 // persistSession records the active conversation so the next launch resumes
 // it (best effort; explicit -session/NIF_SESSION still win).
-func persistSession(natsURL, id string) {
+func persistSession(natsURL, workspace, id string) {
 	if id == "" {
 		return
 	}
-	path := sessionFilePath(natsURL)
+	path := sessionFilePath(natsURL, workspace)
 	if path == "" {
 		return
 	}
@@ -2180,12 +2389,15 @@ func persistSession(natsURL, id string) {
 }
 
 func main() {
-	// The saved last session is keyed by the bus URL, so two harnesses (each
-	// with its own store) never resume each other's conversation.
+	// The saved last session is keyed by bus URL + launch directory: two
+	// harnesses (each with its own store) never resume each other's
+	// conversations, and starting in a different project starts that
+	// project's conversation, not the previous one's.
 	natsURL := resolveNATSURL()
+	launchDir := initialCwd()
 	defaultSession := strings.TrimSpace(os.Getenv("NIF_SESSION"))
 	if defaultSession == "" {
-		defaultSession = loadLastSession(natsURL)
+		defaultSession = loadLastSession(natsURL, launchDir)
 	}
 	if defaultSession == "" {
 		defaultSession = "console"
@@ -2213,7 +2425,14 @@ func main() {
 	// Bubble Tea renderer would corrupt the alternate screen.
 	slog.SetDefault(slog.New(slog.NewTextHandler(io.Discard, nil)))
 
-	comp := sdk.New(componentName, componentVersion)
+	// Unique component identity per terminal process: core routes approvals
+	// to the caller's own subject, so "tui-<hex>" makes directed approvals
+	// private to this terminal (two plain "tui"s shared one subject), and
+	// the ui registry numbers each client ("Niffler 1", "Niffler 2", ...).
+	uiID := newUIID()
+	uiName := "tui-" + uiID
+
+	comp := sdk.New(uiName, componentVersion)
 	comp.Client = true
 	var program *tea.Program
 	comp.On("ev.session.>", func(_ *sdk.Component, subject string, payload json.RawMessage) {
@@ -2242,10 +2461,11 @@ func main() {
 			program.Send(catalogUpdatedMsg{})
 		}
 	})
-	// Human approval gate: directed requests arrive on this component's own
-	// subject (core derives it from the call envelope's caller — no
-	// hardcoded names), broadcast requests are direct calls or fallbacks.
-	comp.On("svc.approval."+componentName+".request", func(_ *sdk.Component, _ string, payload json.RawMessage) {
+	// Human approval gate: directed requests arrive on this UI's own
+	// subject (core derives it from the call envelope's caller — the unique
+	// "tui-<hex>" name makes it private to this terminal), broadcast
+	// requests are direct calls or fallbacks.
+	comp.On("svc.approval."+uiName+".request", func(_ *sdk.Component, _ string, payload json.RawMessage) {
 		if program == nil {
 			return
 		}
@@ -2274,6 +2494,9 @@ func main() {
 	})
 
 	m := newModel(ctx, comp, *session, natsURL)
+	m.uiID = uiID
+	m.uiName = uiName
+	m.launchDir = launchDir
 	program = tea.NewProgram(m)
 	final, err := program.Run()
 	if err != nil {
@@ -2281,12 +2504,20 @@ func main() {
 		comp.Close()
 		os.Exit(1)
 	}
-	comp.Close()
-	// /restart hands the restart to whoever launched us: the installed
-	// wrapper loops on this exit code and re-runs the binary from disk, so
-	// the fresh process picks up a rebuilt install. Run() returns the final
-	// model, which carries the flag set by the command.
-	if fm, ok := final.(model); ok && fm.restart {
-		os.Exit(restartExitCode)
+	if fm, ok := final.(model); ok {
+		// Best-effort lease + claim release; the lease also self-expires in
+		// core, so a short timeout and ignored errors are fine.
+		if fm.comp != nil && fm.uiID != "" {
+			_, _ = fm.comp.Request("core", "ui",
+				map[string]any{"op": "release", "ui": fm.uiID}, 500*time.Millisecond)
+		}
+		// /restart hands the restart to whoever launched us: the installed
+		// wrapper loops on this exit code and re-runs the binary from disk, so
+		// the fresh process picks up a rebuilt install. Run() returns the final
+		// model, which carries the flag set by the command.
+		if fm.restart {
+			os.Exit(restartExitCode)
+		}
 	}
+	comp.Close()
 }

@@ -1,6 +1,8 @@
 package main
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
 	"strconv"
 	"strings"
@@ -28,8 +30,9 @@ func (m model) switchSession(id string) model {
 	m.restoreUsage(m.usageCache[id])
 	m.cwd = initialCwd()
 	// Remember the active conversation so a restart resumes it (explicit
-	// -session/NIF_SESSION still win at startup).
-	persistSession(m.natsURL, id)
+	// -session/NIF_SESSION still win at startup). Keyed by bus URL + the
+	// TUI's launch directory: different projects do not resume each other.
+	persistSession(m.natsURL, m.launchDir, id)
 	m.blocks = nil
 	m.markTranscriptDirty()
 	m.renderFrom = 0
@@ -78,9 +81,14 @@ func (m model) switchSession(id string) model {
 }
 
 // newSessionID generates a fresh conversation id for /new and the session
-// browser's "+ New session" entry.
+// browser's "+ New session" entry. Random hex, not a wall-clock second: two
+// /new presses in the same second must not collide on the same id.
 func newSessionID() string {
-	return "conv-" + strconv.FormatInt(time.Now().Unix(), 10)
+	b := make([]byte, 6)
+	if _, err := rand.Read(b); err == nil {
+		return "conv-" + hex.EncodeToString(b)
+	}
+	return "conv-" + strconv.FormatInt(time.Now().UnixNano(), 16)
 }
 
 // executeLocalCommand runs a UI-local command. Dispatch reads the built-in
