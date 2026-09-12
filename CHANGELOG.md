@@ -8,6 +8,13 @@ project aims for [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Status bars rebalanced: one-decimal cache rate, live measures in the
+  bottom bar.** The header keeps only the provider/model selection (shrunk
+  before truncating); the context gauge, token in/out and the prompt-cache
+  hit rate now sit in the bottom row after the workspace — `cwd │ ctx … │
+  ↑in ↓out cache … │ note`. The cache rate formats with one decimal
+  (96.7%) instead of rounding to a whole percent.
+
 - **@file references in the chat input.** Typing `@` and pressing Tab
   completes a workspace-relative file path: fuzzy candidates (basename
   prefix → path prefix → subsequence), listed via `rg --files` with a
