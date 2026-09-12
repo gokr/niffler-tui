@@ -320,6 +320,11 @@ type model struct {
 	slash     slashRegistry
 	slashComp slashCompleteState
 
+	// fileComp is the live @file-reference completion state; fileList
+	// caches per-workspace listings for it (filecomp.go).
+	fileComp fileCompState
+	fileList map[string]fileListEntry
+
 	// roundClosed marks the current LLM round as finalized: the assistant
 	// event carried the complete content, or the turn ended (done). Late
 	// token frames can arrive after that (NATS ordering across subjects
@@ -439,6 +444,7 @@ func newModel(ctx context.Context, comp *sdk.Component, session, natsURL string)
 		scrollback:   scrollbackLines(),
 		pieceEpoch:   1, // 0 is "never rendered" for blocks
 		usageCache:   map[string]usageTotals{},
+		fileList:     map[string]fileListEntry{},
 		cwd:          initialCwd(),
 		toolLevel:    toolMedium,
 		toolCards:    true,
@@ -659,6 +665,34 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.handleSearchKey(msg)
 		}
 		keyName := msg.String()
+		// An active @file completion behaves like the slash one: Tab cycles,
+		// Enter accepts the filled reference and falls through to sending,
+		// Esc dismisses, any other key dismisses and then edits.
+		if m.fileComp.active {
+			switch keyName {
+			case "tab":
+				var cmd tea.Cmd
+				m, cmd = m.handleFileTab(false)
+				return m, cmd
+			case "shift+tab":
+				var cmd tea.Cmd
+				m, cmd = m.handleFileTab(true)
+				return m, cmd
+			case "enter":
+				m.applyFileCandidate()
+				m.dismissFileComp()
+				// Fall through: the reference is filled in; the message
+				// sends with it.
+			case "esc", "ctrl+c":
+				if keyName == "ctrl+c" {
+					return m, tea.Quit
+				}
+				m.dismissFileComp()
+				return m, nil
+			default:
+				m.dismissFileComp()
+			}
+		}
 		// An active slash completion owns Tab (cycling) and is dismissed by
 		// any other key, which then falls through to normal handling.
 		if m.slashComp.active {
@@ -689,7 +723,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Quit
 		case "tab", "shift+tab":
 			var cmd tea.Cmd
-			m, cmd = m.handleSlashTab(keyName == "shift+tab")
+			if strings.HasPrefix(strings.TrimSpace(m.input.Value()), "/") {
+				m, cmd = m.handleSlashTab(keyName == "shift+tab")
+			} else {
+				m, cmd = m.handleFileTab(keyName == "shift+tab")
+			}
 			return m, cmd
 		case "enter":
 			content := strings.TrimSpace(m.input.Value())
@@ -708,6 +746,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.histIdx = -1
 				return m.executeLocalCommand(content)
 			}
+			// @file references resolve to a workspace-relative footer naming
+			// the existing targets (filecomp.go) — the agent is told to open
+			// them with read; no content is ever attached here.
+			content = m.resolveFileRefs(content)
 			if !m.connected {
 				return m, nil
 			}
@@ -972,6 +1014,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case slashSourceMsg:
 		m.applySlashSource(msg)
+	case fileListMsg:
+		m.applyFileList(msg)
 
 	case slashResultMsg:
 		cmds = append(cmds, m.applySlashResult(msg))
@@ -1943,6 +1987,9 @@ func (m model) View() tea.View {
 	}
 	if m.slashComp.active {
 		parts = append(parts, m.slashCompletionView())
+	}
+	if m.fileComp.active {
+		parts = append(parts, m.fileCompletionView())
 	}
 	parts = append(parts, metaStyle.Render(truncate(m.bottomLine(), max(1, m.width-1))))
 	return makeView(strings.Join(parts, "\n"))

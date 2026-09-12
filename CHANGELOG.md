@@ -6,6 +6,18 @@ project aims for [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- **@file references in the chat input.** Typing `@` and pressing Tab
+  completes a workspace-relative file path: fuzzy candidates (basename
+  prefix → path prefix → subsequence), listed via `rg --files` with a
+  bounded fallback walker that skips hidden entries and generated trees
+  (`var/`, `node_modules/`, …), respecting ignore rules. The inserted
+  reference is delimited text — `@path`, backtick-quoted when the path
+  contains whitespace, followed by a trailing space — never attached
+  content: on send, references that resolve to existing workspace files
+  get a footer telling the agent to open them with the read tool.
+
 ## [0.3.0] - 2026-09-12
 
 ### Added

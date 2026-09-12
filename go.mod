@@ -9,6 +9,7 @@ require (
 	charm.land/lipgloss/v2 v2.0.5
 	github.com/alecthomas/chroma/v2 v2.14.0
 	github.com/charmbracelet/x/ansi v0.11.7
+	github.com/sahilm/fuzzy v0.1.3
 	golang.org/x/term v0.40.0
 	niffler.dev/sdk v0.0.0
 )
@@ -36,7 +37,6 @@ require (
 	github.com/nats-io/nkeys v0.4.9 // indirect
 	github.com/nats-io/nuid v1.0.1 // indirect
 	github.com/rivo/uniseg v0.4.7 // indirect
-	github.com/sahilm/fuzzy v0.1.3 // indirect
 	github.com/xo/terminfo v0.0.0-20220910002029-abceb7e1c41e // indirect
 	github.com/yuin/goldmark v1.7.8 // indirect
 	github.com/yuin/goldmark-emoji v1.0.5 // indirect
