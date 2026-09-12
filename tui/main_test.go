@@ -677,9 +677,13 @@ func TestRuntimeStatusAndContextUsage(t *testing.T) {
 	if m.contextUsed != 250_000 || contextPercent(m.contextUsed, m.runtime.Context) != 0.25 {
 		t.Fatalf("context = used:%d limit:%d", m.contextUsed, m.runtime.Context)
 	}
-	line := runtimeStatusLine(LocaleEN, m.runtime, "deepseek-v4-pro", m.contextUsed, "", 80)
-	if ansi.StringWidth(line) > 79 || !strings.Contains(ansi.Strip(line), "25%") {
+	line := runtimeStatusLine(LocaleEN, m.runtime, "deepseek-v4-pro", 80)
+	if ansi.StringWidth(line) > 79 || !strings.Contains(ansi.Strip(line), "deepseek-v4-pro") {
 		t.Fatalf("runtime line width/content = %d %q", ansi.StringWidth(line), ansi.Strip(line))
+	}
+	// The context gauge lives in the bottom bar now.
+	if !strings.Contains(ansi.Strip(m.bottomLine()), "25%") {
+		t.Fatalf("bottom bar missing the context gauge: %q", ansi.Strip(m.bottomLine()))
 	}
 
 	m.applySessionEvent(sessionEventMsg{kind: "assistant", event: sessionEvent{
@@ -711,7 +715,7 @@ func TestCacheHitStatsAccumulate(t *testing.T) {
 
 	// The header chip combines the arrows and the hit rate.
 	chip := m.usageChip()
-	if !strings.Contains(chip, "↑ 10") || !strings.Contains(chip, "↓ —") || !strings.Contains(chip, "cache 80%") {
+	if !strings.Contains(chip, "↑ 10") || !strings.Contains(chip, "↓ —") || !strings.Contains(chip, "cache 80.0%") {
 		t.Fatalf("usage chip = %q", chip)
 	}
 
@@ -1749,7 +1753,7 @@ func TestRuntimeOutputLimitSurfaced(t *testing.T) {
 	if !strings.Contains(status, "output: 32.8k (fallback)") {
 		t.Fatalf("detailed status missing output limit: %q", status)
 	}
-	line := runtimeStatusLine(LocaleEN, m.runtime, "", 0, "", 80)
+	line := runtimeStatusLine(LocaleEN, m.runtime, "", 80)
 	if ansi.StringWidth(line) > 79 {
 		t.Fatalf("runtime line too wide: %d", ansi.StringWidth(line))
 	}

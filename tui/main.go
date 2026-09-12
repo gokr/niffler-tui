@@ -1899,7 +1899,7 @@ func (m model) View() tea.View {
 	// treatment (ctrl+e cycles tool cards; ctrl+g cycles the LLM effort).
 	toolChip := toolLevelStyle.Render(t(m.loc, "chip.tool", t(m.loc, "level."+m.toolLevel.String())))
 	effortChip := effortStyle.Render(t(m.loc, "chip.effort", t(m.loc, "level."+m.effortLabel())))
-	runtimeLine := runtimeStatusLine(m.loc, m.runtime, m.modelOverride, m.contextUsed, m.usageChip(),
+	runtimeLine := runtimeStatusLine(m.loc, m.runtime, m.modelOverride,
 		max(0, m.width-1-ansi.StringWidth(header)-ansi.StringWidth(thinkChip)-ansi.StringWidth(toolChip)-ansi.StringWidth(effortChip)-3*ansi.StringWidth(headerSep)))
 	headerLine := header + headerSep + thinkChip + headerSep + toolChip + headerSep + effortChip + headerSep + runtimeLine
 	makeView := func(content string) tea.View {
@@ -2034,10 +2034,22 @@ func (m model) inputRule(label string) string {
 }
 
 // bottomLine is the single bottom row: the conversation workspace (the
-// session's cwd) and the transient note, if any. The command/key hints live
-// in /help and completion instead of consuming this row.
+// session's cwd), the context gauge, the session usage chip (↑/↓ tokens
+// and cache hit rate) and the transient note — each after a vertical bar.
 func (m model) bottomLine() string {
 	line := displayPath(m.cwd, max(12, m.width/2))
+	if ctx := contextStatusText(m.loc, m.runtime, m.contextUsed); ctx != "" {
+		if line != "" {
+			line += "  │  "
+		}
+		line += ctx
+	}
+	if chip := m.usageChip(); chip != "" {
+		if line != "" {
+			line += "  │  "
+		}
+		line += chip
+	}
 	if m.contextNote != "" {
 		if line != "" {
 			line += "  │  "
