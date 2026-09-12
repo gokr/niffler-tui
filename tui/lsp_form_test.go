@@ -9,6 +9,10 @@ package main
 import (
 	"strings"
 	"testing"
+
+	tea "charm.land/bubbletea/v2"
+
+	"github.com/charmbracelet/x/ansi"
 )
 
 func lspFormValuesFor(t *testing.T, name, command, extensions string) (lspFormValues, error) {
@@ -95,5 +99,57 @@ func TestLspEditFormLocksName(t *testing.T) {
 	_ = form.nextField(1)
 	if form.focus == lspFieldName {
 		t.Fatal("tab order must skip the locked name field")
+	}
+}
+
+// Regression: update() fanned every keystroke out to ALL inputs, and
+// bubbles textinput applies key messages regardless of focus — typing into
+// the command field also typed into the name and extensions fields. Keys
+// must reach only the focused input.
+func TestLspFormUpdateFeedsOnlyFocusedField(t *testing.T) {
+	form := newLspForm(100, LocaleEN)
+	form.focusField(lspFieldCommand) // focus the command field
+	form.inputs[lspFieldCommand], _ = form.inputs[lspFieldCommand].Update(tea.KeyPressMsg{Code: 'x', Text: "x"})
+	form, _ = form.update(tea.KeyPressMsg{Code: 'y', Text: "y"})
+	if got := form.inputs[lspFieldCommand].Value(); got != "xy" {
+		t.Fatalf("focused field must receive keystrokes, got %q", got)
+	}
+	if got := form.inputs[lspFieldName].Value(); got != "" {
+		t.Fatalf("unfocused name field must stay empty, got %q", got)
+	}
+	if got := form.inputs[lspFieldExtensions].Value(); got != "" {
+		t.Fatalf("unfocused extensions field must stay empty, got %q", got)
+	}
+}
+
+// The /lsp selector must be a rendered mode: it joins the selector view
+// switch and the resize refit (a missing case rendered a bare empty screen).
+func TestLspModeRendersSelector(t *testing.T) {
+	// Regression: /lsp switched modes and handled keys but was never wired
+	// into View() — the screen showed only the header (the same gap
+	// TestMcpModesRender pinned for /mcp). The selector, its entries and the
+	// footer hint must all render.
+	m := newTestModel()
+	m.loc = LocaleEN
+	m.width, m.height = 100, 30
+	m.lspServers = []lspServerSummary{{
+		Name:       "gopls",
+		Command:    []string{"gopls"},
+		Extensions: map[string]string{".go": "go"},
+		Source:     "builtin",
+	}}
+	m.openLspServerSelector()
+	if m.mode != modeLsp {
+		t.Fatalf("openLspServerSelector must set modeLsp, got %v", m.mode)
+	}
+	view := ansi.Strip(m.View().Content)
+	if !strings.Contains(view, "gopls") {
+		t.Fatalf("modeLsp view missing selector content:\n%s", view)
+	}
+	if !strings.Contains(view, "Language servers") {
+		t.Fatalf("modeLsp view missing the selector title:\n%s", view)
+	}
+	if !strings.Contains(view, "d: remove") { // footer.lsp
+		t.Fatalf("modeLsp view missing the lsp footer:\n%s", view)
 	}
 }

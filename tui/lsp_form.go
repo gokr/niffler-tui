@@ -117,13 +117,14 @@ func (f *lspForm) nextField(delta int) tea.Cmd {
 }
 
 func (f *lspForm) update(msg tea.Msg) (lspForm, tea.Cmd) {
-	var cmds []tea.Cmd
-	for i := range f.inputs {
-		var cmd tea.Cmd
-		f.inputs[i], cmd = f.inputs[i].Update(msg)
-		cmds = append(cmds, cmd)
+	// Keystrokes go only to the focused field: bubbles textinput applies
+	// key messages regardless of focus, so fanning the message out to every
+	// input types into all of them at once. (mcpForm has the same shape.)
+	var cmd tea.Cmd
+	if !(f.edit && f.focus == lspFieldName) {
+		f.inputs[f.focus], cmd = f.inputs[f.focus].Update(msg)
 	}
-	return *f, tea.Batch(cmds...)
+	return *f, cmd
 }
 
 // values validates the form. Extensions accept ".go, .nims" — whitespace
