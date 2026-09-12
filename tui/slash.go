@@ -773,7 +773,7 @@ func (m *model) applySlashResult(msg slashResultMsg) tea.Cmd {
 		m.addBlock(blockUser, message)
 		m.layout()
 		m.syncViewport(true)
-		return tea.Batch(m.sendTurn(message), m.spinner.Tick)
+		return tea.Batch(m.sendTurn(message), m.armSpinner())
 	}
 	// The exec meta line (→ /cmd args) directly above already names the
 	// command; the result block carries only the formatted payload.

@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"charm.land/bubbles/v2/spinner"
 	"charm.land/bubbles/v2/textarea"
 	"charm.land/bubbles/v2/viewport"
 	tea "charm.land/bubbletea/v2"
@@ -2774,5 +2775,54 @@ func TestSlashCommandsEnterInputHistory(t *testing.T) {
 	}
 	if got.input.Value() != "" {
 		t.Fatalf("input = %q, want cleared", got.input.Value())
+	}
+}
+
+// The busy-indicator tick chain re-arms itself while busy, so every other
+// arming site must be idempotent: a second live chain doubles the frame rate
+// and the cost grows with the number of messages sent (a session that had
+// sent a dozen messages pinned a core while busy).
+func TestArmSpinnerIsIdempotent(t *testing.T) {
+	m := newTestModel()
+	m.busy = true
+
+	if cmd := m.armSpinner(); cmd == nil {
+		t.Fatal("first arm should start the tick chain")
+	}
+	if cmd := m.armSpinner(); cmd != nil {
+		t.Fatal("second arm must not start a second chain while one is live")
+	}
+	// Sending a turn goes through armSpinner too: it must not add a chain.
+	m.busy = true
+	if cmd := m.armSpinner(); cmd != nil {
+		t.Fatal("arming from the send path must not add a chain")
+	}
+
+	// A tick clears the flag and re-arms exactly one chain while busy.
+	next, cmd := m.Update(spinner.TickMsg{})
+	if cmd == nil {
+		t.Fatal("a tick while busy must re-arm the chain")
+	}
+	after, ok := next.(model)
+	if !ok {
+		t.Fatalf("Update returned %T, want model", next)
+	}
+	if !after.spinnerTicking {
+		t.Fatal("re-armed chain must be recorded as live")
+	}
+	if again := after.armSpinner(); again != nil {
+		t.Fatal("still exactly one chain after a tick")
+	}
+
+	// Idle (connected, not busy): the chain is allowed to die.
+	after.busy = false
+	after.connected = true
+	after.spinnerTicking = false
+	idleNext, idleCmd := after.Update(spinner.TickMsg{})
+	if idleCmd != nil {
+		t.Fatal("an idle tick must not re-arm the chain")
+	}
+	if idleModel, ok := idleNext.(model); ok && idleModel.spinnerTicking {
+		t.Fatal("idle tick must leave the chain stopped")
 	}
 }

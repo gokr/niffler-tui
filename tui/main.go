@@ -263,6 +263,11 @@ type model struct {
 	flushPending     bool
 	flushTimerActive bool
 
+	// spinnerTicking guards the busy-indicator tick chain (see armSpinner):
+	// the chain re-arms itself while busy, so any other arming site must be
+	// idempotent or the frame rate grows with every message sent.
+	spinnerTicking bool
+
 	// historyGen stamps stored-transcript replays (startup and /session
 	// switching); a reply whose stamp is stale is dropped, so switching away
 	// while a load is in flight cannot paste the old conversation into the
@@ -494,7 +499,23 @@ func (m *model) setTheme(name string) bool {
 }
 
 func (m model) Init() tea.Cmd {
-	return tea.Batch(m.focusCmd, m.connectCmd(), m.spinner.Tick, leaseTickCmd())
+	return tea.Batch(m.focusCmd, m.connectCmd(), m.armSpinner(), leaseTickCmd())
+}
+
+// armSpinner starts the busy-indicator tick chain, at most once. The chain
+// re-arms itself on every spinner.TickMsg while the UI is busy (see the
+// spinner.TickMsg case), so every other arming site must go through here:
+// arming a second copy starts a second, equally self-perpetuating chain, and
+// the frame rate then grows with the conversation's history (measured: an
+// instance that had sent a dozen messages pinned a core at ~96% CPU while
+// busy, and stayed hot between turns). One live timer per purpose — the same
+// shape as flushTimerActive for viewport flushes.
+func (m *model) armSpinner() tea.Cmd {
+	if m.spinnerTicking {
+		return nil
+	}
+	m.spinnerTicking = true
+	return m.spinner.Tick
 }
 
 func (m model) connectCmd() tea.Cmd {
@@ -968,7 +989,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.addBlock(blockUser, content)
 			m.layout()
 			m.syncViewport(true)
-			return m, tea.Batch(m.sendTurn(content), m.spinner.Tick)
+			return m, tea.Batch(m.sendTurn(content), m.armSpinner())
 		case "up":
 			// History previous only at the visual top of the textarea;
 			// otherwise Up moves within logical or soft-wrapped lines.
@@ -1518,9 +1539,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case spinner.TickMsg:
+		m.spinnerTicking = false
 		if !m.connected || m.busy {
 			var cmd tea.Cmd
 			m.spinner, cmd = m.spinner.Update(msg)
+			m.spinnerTicking = true
 			cmds = append(cmds, cmd)
 		}
 
