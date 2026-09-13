@@ -25,6 +25,8 @@ const (
 	modeMcpForm
 	modeLsp
 	modeLspForm
+	modeProcesses
+	modeProcessesPeek
 	modeThemes
 	modeProfiles
 	modeProfileForm
@@ -50,6 +52,8 @@ const (
 	selectorMcpEntry
 	selectorLspServer
 	selectorLspAdd
+	selectorProcess
+	selectorProcessNote
 	selectorTheme
 	selectorProfile
 	selectorProfileDefault

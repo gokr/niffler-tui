@@ -111,6 +111,9 @@ Niffler 的 builder 不使用這個 `go.mod`；它建立隔離的模組，replac
 - `/mcp [add|edit|on|off|refresh|search]` —— 管理外部 MCP 伺服器；不帶參數的
   `/mcp` 開啟伺服器瀏覽器
 - `/lsp [add|edit|remove]` — 管理語言伺服器登錄表（設定即支援：為 .go 註冊 gopls 後，lsp 工具即獲得診斷與精確導航）；裸 `/lsp` 開啟伺服器瀏覽器
+- `/processes` — 檢視並管理背景程序（透過 bash 的 run_in_background 或
+  process_start 啟動的開發伺服器、監視器）：有程序執行時狀態列顯示 `bg N`
+  徽標；enter 檢視輸出尾部（不影響模型的增量讀取游標）；d 二次確認後終止
 - `/status` —— 詳細的有效供應商/模型/上下文來源與用量
 - `/components [all|direct|discovered|undiscovered]` —— 本對話實際可呼叫的工具，
   按元件列出，並顯示每個工具的曝光狀態

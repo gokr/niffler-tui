@@ -107,6 +107,9 @@ Niffler 的 builder 不使用这个 `go.mod`；它创建隔离的模块，replac
 - `/mcp [add|edit|on|off|refresh|search]` —— 管理外部 MCP 服务器；不带参数的
   `/mcp` 打开服务器浏览器
 - `/lsp [add|edit|remove]` — 管理语言服务器注册表（配置即支持：为 .go 注册 gopls 后，lsp 工具即获得诊断与精确导航）；裸 `/lsp` 打开服务器浏览器
+- `/processes` — 查看并管理后台进程（通过 bash 的 run_in_background 或
+  process_start 启动的开发服务器、监视器）：有进程运行时状态栏显示 `bg N`
+  徽标；enter 查看输出尾部（不影响模型的增量读取游标）；d 二次确认后终止
 - `/status` —— 详细的有效提供商/模型/上下文来源与用量
 - `/components [all|direct|discovered|undiscovered]` —— 本会话实际可调用的工具，
   按组件列出，并显示每个工具的暴露状态

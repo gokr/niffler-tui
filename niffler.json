@@ -30,7 +30,8 @@
         "tui/toolprofiles.go",
         "tui/toolrender.go",
         "tui/toolcard.go",
-        "tui/transcript.go"
+        "tui/transcript.go",
+        "tui/processes.go"
       ],
       "interactive": true,
       "description": "Interactive terminal chat client; registers no LLM tools"

@@ -421,6 +421,18 @@ func localLsp(m model, cmd slashCommand, argument string) (tea.Model, tea.Cmd) {
 	return sub.run(m, cmd, rest)
 }
 
+func localProcesses(m model, cmd slashCommand, argument string) (tea.Model, tea.Cmd) {
+	if !m.connected {
+		m.contextNote = t(m.loc, "note.notConnected")
+		return m, nil
+	}
+	// the processes component is optional (required: false): without it the
+	// list cmd errors and the handler lands back in chat with the note
+	m.processesConfirmKill = ""
+	m.openProcessesSelectorWithLoading()
+	return m, processesListCmd(m.comp)
+}
+
 func lspAdd(m model, cmd slashCommand, argument string) (tea.Model, tea.Cmd) {
 	m.lspForm = newLspForm(m.width, m.loc)
 	m.mode = modeLspForm
@@ -601,6 +613,33 @@ func (m *model) openLspServerSelector() {
 	m.selector = newSelector(t(m.loc, "selector.lspServers"),
 		lspSelectorItems(m.loc, m.lspServers, m.lspConfirmDelete), m.width, m.height-3)
 	m.mode = modeLsp
+	m.layout()
+}
+
+// openProcessesSelectorWithLoading opens the panel with a placeholder; the
+// processesListMsg handler rebuilds it with the loaded registry.
+func (m *model) openProcessesSelectorWithLoading() {
+	m.selector = newSelector(t(m.loc, "selector.processesLoading"), nil, m.width, m.height-3)
+	m.mode = modeProcesses
+	m.layout()
+}
+
+// openProcessesSelector rebuilds the /processes list from the snapshot.
+func (m *model) openProcessesSelector() {
+	m.selector = newSelector(t(m.loc, "selector.processes"),
+		processSelectorItems(m.loc, m.processes, m.processesConfirmKill), m.width, m.height-3)
+	m.mode = modeProcesses
+	m.layout()
+}
+
+// openProcessesPeek opens the output-tail view for one process with a
+// loading placeholder; processesPeekMsg fills it.
+func (m *model) openProcessesPeek(p processSummary) {
+	m.processesPeek = p
+	m.processesPeekText = ""
+	m.processesPeekErr = ""
+	m.processesPeekLoading = true
+	m.mode = modeProcessesPeek
 	m.layout()
 }
 
@@ -869,6 +908,63 @@ func (m model) handleControlKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 		}
+	}
+
+	// Background processes (modeProcesses): o/enter = peek output,
+	// d/x = kill (two-stage), r = refresh. Peek (modeProcessesPeek):
+	// esc/enter/q back.
+	if m.mode == modeProcesses {
+		key := msg.String()
+		if key == "esc" {
+			m.processesConfirmKill = ""
+			m.mode = modeChat
+			m.layout()
+			return m, nil
+		}
+		selected, ok := m.selector.selected()
+		armed := m.processesConfirmKill
+		if armed != "" && (!ok || selected.id != armed) {
+			m.processesConfirmKill = ""
+		}
+		if ok && selected.kind == selectorProcessNote {
+			return m, nil
+		}
+		if ok && selected.kind == selectorProcess {
+			p, isProc := selected.payload.(processSummary)
+			switch key {
+			case "o", "enter":
+				if isProc {
+					m.openProcessesPeek(p)
+					return m, processesPeekCmd(m.comp, p.ID)
+				}
+			case "r":
+				m.controlPending = true
+				return m, processesListCmd(m.comp)
+			case "d", "x":
+				if !isProc {
+					return m, nil
+				}
+				if armed != "" {
+					m.processesConfirmKill = ""
+					m.controlPending = true
+					return m, processesKillCmd(m.comp, selected.id)
+				}
+				m.processesConfirmKill = selected.id
+				m.openProcessesSelector()
+				return m, nil
+			}
+		}
+		return m, nil
+	}
+
+	if m.mode == modeProcessesPeek {
+		switch msg.String() {
+		case "esc", "q", "enter":
+			m.mode = modeProcesses
+			m.layout()
+			return m, nil
+		}
+		return m, nil
 	}
 
 	// MCP registry search (modeMcpSearch): enter/a on an installable entry

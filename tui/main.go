@@ -157,14 +157,14 @@ type model struct {
 	sessionNeedsCreate bool // no conversation header yet: first turn pins cwd
 	ctx                context.Context
 	comp               *sdk.Component
-	session     string
-	natsURL     string
-	loc         Locale
-	theme       string // active UI color theme (themeRegistry key)
-	viewport    viewport.Model
-	input       textarea.Model
-	spinner     spinner.Model
-	blocks      []transcriptBlock
+	session            string
+	natsURL            string
+	loc                Locale
+	theme              string // active UI color theme (themeRegistry key)
+	viewport           viewport.Model
+	input              textarea.Model
+	spinner            spinner.Model
+	blocks             []transcriptBlock
 
 	width        int
 	height       int
@@ -213,12 +213,23 @@ type model struct {
 	lspServers       []lspServerSummary
 	lspConfirmDelete string
 	lspForm          lspForm
-	models           []modelSummary
-	modelsCatalog    string
-	runtime          runtimeResolution
-	modelOverride    string
-	promptTokens     int
-	contextUsed      int
+	// Background-processes control plane (/processes + the status-line
+	// badge): the registry snapshot, the two-stage kill arm, the peek view,
+	// and the badge's refresh-tick guard (one live timer per purpose — the
+	// armSpinner lesson).
+	processes            []processSummary
+	processesConfirmKill string
+	processesPeek        processSummary
+	processesPeekText    string
+	processesPeekErr     string
+	processesPeekLoading bool
+	bgTicking            bool
+	models               []modelSummary
+	modelsCatalog        string
+	runtime              runtimeResolution
+	modelOverride        string
+	promptTokens         int
+	contextUsed          int
 	// inputTokens/outputTokens accumulate the session's billed tokens (the
 	// header's ↑/↓ chip); cacheHits/cachePrompt accumulate the prompt-cache
 	// economics (header and /status).
@@ -1480,6 +1491,61 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// snapshot warm for the picker title
 		m.lspServers = nil
 
+	case processesListMsg:
+		m.controlPending = false
+		if msg.Err == nil {
+			m.processes = msg.Processes
+			if m.mode == modeProcesses {
+				// background refreshes (badge tick, tool events) must not
+				// rebuild the list under a browsing user: update items in
+				// place so the cursor and any filter survive
+				m.selector.list.SetItems(processSelectorItems(m.loc, m.processes, m.processesConfirmKill))
+				m.layout()
+			}
+		} else if m.mode == modeProcesses {
+			// panel open but the component is not running (required: false):
+			// back to chat with a note instead of a stuck loading list
+			m.contextNote = msg.Err.Error()
+			m.mode = modeChat
+			m.layout()
+		}
+		// badge: rearm the slow refresh while anything runs; drop the note
+		// quietly when the component is absent and nothing was started
+		if msg.Err == nil {
+			m.layout()
+		}
+		if cmd := m.armBgTick(); cmd != nil {
+			cmds = append(cmds, cmd)
+		}
+
+	case processesPeekMsg:
+		m.processesPeekLoading = false
+		m.processesPeekText = msg.Text
+		if msg.Err != nil {
+			m.processesPeekErr = msg.Err.Error()
+		}
+		if m.mode == modeProcessesPeek {
+			m.layout()
+		}
+
+	case processesActionMsg:
+		m.controlPending = false
+		if msg.Err != nil {
+			m.addBlock(blockError, msg.Err.Error())
+			m.syncViewport(true)
+			break
+		}
+		m.processesConfirmKill = ""
+		m.addBlock(blockMeta, t(m.loc, "processes.killed", msg.ID, msg.Status))
+		m.syncViewport(true)
+		cmds = append(cmds, processesListCmd(m.comp))
+
+	case bgTickMsg:
+		// the chain re-arms itself only while something is running
+		if cmd := m.armBgTick(); cmd != nil {
+			cmds = append(cmds, cmd, processesListCmd(m.comp))
+		}
+
 	case thinkingEffortMsg:
 		m.applyThinkingEffort(msg)
 
@@ -1624,6 +1690,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m *model) applySessionEvent(msg sessionEventMsg) tea.Cmd {
 	event := msg.event
 	var renderCmd, flushCmd tea.Cmd
+	var bgCmd tea.Cmd
 	switch msg.kind {
 	case "token":
 		// Once the assistant event delivered the complete content (or the
@@ -1693,6 +1760,7 @@ func (m *model) applySessionEvent(msg sessionEventMsg) tea.Cmd {
 			})
 		} else if m.completeToolCall(event.CallID, event.Tool, event.Args, event.Result, event.Error, event.DurationMs) {
 			m.markTranscriptDirty()
+			bgCmd = m.bgRefreshAfterTool(event.Tool, event.Args)
 		} else {
 			// Phase 2 with no pending entry to complete (or a legacy
 			// single-phase event): append the finished call directly.
@@ -1725,10 +1793,10 @@ func (m *model) applySessionEvent(msg sessionEventMsg) tea.Cmd {
 		m.finishTurn(event.Reply, event.Error)
 	}
 	if msg.kind == "token" {
-		return tea.Batch(renderCmd, flushCmd)
+		return tea.Batch(renderCmd, flushCmd, bgCmd)
 	}
 	m.syncViewport(false)
-	return renderCmd
+	return tea.Batch(renderCmd, bgCmd)
 }
 
 // streamingBlock returns the index of the assistant/thinking block that a
@@ -1996,7 +2064,7 @@ func (m *model) layout() {
 	// The chat frame is header + viewport + blank spacer + rule + input +
 	// rule + status — six fixed rows besides the viewport and input.
 	m.viewport.SetHeight(max(1, height-6-m.input.Height()-extra))
-	if m.mode == modeProviders || m.mode == modeCatalogProviders || m.mode == modeModels || m.mode == modeSessions || m.mode == modeThemes || m.mode == modeProfiles || m.mode == modeLsp {
+	if m.mode == modeProviders || m.mode == modeCatalogProviders || m.mode == modeModels || m.mode == modeSessions || m.mode == modeThemes || m.mode == modeProfiles || m.mode == modeLsp || m.mode == modeProcesses {
 		m.selector.setSize(width-1, max(6, height-4))
 	}
 	if m.mode == modeConnectForm {
@@ -2144,7 +2212,7 @@ func (m model) View() tea.View {
 		parts := []string{headerLine}
 		switch m.mode {
 		case modeProviders, modeCatalogProviders, modeModels, modeSessions,
-			modeMcp, modeMcpSearch, modeThemes, modeProfiles, modeLsp:
+			modeMcp, modeMcpSearch, modeThemes, modeProfiles, modeLsp, modeProcesses:
 			control = m.selector.list.View()
 			parts = append(parts, control)
 			footer := t(m.loc, "footer.filterChoose")
@@ -2169,6 +2237,12 @@ func (m model) View() tea.View {
 					footer = errorStyle.Render(t(m.loc, "footer.confirmRemove", m.lspConfirmDelete))
 				}
 			}
+			if m.mode == modeProcesses {
+				footer = t(m.loc, "footer.processes")
+				if m.processesConfirmKill != "" {
+					footer = errorStyle.Render(t(m.loc, "footer.confirmKill", m.processesConfirmKill))
+				}
+			}
 			if m.controlPending {
 				footer = t(m.loc, "status.updating") + "…"
 			} else if m.contextNote != "" {
@@ -2181,6 +2255,12 @@ func (m model) View() tea.View {
 			parts = append(parts, m.mcpForm.view(m.width))
 		case modeLspForm:
 			parts = append(parts, m.lspForm.view(m.width))
+		case modeProcessesPeek:
+			parts = append(parts, peekView(m.loc, m.processesPeek, m.processesPeekText,
+				m.width, m.height, m.processesPeekLoading))
+			if m.processesPeekErr != "" {
+				parts = append(parts, errorStyle.Render(truncate(m.processesPeekErr, max(1, m.width-1))))
+			}
 		case modeConnectForm:
 			parts = append(parts, m.providerForm.view(m.width))
 		case modeOAuth:
@@ -2268,6 +2348,12 @@ func (m model) bottomLine() string {
 		}
 		line += chip
 	}
+	if badge := processesBadgeText(m.loc, m.processes); badge != "" {
+		if line != "" {
+			line += "  │  "
+		}
+		line += badge
+	}
 	if m.contextNote != "" {
 		if line != "" {
 			line += "  │  "
@@ -2275,6 +2361,41 @@ func (m model) bottomLine() string {
 		line += m.contextNote
 	}
 	return line
+}
+
+// armBgTick arms the badge's refresh chain at most once; it lives only
+// while the last snapshot showed a running process and disarms itself from
+// bgTickMsg when the count reaches zero (one live timer per purpose).
+func (m *model) armBgTick() tea.Cmd {
+	if runningCount(m.processes) == 0 {
+		m.bgTicking = false
+		return nil
+	}
+	if m.bgTicking {
+		return nil
+	}
+	m.bgTicking = true
+	return bgTickCmd()
+}
+
+// bgRefreshAfterTool schedules a badge refresh when a tool call just
+// started or stopped a background process: the processes tools directly,
+// or bash carrying run_in_background. Cheap guard: only the done event of
+// those tools pays for a process_list round trip.
+func (m *model) bgRefreshAfterTool(tool string, args json.RawMessage) tea.Cmd {
+	interesting := tool == "process_start" || tool == "process_kill"
+	if tool == "bash" {
+		var parsed struct {
+			RunInBackground bool `json:"run_in_background"`
+		}
+		if json.Unmarshal(args, &parsed) == nil && parsed.RunInBackground {
+			interesting = true
+		}
+	}
+	if !interesting {
+		return nil
+	}
+	return processesListCmd(m.comp)
 }
 
 // initialCwd is the workspace fallback before the conversation header loads

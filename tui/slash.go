@@ -155,6 +155,7 @@ func builtinSlashCommands() []slashCommand {
 		{Name: "lsp", Description: "manage language-server registry entries", builtin: true, run: localLsp, subcommands: lspSubcommands, Params: []slashParam{
 			{Name: "subcommand", Kind: "enum", Values: subcommandNames(lspSubcommands)},
 		}},
+		{Name: "processes", Description: "show and manage background processes", builtin: true, run: localProcesses},
 		{Name: "mcp", Description: "manage external MCP servers", builtin: true, run: localMcp, subcommands: mcpSubcommands, Params: []slashParam{
 			{Name: "subcommand", Kind: "enum", Values: subcommandNames(mcpSubcommands)},
 			{Name: "name", Kind: "string", Description: "server name",

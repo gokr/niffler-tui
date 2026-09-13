@@ -204,7 +204,7 @@ type bootstrapMsg struct {
 	// the workspace — see model.sessionNeedsCreate).
 	ConversationExists bool
 	Runtime            runtimeResolution
-	Warnings         []string
+	Warnings           []string
 	// Slash is the merged slash-command registry (store checkpoint first,
 	// catalog snapshot fallback); SlashErr reports a load failure. The
 	// registry is global (not per-session), so these survive a stale

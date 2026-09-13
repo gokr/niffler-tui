@@ -124,6 +124,10 @@ Local commands are handled by the TUI and are never sent to the model:
 - `/lsp [add|edit|remove]` — manage language-server registry entries (config,
   not code: register e.g. gopls for .go and the lsp tool gains diagnostics and
   precise navigation for it); a bare `/lsp` opens the server browser
+- `/processes` — show and manage background processes (dev servers, watchers
+  started via bash's run_in_background or process_start): a status-line
+  `bg N` badge while anything runs, enter peeks the output tail without
+  touching the model's drain cursor, d kills with a two-stage confirm
 - `/status` — detailed effective provider/model/context provenance and usage
 - `/components [all|direct|discovered|undiscovered]` — what this conversation
   can actually call, per component, with each tool's exposure state
