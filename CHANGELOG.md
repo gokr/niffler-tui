@@ -8,6 +8,16 @@ project aims for [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **The busy label says what the turn is doing.** The divider's activity
+  label follows the turn's phase instead of a flat "Working": a running
+  tool names itself with a short identifying argument (`bash go build
+  ./...`, `edit main.go`, `grep TODO`), streaming tokens say `Thinking` or
+  `Responding`, a provider silent past 5s admits `Waiting`, and `Working`
+  remains the fallback. The turn's elapsed time rides along on every
+  variant (`Working (12s)`, `1m05s` past a minute) — a frozen label cannot
+  tell a slow build from a hung one — and accepted mid-turn steers show as
+  `+N`. Existing labels capitalized to match (`Connecting`, `Stopping`,
+  `Updating settings`).
 - **Status bars rebalanced: one-decimal cache rate, live measures in the
   bottom bar.** The header keeps only the provider/model selection (shrunk
   before truncating); the context gauge, token in/out and the prompt-cache

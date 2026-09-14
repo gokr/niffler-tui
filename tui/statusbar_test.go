@@ -6,9 +6,11 @@
 package main
 
 import (
+	"encoding/json"
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/charmbracelet/x/ansi"
 )
@@ -187,5 +189,97 @@ func TestChatBottomRowIsWorkspaceAndNote(t *testing.T) {
 	view = ansi.Strip(m.View().Content)
 	if !strings.Contains(view, "niffler-tui  │  ctx —  │  context trimmed") {
 		t.Fatalf("note not on the bottom row:\n%s", view)
+	}
+}
+
+// TestBusyLabelStates walks the busy label's signal ladder: a running tool
+// names itself, fresh tokens say thinking or responding, a provider silent
+// past the stall threshold says waiting, and working is the fallback. The
+// elapsed suffix and mid-turn steer count ride on every variant.
+func TestBusyLabelStates(t *testing.T) {
+	m := newTestModel()
+	m.loc = LocaleEN
+	m.connected = true
+	m.busy = true
+
+	// No signals at all: plain Working, no suffixes (no turn timestamp).
+	if got := m.busyLabel(); got != "Working" {
+		t.Fatalf("bare busy label = %q, want %q", got, "Working")
+	}
+
+	// A turn in progress always carries the elapsed time. In the first
+	// seconds the fresh timestamp reads as still working.
+	m.busySince = time.Now().Add(-3 * time.Second)
+	m.lastTokenAt = m.busySince
+	if got := m.busyLabel(); got != "Working (3s)" {
+		t.Fatalf("elapsed label = %q, want %q", got, "Working (3s)")
+	}
+
+	// The same turn, still silent 42 seconds in: the provider has produced
+	// nothing, so the label admits waiting — the elapsed keeps counting.
+	m.busySince = time.Now().Add(-42 * time.Second)
+	m.lastTokenAt = m.busySince
+	if got := m.busyLabel(); got != "Waiting (42s)" {
+		t.Fatalf("stalled label = %q, want %q", got, "Waiting (42s)")
+	}
+
+	// Fresh reasoning tokens say Thinking; content says Responding.
+	m.lastTokenAt = time.Now()
+	m.streamKind = streamThinking
+	if got := m.busyLabel(); got != "Thinking (42s)" {
+		t.Fatalf("thinking label = %q, want %q", got, "Thinking (42s)")
+	}
+	m.streamKind = streamResponding
+	if got := m.busyLabel(); got != "Responding (42s)" {
+		t.Fatalf("responding label = %q, want %q", got, "Responding (42s)")
+	}
+
+	// Stale stream tokens do not keep the streaming label: the freshness
+	// check drops it and the silence reads as Waiting.
+	m.lastTokenAt = time.Now().Add(-2 * activityStallAfter)
+	if got := m.busyLabel(); got != "Waiting (42s)" {
+		t.Fatalf("stale stream label = %q, want %q", got, "Waiting (42s)")
+	}
+
+	// A pending tool call dominates everything, naming itself with its
+	// identifying argument.
+	m.appendToolCall(toolCall{
+		name:    "bash",
+		args:    json.RawMessage(`{"command": "go build ./..."}`),
+		pending: true,
+	})
+	if got := m.busyLabel(); got != "bash go build ./... (42s)" {
+		t.Fatalf("tool label = %q, want %q", got, "bash go build ./... (42s)")
+	}
+
+	// File tools shorten the path to their basename; the scan also skips
+	// finished calls and older pending ones — the latest pending call wins.
+	m.appendToolCall(toolCall{name: "read", args: json.RawMessage(`{"path": "/x/y.go"}`)})
+	m.appendToolCall(toolCall{
+		name:    "edit",
+		args:    json.RawMessage(`{"path": "/home/gokr/deep/repo/main.go"}`),
+		pending: true,
+	})
+	if got := m.busyLabel(); got != "edit main.go (42s)" {
+		t.Fatalf("edit label = %q, want %q", got, "edit main.go (42s)")
+	}
+
+	// Accepted mid-turn steers ride along as +N.
+	m.steered = 2
+	if got := m.busyLabel(); got != "edit main.go +2 (42s)" {
+		t.Fatalf("steered label = %q, want %q", got, "edit main.go +2 (42s)")
+	}
+}
+
+// TestFmtElapsed covers the compact turn-age shapes used by the label.
+func TestFmtElapsed(t *testing.T) {
+	for d, want := range map[time.Duration]string{
+		42 * time.Second: "42s",
+		65 * time.Second: "1m05s",
+		(2*time.Hour + 3*time.Minute + 4*time.Second): "2h03m04s",
+	} {
+		if got := fmtElapsed(d); got != want {
+			t.Errorf("fmtElapsed(%v) = %q, want %q", d, got, want)
+		}
 	}
 }

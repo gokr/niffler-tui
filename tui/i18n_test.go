@@ -37,7 +37,7 @@ func TestCatalogsComplete(tt *testing.T) {
 
 func TestTSubstitutes(tt *testing.T) {
 	got := t(LocaleEN, "status.connecting", "nats://127.0.0.1:4222")
-	want := "connecting to nats://127.0.0.1:4222"
+	want := "Connecting to nats://127.0.0.1:4222"
 	if got != want {
 		tt.Errorf("got %q, want %q", got, want)
 	}

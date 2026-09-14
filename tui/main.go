@@ -143,6 +143,18 @@ type renderSettleMsg struct{}
 // burst; the pending viewport sync then runs. See scheduleViewportFlush.
 type viewportFlushMsg struct{}
 
+// streamKind says what the latest token frame carried, so the busy label can
+// name the phase: reasoning only (thinking), any content (responding), or
+// nothing yet. Reset at round boundaries; a streamKind that outlives its
+// tokens is ignored via the lastTokenAt freshness check in busyLabel.
+type streamKind uint8
+
+const (
+	streamNone       streamKind = iota
+	streamThinking              // reasoning deltas, no content yet
+	streamResponding            // content is on the page
+)
+
 type model struct {
 	profileForm profileForm
 	toolProfile string // client selection for subsequently created conversations
@@ -166,10 +178,16 @@ type model struct {
 	spinner            spinner.Model
 	blocks             []transcriptBlock
 
-	width        int
-	height       int
-	connected    bool
-	busy         bool
+	width     int
+	height    int
+	connected bool
+	busy      bool
+	// busyLabel inputs: when the turn started (drives the label's elapsed
+	// suffix), what the latest token frame carried (thinking vs responding),
+	// and how many mid-turn steers the turn accepted.
+	busySince    time.Time
+	streamKind   streamKind
+	steered      int
 	hadAssistant bool
 	assistantIdx int
 	thinkingIdx  int
@@ -1004,6 +1022,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.draft = ""
 			m.input.SetValue("")
 			m.busy = true
+			m.busySince = time.Now()
+			m.lastTokenAt = m.busySince
+			m.streamKind = streamNone
+			m.steered = 0
 			m.hadAssistant = false
 			m.assistantIdx = -1
 			m.thinkingIdx = -1
@@ -1651,6 +1673,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.err != nil {
 			m.addBlock(blockMeta, "steer failed: "+msg.err.Error())
 			m.syncViewport(true)
+		} else if m.busy {
+			// Accepted mid-turn steers surface as +N in the busy label.
+			m.steered++
 		}
 	case renderSettleMsg:
 		m.renderTimerActive = false
@@ -1713,6 +1738,14 @@ func (m *model) applySessionEvent(msg sessionEventMsg) tea.Cmd {
 		}
 		m.setStreaming(true)
 		m.lastTokenAt = time.Now()
+		// The label follows the stream's phase: content wins over reasoning,
+		// and a responding label is never downgraded by a later reasoning
+		// frame within the same round.
+		if event.Content != "" {
+			m.streamKind = streamResponding
+		} else if event.Reasoning != "" && m.streamKind != streamResponding {
+			m.streamKind = streamThinking
+		}
 		if event.Reasoning != "" {
 			m.appendStreamingText(blockThinking, &m.thinkingIdx, event.Reasoning)
 		}
@@ -1728,6 +1761,7 @@ func (m *model) applySessionEvent(msg sessionEventMsg) tea.Cmd {
 
 	case "assistant":
 		m.setStreaming(false)
+		m.streamKind = streamNone
 		m.updateRuntimeFromEvent(event)
 		if event.Content != "" {
 			// Finalize the round's streamed block: replace its partial text
@@ -1760,6 +1794,7 @@ func (m *model) applySessionEvent(msg sessionEventMsg) tea.Cmd {
 		m.roundClosed = false
 		// The assistant round ended; render its markdown immediately.
 		m.setStreaming(false)
+		m.streamKind = streamNone
 		if event.Phase == "start" {
 			// Phase 1 of core's two-phase protocol: the call is about to
 			// run. Append a pending entry so long-running tools are
@@ -1934,6 +1969,9 @@ func (m *model) finishTurn(reply, errorText string) {
 	m.stopping = false
 	m.busy = false
 	m.setStreaming(false)
+	m.streamKind = streamNone
+	m.steered = 0
+	m.busySince = time.Time{}
 	m.roundClosed = true
 	// Finalize any trailing thinking block here as well: a turn can end on
 	// "done" without an assistant event (errors, short replies), and an
@@ -2305,6 +2343,12 @@ func (m model) View() tea.View {
 	return makeView(strings.Join(parts, "\n"))
 }
 
+// activityStallAfter is how long a busy turn may stay silent before the
+// label admits the provider is not producing anything. Generous enough that
+// a pause between reasoning bursts does not flash Waiting, short enough to
+// catch a hung request at roughly the moment a human starts wondering.
+const activityStallAfter = 5 * time.Second
+
 // activityLabel is the transient turn state shown embedded in the input's
 // top divider (Pi-style: a few characters into the line). Empty while idle,
 // when the bottom row only carries the workspace and any note.
@@ -2317,11 +2361,121 @@ func (m model) activityLabel() string {
 	case m.stopArmed:
 		return errorStyle.Render(t(m.loc, "status.stopArmed"))
 	case m.busy:
-		return m.spinner.View() + " " + t(m.loc, "status.working")
+		return m.spinner.View() + " " + m.busyLabel()
 	case m.controlPending:
 		return t(m.loc, "status.updating") + "…"
 	}
 	return ""
+}
+
+// busyLabel names what the turn is doing right now, most specific signal
+// first: a running tool names itself ("bash go build ./..."), fresh tokens
+// say thinking or responding, a provider silent past activityStallAfter
+// says waiting, and working is the fallback. The turn's elapsed time rides
+// along on every variant — a frozen label cannot tell a slow build from a
+// hung one — and accepted mid-turn steers show as +N. It re-evaluates on
+// every frame the spinner chain already paints while busy, so the elapsed
+// count and the stall transition need no timer of their own.
+func (m model) busyLabel() string {
+	reference := m.lastTokenAt
+	if reference.IsZero() {
+		reference = m.busySince
+	}
+	streaming := !reference.IsZero() && time.Since(reference) < activityStallAfter
+
+	var label string
+	if call := m.pendingCall(); call != nil {
+		label = call.name
+		if snippet := activitySnippet(call.name, toolArgs(call)); snippet != "" {
+			label += " " + snippet
+		}
+	} else if m.streamKind == streamResponding && streaming {
+		label = t(m.loc, "status.responding")
+	} else if m.streamKind == streamThinking && streaming {
+		label = t(m.loc, "status.thinking")
+	} else if !reference.IsZero() && time.Since(reference) >= activityStallAfter {
+		label = t(m.loc, "status.waiting")
+	} else {
+		label = t(m.loc, "status.working")
+	}
+	if m.steered > 0 {
+		label += fmt.Sprintf(" +%d", m.steered)
+	}
+	if !m.busySince.IsZero() {
+		label += " (" + fmtElapsed(time.Since(m.busySince)) + ")"
+	}
+	return label
+}
+
+// pendingCall returns the most recent tool call still awaiting its done
+// event, scanning backwards from the newest block. A running call sits at
+// the transcript tail, so the scan stops almost immediately; with nothing
+// running it walks the transcript once, still trivial next to rendering it.
+func (m model) pendingCall() *toolCall {
+	for i := len(m.blocks) - 1; i >= 0; i-- {
+		b := &m.blocks[i]
+		if b.kind != blockTool || b.run == nil {
+			continue
+		}
+		for j := len(b.run.calls) - 1; j >= 0; j-- {
+			if b.run.calls[j].pending {
+				return &b.run.calls[j]
+			}
+		}
+	}
+	return nil
+}
+
+// activitySnippet picks one short identifying argument for the busy label:
+// bash shows its command, file tools the path's basename, search and web
+// tools their query, agents their description. Tools with nothing compact
+// to show — fabric programs, git flags, MCP calls — stay name-only.
+func activitySnippet(name string, args map[string]any) string {
+	var key string
+	switch name {
+	case "bash":
+		key = "command"
+	case "read", "write", "edit":
+		key = "path"
+	case "grep", "glob", "files":
+		key = "pattern"
+	case "fetch":
+		key = "url"
+	case "agent":
+		key = "description"
+	}
+	if key == "" {
+		return ""
+	}
+	s, _ := args[key].(string)
+	if s == "" {
+		return ""
+	}
+	if key == "path" {
+		if i := strings.LastIndexByte(s, '/'); i >= 0 {
+			s = s[i+1:]
+		}
+	}
+	const maxSnippet = 24
+	if runes := []rune(s); len(runes) > maxSnippet {
+		s = string(runes[:maxSnippet-1]) + "…"
+	}
+	return s
+}
+
+// fmtElapsed renders a compact turn age for the busy label: 42s, then
+// 1m05s, then 1h02m03s.
+func fmtElapsed(d time.Duration) string {
+	const h, m = 3600, 60
+	s := int(d.Round(time.Second).Seconds())
+	switch {
+	case s < m:
+		return fmt.Sprintf("%ds", s)
+	case s < h:
+		return fmt.Sprintf("%dm%02ds", s/m, s%m)
+	default:
+		return fmt.Sprintf("%dh%02dm%02ds", s/h, (s%h)/m, s%m)
+	}
 }
 
 // inputRule renders one of the dividers around the input. A non-empty label
