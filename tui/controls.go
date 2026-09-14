@@ -182,9 +182,36 @@ func localModel(m model, cmd slashCommand, argument string) (tea.Model, tea.Cmd)
 }
 
 func localStatus(m model, cmd slashCommand, argument string) (tea.Model, tea.Cmd) {
-	m.addBlock(blockMeta, m.detailedRuntimeStatus())
+	report := m.detailedRuntimeStatus()
+	if strings.EqualFold(strings.TrimSpace(argument), "ask") {
+		prompt := "Interpret this Niffler /status report and explain any concerns or useful next steps:\n\n" + report
+		m.addBlock(blockMeta, report)
+		m.busy = true
+		m.hadAssistant = false
+		m.assistantIdx = -1
+		m.thinkingIdx = -1
+		m.setStreaming(false)
+		m.roundClosed = false
+		m.addBlock(blockUser, prompt)
+		m.layout()
+		m.syncViewport(true)
+		return m, tea.Batch(m.sendTurn(prompt), m.armSpinner())
+	}
+	m.addBlock(blockMeta, report)
 	m.syncViewport(true)
 	return m, nil
+}
+
+func localDoctor(m model, cmd slashCommand, argument string) (tea.Model, tea.Cmd) {
+	args, err := parseSlashArgs(cmd, argument)
+	if err != nil {
+		m.addBlock(blockError, "/"+cmd.Name+": "+err.Error())
+		m.syncViewport(true)
+		return m, nil
+	}
+	m.addBlock(blockMeta, "→ /"+cmd.Name+slashArgText(argument))
+	m.syncViewport(true)
+	return m, m.slashCallCmd(cmd, args)
 }
 
 func localNew(m model, cmd slashCommand, argument string) (tea.Model, tea.Cmd) {

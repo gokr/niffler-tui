@@ -114,7 +114,8 @@ Niffler 的 builder 不使用這個 `go.mod`；它建立隔離的模組，replac
 - `/processes` — 檢視並管理背景程序（透過 bash 的 run_in_background 或
   process_start 啟動的開發伺服器、監視器）：有程序執行時狀態列顯示 `bg N`
   徽標；enter 檢視輸出尾部（不影響模型的增量讀取游標）；d 二次確認後終止
-- `/status` —— 詳細的有效供應商/模型/上下文來源與用量
+- `/status [ask]` —— 詳細的有效供應商/模型/上下文來源與用量；`ask` 會讓 LLM 解讀報告
+- `/doctor [deep] [ask]` —— 以 Markdown 表格顯示健康檢查；`deep` 執行即時探測，`ask` 會讓 LLM 解讀報告
 - `/components [all|direct|discovered|undiscovered]` —— 本對話實際可呼叫的工具，
   按元件列出，並顯示每個工具的曝光狀態
 - `/discover <元件>|tool=名稱` —— 將某個元件的工具（或指定的單一工具）曝光給

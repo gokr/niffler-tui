@@ -161,7 +161,11 @@ func builtinSlashCommands() []slashCommand {
 			{Name: "name", Kind: "string", Description: "server name",
 				Source: &slashSource{Tool: "mcp.mcp_servers", Args: map[string]any{}, Field: "name"}},
 		}},
-		{Name: "status", Description: "show provider/model/context details", builtin: true, run: localStatus},
+		{Name: "status", Description: "show provider/model/context details; add ask to have the LLM interpret it", builtin: true, run: localStatus},
+		{Name: "doctor", Description: "run health checks; add ask to have the LLM interpret the report", Component: "core", Tool: "doctor", builtin: true, run: localDoctor, Params: []slashParam{
+			{Name: "deep", Kind: "bool", Description: "run thorough live probes"},
+			{Name: "ask", Kind: "bool", Description: "ask the LLM to interpret the report"},
+		}},
 		{Name: "components", Description: "show what this conversation can call", builtin: true, run: localComponents, Params: []slashParam{
 			{Name: "filter", Kind: "enum", Values: []string{"all", "direct", "discovered", "undiscovered", "unknown"}},
 		}},
@@ -751,6 +755,7 @@ func (m *model) applySlashResult(msg slashResultMsg) tea.Cmd {
 	// message (MCP prompt templates). The guard matches the web UI: a
 	// session switch while the tool call was in flight drops the result.
 	if message := slashUserMessage(msg.Result); message != "" {
+		m.addBlock(blockMeta, formatSlashResult(msg.Result))
 		if msg.Session != m.session {
 			m.addBlock(blockError, t(m.loc, "slash.conversationChanged"))
 			m.syncViewport(true)

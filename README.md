@@ -128,7 +128,10 @@ Local commands are handled by the TUI and are never sent to the model:
   started via bash's run_in_background or process_start): a status-line
   `bg N` badge while anything runs, enter peeks the output tail without
   touching the model's drain cursor, d kills with a two-stage confirm
-- `/status` — detailed effective provider/model/context provenance and usage
+- `/status [ask]` — detailed effective provider/model/context provenance and usage;
+  `ask` sends the report to the LLM for interpretation
+- `/doctor [deep] [ask]` — render a readable Markdown health table;
+  `deep` runs live probes and `ask` sends the report to the LLM for interpretation
 - `/components [all|direct|discovered|undiscovered]` — what this conversation
   can actually call, per component, with each tool's exposure state
 - `/discover <component>|tool=NAME` — expose a component's tools (or one named
