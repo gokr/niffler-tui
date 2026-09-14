@@ -238,31 +238,48 @@ func TestThinkingRendersMarkdownWithCodeHighlighting(t *testing.T) {
 	m.layout()
 	m.thinkLevel = thinkFull
 
-	// While streaming the block stays plain (the thinking accent only); the
-	// markdown render is deferred until the settle tick.
+	// Thinking renders as markdown from the first tokens: the fenced Go gets
+	// syntax colours while the block is still streaming (chunked glamour
+	// bounds the per-frame cost to the new tail material only), so the block
+	// no longer flips styles when it settles.
 	m.streaming = true
 	m.addBlock(blockThinking, "Let me check the entry point.\n\n```go\nfunc main() { println(\"hi\") }\n```\n")
 	streamed := m.piece(0)
+	if !strings.Contains(ansi.Strip(streamed), "func main") {
+		t.Fatalf("streaming thinking lost text: %q", streamed)
+	}
 	streamedColors := map[string]bool{}
 	for _, match := range sgrColorRe.FindAllStringSubmatch(streamed, -1) {
 		streamedColors[match[1]] = true
 	}
-	if len(streamedColors) != 0 {
-		t.Fatalf("streaming thinking should stay plain (colors=%v): %q", streamedColors, streamed)
+	if len(streamedColors) < 2 {
+		t.Fatalf("streaming thinking was not syntax-highlighted (colors=%v): %q", streamedColors, streamed)
 	}
 
-	// Settled: markdown renders, so the fenced Go gets syntax colours.
+	// Settling must not change the rendering: settled blocks keep their
+	// cached pieces across the stream/settle flip (no global restyle).
 	m.setStreaming(false)
-	piece := m.piece(0)
-	if !strings.Contains(ansi.Strip(piece), "func main") {
-		t.Fatalf("thinking text lost: %q", ansi.Strip(piece))
+	if piece := m.piece(0); piece != streamed {
+		t.Fatalf("settle flip changed the thinking rendering:\nstreamed=%q\nsettled=%q", streamed, piece)
 	}
-	colors := map[string]bool{}
-	for _, match := range sgrColorRe.FindAllStringSubmatch(piece, -1) {
-		colors[match[1]] = true
+}
+
+func TestSplitThinkingChunks(t *testing.T) {
+	text := "para one\n\n- item 1\n\n- item 2\n\n```go\nx := 1\n\ny := 2\n```\n\npara two"
+	parts := splitThinkingChunks(text)
+	want := []string{
+		"para one",
+		"- item 1\n\n- item 2",
+		"```go\nx := 1\n\ny := 2\n```",
+		"para two",
 	}
-	if len(colors) < 2 {
-		t.Fatalf("thinking code was not syntax-highlighted (colors=%v): %q", colors, piece)
+	if len(parts) != len(want) {
+		t.Fatalf("got %d chunks (%q), want %d", len(parts), parts, len(want))
+	}
+	for i := range want {
+		if parts[i] != want[i] {
+			t.Fatalf("chunk %d = %q, want %q", i, parts[i], want[i])
+		}
 	}
 }
 

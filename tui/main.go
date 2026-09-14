@@ -338,6 +338,9 @@ type model struct {
 	streaming         bool
 	renderTimerActive bool
 	lastTokenAt       time.Time
+	// lastThinkRender rate-limits the streaming thinking block's markdown
+	// re-render (see model.piece / thinkRenderInterval).
+	lastThinkRender time.Time
 
 	// thinkLevel controls how reasoning blocks render: full (default),
 	// brief (one collapsed line per block), or off (hidden). ctrl+t cycles.
@@ -2045,12 +2048,18 @@ func (m *model) finalizeThinking() {
 // and the per-block render caches on transition: streaming changes how the
 // active assistant block renders (plain text while tokens flow, markdown
 // once output settles).
+// setStreaming flips the streaming flag. Only the active (unfinalized)
+// assistant block renders differently in streaming mode, and its pieceKey
+// encodes that state — settled blocks keep their cached renderings, so the
+// flip re-renders the tail only instead of restyling the whole transcript
+// (the old wholesale invalidation was the "markdown and color flicker").
+// The join still re-runs for the tail block, hence dirty, not an epoch bump.
 func (m *model) setStreaming(streaming bool) {
 	if m.streaming == streaming {
 		return
 	}
 	m.streaming = streaming
-	m.invalidatePieces()
+	m.markTranscriptDirty()
 }
 
 // scheduleRender arms the markdown settle tick. The tick re-renders the
@@ -2240,6 +2249,11 @@ func newThinkingRenderer(width int) *glamour.TermRenderer {
 		return nil
 	}
 	style := *config
+	// Flush-left reasoning: every built-in style sets document margin 2,
+	// which indented settled thinking two columns right of its plain
+	// streaming form — the "it also indents a bit" jump at the transition.
+	noMargin := uint(0)
+	style.Document.Margin = &noMargin
 	accent := currentTheme.thinking
 	italic, faint := true, true
 	style.Text = glamouransi.StylePrimitive{Color: &accent, Italic: &italic, Faint: &faint}

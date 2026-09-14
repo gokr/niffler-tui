@@ -9,6 +9,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/x/ansi"
 )
@@ -26,6 +27,12 @@ var blankRunRe = regexp.MustCompile(`(\r?\n){2,}`)
 // viewport itself scans its whole content on each sync/scroll — the cap is
 // what keeps that scan (and therefore streaming) flat as a session grows.
 const defaultScrollbackLines = 3000
+
+// thinkRenderInterval caps how often the active thinking block's rendering
+// is recomputed while tokens stream: only its tail chunk changes per frame,
+// and glamour is too expensive to pay at 30fps regardless of chunk size.
+// Staleness is bounded by the interval and invisible in practice.
+const thinkRenderInterval = 150 * time.Millisecond
 
 type blockKind int
 
@@ -93,14 +100,25 @@ type transcriptBlock struct {
 	piece    string
 	pieceKey pieceKey
 	pieceOK  bool
+
+	// thinking chunk cache (see renderThinkingChunks): fence-aware paragraphs
+	// with cached glamour renders, valid for one (width, epoch) pair. A long
+	// reasoning stream must never re-render the whole block: glamour costs
+	// ~6.5µs/byte (measured 5KB≈31ms, 50KB≈330ms), which would stall the UI.
+	chunks     []thinkRenderChunk
+	chunkW     int
+	chunkEpoch int
+	chunkOK    bool
 }
 
 // pieceKey captures every non-text input a block's rendering depends on, so
 // a cache hit needs only a struct comparison: the model's display epoch
 // (theme/renderer rebuilds), the viewport width (clampLines), and the
 // display flags that change rendering without touching block text.
-// Streaming is included because the active assistant block renders as plain
-// text until it settles (see renderBlock).
+// Streaming is included per block: only the active (unfinalized) assistant
+// block renders as plain text until it settles (see renderBlock), so settled
+// blocks keep their cached pieces across stream/settle flips instead of
+// being re-rendered wholesale on every flip.
 type pieceKey struct {
 	text      string
 	epoch     int
@@ -147,6 +165,12 @@ func (m *model) invalidatePieces() {
 // when the block text changed since the cached render or the renderer was
 // rebuilt. Assistant blocks are rendered as markdown; everything else is
 // plain text.
+//
+// Only the ACTIVE streaming block — the unfinalized assistant tail — renders
+// as plain text. Keying this off the global streaming flag used to restyle
+// the whole transcript (plain ↔ markdown) on every flip and re-render every
+// block through glamour; that was the perceived "markdown and color
+// flicker" plus a stall on each flip.
 func (m *model) renderBlock(i int) string {
 	block := &m.blocks[i]
 	if block.kind != blockAssistant && block.kind != blockThinking {
@@ -161,31 +185,29 @@ func (m *model) renderBlock(i int) string {
 		// transcript always compacted those before rendering.
 		text = compactThinkingText(text)
 	}
-	// While tokens are still streaming, keep showing plain text and defer
-	// the markdown render to the settle tick: re-rendering a large block
-	// with glamour on every token would stall the UI. Edge newlines are
-	// trimmed (models open content with blank lines, and reasoning-adjacent
-	// answers start with them); they would stack onto the block separator
-	// into walls of empty space.
-	if m.streaming {
-		out := strings.Trim(text, "\n\r")
-		if block.kind == blockThinking {
-			return thinkingStyle.Render(out)
-		}
-		return out
+	// The active assistant block stays plain while tokens stream: glamour
+	// costs ~6.5µs/byte, so a large answer only gets one markdown render
+	// at settle. Edge newlines are trimmed (models open content with blank
+	// lines, and reasoning-adjacent answers start with them); they would
+	// stack onto the block separator into walls of empty space.
+	if block.kind == blockAssistant && m.streaming && !block.finalized {
+		return strings.Trim(text, "\n\r")
 	}
 	out := strings.Trim(text, "\n\r")
-	renderer := m.renderer
 	if block.kind == blockThinking {
-		renderer = m.thinkingRenderer
-	}
-	if renderer != nil {
-		if rendered, err := renderer.Render(text); err == nil {
+		// Thinking renders through the chunked incremental path in both
+		// modes, so reasoning looks final while it streams instead of
+		// flipping styles when it completes.
+		if rendered, ok := m.renderThinkingChunks(block, text); ok {
+			out = rendered
+		} else {
+			// No markdown renderer: keep the pre-markdown dim italic look.
+			out = thinkingStyle.Render(out)
+		}
+	} else if m.renderer != nil {
+		if rendered, err := m.renderer.Render(text); err == nil {
 			out = strings.Trim(rendered, "\n")
 		}
-	} else if block.kind == blockThinking {
-		// No markdown renderer: keep the pre-markdown dim italic look.
-		out = thinkingStyle.Render(out)
 	}
 	block.rendered = out
 	block.renderedText = block.text
@@ -248,15 +270,25 @@ func (m *model) piece(i int) string {
 		width:     m.viewport.Width(),
 		think:     m.thinkLevel,
 		tool:      m.toolLevel,
-		streaming: m.streaming,
+		streaming: m.streaming && !block.finalized && block.kind == blockAssistant,
 	}
 	if block.pieceOK && block.pieceKey == key {
+		return block.piece
+	}
+	// The active thinking block re-renders its tail chunk per frame while
+	// tokens stream; cap that rate so a dense burst cannot pay for glamour
+	// more often than thinkRenderInterval (staleness ≤ the interval).
+	if block.kind == blockThinking && m.streaming && !block.finalized &&
+		block.pieceOK && time.Since(m.lastThinkRender) < thinkRenderInterval {
 		return block.piece
 	}
 	out := clampLines(m.renderPiece(i), m.viewport.Width())
 	block.piece = out
 	block.pieceKey = key
 	block.pieceOK = true
+	if block.kind == blockThinking {
+		m.lastThinkRender = time.Now()
+	}
 	return out
 }
 
@@ -267,6 +299,123 @@ func (m *model) piece(i int) string {
 func compactThinkingText(text string) string {
 	text = strings.Trim(text, "\n\r")
 	return blankRunRe.ReplaceAllString(text, "\n\n")
+}
+
+// thinkRenderChunk is one fence-aware paragraph of a thinking block with its
+// cached glamour rendering.
+type thinkRenderChunk struct {
+	text     string
+	rendered string
+}
+
+// splitThinkingChunks splits reasoning text into glamour-sized chunks at
+// blank lines outside fenced code. Fences stay intact (a blank line inside
+// ``` is not a boundary), and a blank line between two list items does not
+// split either — glamour numbers lists per render, so splitting one would
+// restart every item at "1.". The split is prefix-stable under appends,
+// which is what makes per-chunk caching work while tokens stream.
+func splitThinkingChunks(text string) []string {
+	lines := strings.Split(text, "\n")
+	isList := func(s string) bool {
+		s = strings.TrimSpace(s)
+		if s == "" {
+			return false
+		}
+		for _, p := range []string{"- ", "* ", "+ "} {
+			if strings.HasPrefix(s, p) {
+				return true
+			}
+		}
+		i := 0
+		for i < len(s) && s[i] >= '0' && s[i] <= '9' {
+			i++
+		}
+		return i > 0 && i < len(s) && (s[i] == '.' || s[i] == ')') &&
+			i+1 < len(s) && s[i+1] == ' '
+	}
+	var chunks []string
+	var cur []string
+	inFence := false
+	flush := func() {
+		if len(cur) > 0 {
+			chunks = append(chunks, strings.Join(cur, "\n"))
+			cur = nil
+		}
+	}
+	for i := 0; i < len(lines); i++ {
+		line := lines[i]
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "```") {
+			if !inFence {
+				flush()
+				inFence = true
+			}
+			cur = append(cur, line)
+			if len(cur) > 1 {
+				// Closing fence: the fence chunk is complete.
+				flush()
+				inFence = false
+			}
+			continue
+		}
+		if !inFence && trimmed == "" {
+			// Blank line outside a fence: a chunk boundary, unless the text
+			// on both sides continues a list (see above).
+			prevList := len(cur) > 0 && isList(cur[len(cur)-1])
+			nextList := false
+			for j := i + 1; j < len(lines); j++ {
+				if t := strings.TrimSpace(lines[j]); t != "" {
+					nextList = isList(t)
+					break
+				}
+			}
+			if !(prevList && nextList) {
+				flush()
+				continue
+			}
+			cur = append(cur, line)
+			continue
+		}
+		cur = append(cur, line)
+	}
+	flush()
+	return chunks
+}
+
+// renderThinkingChunks renders a thinking block through the thinking
+// renderer one chunk at a time, reusing cached renders for every chunk that
+// did not change. Glamour costs ~6.5µs/byte on this class of hardware
+// (measured: 5KB≈31ms, 20KB≈126ms, 50KB≈330ms), so re-rendering a growing
+// reasoning block whole per token flush would stall the UI; chunks bound
+// each frame's render to the new tail material only.
+func (m *model) renderThinkingChunks(block *transcriptBlock, text string) (string, bool) {
+	if m.thinkingRenderer == nil {
+		return "", false
+	}
+	width := m.viewport.Width()
+	if !block.chunkOK || block.chunkW != width || block.chunkEpoch != m.pieceEpoch {
+		block.chunks = nil
+		block.chunkOK = true
+		block.chunkW = width
+		block.chunkEpoch = m.pieceEpoch
+	}
+	parts := splitThinkingChunks(text)
+	rendered := make([]string, len(parts))
+	for i, p := range parts {
+		if i < len(block.chunks) && block.chunks[i].text == p {
+			rendered[i] = block.chunks[i].rendered
+			continue
+		}
+		out, err := m.thinkingRenderer.Render(p)
+		if err != nil {
+			rendered[i] = p
+		} else {
+			rendered[i] = strings.Trim(out, "\n")
+		}
+		block.chunks = append(block.chunks[:min(i, len(block.chunks))],
+			thinkRenderChunk{text: p, rendered: rendered[i]})
+	}
+	return strings.Join(rendered, "\n\n"), true
 }
 
 // clampLines fits every line of a transcript piece to the viewport width:
