@@ -43,7 +43,7 @@ var catalogEn = map[string]string{
 	"status.connecting":              "connecting to {0}",
 	"status.stopping":                "stopping…",
 	"status.stopArmed":               "Stop?  (press esc again to cancel)",
-	"status.working":                 "working",
+	"status.working":                 "Working",
 	"status.updating":                "updating settings",
 	"footer.filterChoose":            "/: filter  •  enter: choose  •  esc: back",
 	"footer.filterSwitch":            "/: filter  •  enter: switch  •  e: edit  •  d: remove  •  esc: back",

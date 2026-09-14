@@ -125,11 +125,11 @@ func TestActivityLabelAndInputRule(t *testing.T) {
 
 	m.busy = true
 	label := m.activityLabel()
-	if !strings.Contains(label, "working") {
+	if !strings.Contains(label, "Working") {
 		t.Fatalf("busy activity = %q", label)
 	}
 	rule := ansi.Strip(m.inputRule(label))
-	if !strings.Contains(rule, "── ") || !strings.Contains(rule, "working") {
+	if !strings.Contains(rule, "── ") || !strings.Contains(rule, "Working") {
 		t.Fatalf("input rule = %q", rule)
 	}
 	if w := ansi.StringWidth(rule); w != m.width-1 {
@@ -138,7 +138,7 @@ func TestActivityLabelAndInputRule(t *testing.T) {
 
 	// A label too wide for the terminal degrades to a plain rule.
 	m.width = 6
-	if rule := ansi.Strip(m.inputRule(label)); strings.Contains(rule, "working") {
+	if rule := ansi.Strip(m.inputRule(label)); strings.Contains(rule, "Working") {
 		t.Fatalf("narrow rule kept the label: %q", rule)
 	}
 }
@@ -162,13 +162,13 @@ func TestChatBottomRowIsWorkspaceAndNote(t *testing.T) {
 		}
 	}
 
-	// While busy, "working" sits in the divider above the input, not in the
+	// While busy, "Working" sits in the divider above the input, not in the
 	// bottom row: exactly one line carries both the rule glyphs and the label.
 	m.busy = true
 	view = ansi.Strip(m.View().Content)
 	ruleLines, bottomLines := 0, 0
 	for _, line := range strings.Split(view, "\n") {
-		if strings.Contains(line, "working") {
+		if strings.Contains(line, "Working") {
 			if strings.Contains(line, "──") {
 				ruleLines++
 			} else {

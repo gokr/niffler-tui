@@ -394,6 +394,18 @@ var (
 	errorStyle       = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("9"))
 )
 
+// dotWithoutPadding is spinner.Dot with each frame's trailing space removed.
+// Dot's frames are "⣾ ", and activityLabel joins the spinner to the status
+// word with its own space, so the built-in padding rendered a double space
+// ("⣾  working") in the divider.
+var dotWithoutPadding = func() spinner.Spinner {
+	frames := make([]string, len(spinner.Dot.Frames))
+	for i, f := range spinner.Dot.Frames {
+		frames[i] = strings.TrimRight(f, " ")
+	}
+	return spinner.Spinner{Frames: frames, FPS: spinner.Dot.FPS}
+}()
+
 // configureKeymaps sets up chat-style editing bindings. The textarea owns
 // all printable input and cursor movement (Enter sends, Alt+Enter/Ctrl+J
 // inserts a newline, PageUp/PageDown are released for transcript
@@ -444,7 +456,7 @@ func newModel(ctx context.Context, comp *sdk.Component, session, natsURL string)
 	configureKeymaps(&input, &view)
 
 	spin := spinner.New()
-	spin.Spinner = spinner.Dot
+	spin.Spinner = dotWithoutPadding
 	spin.Style = metaStyle
 
 	historyFile := historyFilePath(session)
