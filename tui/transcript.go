@@ -406,7 +406,16 @@ func (m *model) renderThinkingChunks(block *transcriptBlock, text string) (strin
 			rendered[i] = block.chunks[i].rendered
 			continue
 		}
-		out, err := m.thinkingRenderer.Render(p)
+		// Reasoning is prose, and a stray "~" in it pairs with the next one
+		// on the line into GFM strikethrough (goldmark accepts single-tilde
+		// delimiters), eating the tildes and striking the span between them.
+		// Escape them in prose chunks; fenced chunks keep theirs (code blocks
+		// never process emphasis, and a backslash there would show).
+		renderInput := p
+		if !strings.HasPrefix(p, "```") {
+			renderInput = strings.ReplaceAll(p, "~", "\\~")
+		}
+		out, err := m.thinkingRenderer.Render(renderInput)
 		if err != nil {
 			rendered[i] = p
 		} else {

@@ -1,11 +1,17 @@
-// filecomp.go — @file references in the chat input.
+// filecomp.go — @file references and plain path completion in the chat
+// input.
 //
-// Typing "@" and pressing Tab completes a workspace-relative file path
-// (fuzzy, ignore-rule aware). The inserted reference is text only —
-// `@path`, delimited by a trailing space (backtick-quoted when the path
-// contains whitespace) — and the agent is expected to open it with the
-// read tool. Content attachment is deliberately out of scope: selecting a
-// path and attaching content are different features.
+// Two Tab flows share this file's state machine:
+//
+//   - "@" + Tab completes a workspace-relative file path (fuzzy, ignore-rule
+//     aware). The inserted reference is text only — `@path`, delimited by a
+//     trailing space (backtick-quoted when the path contains whitespace) —
+//     and the agent is expected to open it with the read tool.
+//   - A path-shaped word ("./", "../", "~/", anything containing "/", or a
+//     leading "." for hidden files) + Tab completes plain paths Pi-style:
+//     the directory the word points into is listed directly, child
+//     directories carry a trailing "/" so successive Tabs descend, and the
+//     typed text is never rewritten into an @-reference.
 package main
 
 import (
@@ -33,10 +39,11 @@ import (
 type fileCompState struct {
 	active     bool
 	loading    bool
-	prefix     string   // text up to and including the "@"
-	token      string   // partial path typed after "@"
-	cwd        string   // workspace the listing was requested for
-	candidates []string // workspace-relative paths, best first
+	pathMode   bool   // plain path completion (no "@") — synchronous listing
+	prefix     string // text up to and including the "@" (or the typed dir part)
+	token      string // partial path typed after "@" (or the typed fragment)
+	cwd        string // workspace the listing was requested for
+	candidates []string
 	index      int
 }
 
@@ -110,6 +117,39 @@ func fileTokenAtCursor(runes []rune, offset int) (prefix, token string, at int, 
 		return "", "", 0, false
 	}
 	return string(runes[:start+1]), string(word[1:]), start, true
+}
+
+// pathTokenAtCursor inspects the word ending at the cursor for plain path
+// completion (no "@"): it triggers when the word starts with "." or "~" or
+// contains a "/" — Pi's natural-trigger rule — except a leading "/" at
+// input start, which is slash-command territory. It returns the text before
+// the word, the word's directory part (up to and including the last "/",
+// "" when there is none), and the fragment after it.
+func pathTokenAtCursor(runes []rune, offset int) (prefix, dir, base string, ok bool) {
+	if offset <= 0 || offset > len(runes) {
+		return "", "", "", false
+	}
+	start := offset
+	for start > 0 && !isSpaceRune(runes[start-1]) {
+		start--
+	}
+	word := string(runes[start:offset])
+	if word == "" || word[0] == '@' {
+		return "", "", "", false
+	}
+	likePath := strings.HasPrefix(word, ".") || strings.HasPrefix(word, "~") ||
+		strings.Contains(word, "/")
+	if !likePath {
+		return "", "", "", false
+	}
+	if start == 0 && strings.HasPrefix(word, "/") {
+		return "", "", "", false // "/cmd" at input start: slash command
+	}
+	slash := strings.LastIndex(word, "/")
+	if slash < 0 {
+		return string(runes[:start]), "", word, true // e.g. ".g" at the root
+	}
+	return string(runes[:start]), word[:slash+1], word[slash+1:], true
 }
 
 // ---- candidate filtering ---------------------------------------------------
@@ -263,6 +303,105 @@ func (m model) compCwd() string {
 
 // ---- Tab handling ----------------------------------------------------------
 
+// pathCandidates lists the children of the directory `dir` — workspace-
+// relative, ~-expanded, or absolute — whose names start with the typed
+// fragment, directories suffixed "/" so successive Tabs descend. Hidden
+// entries only complete when the fragment starts with ".".
+func (m model) pathCandidates(dir, base string) []string {
+	absDir := m.resolveCompPath(dir)
+	if absDir == "" {
+		return nil
+	}
+	entries, err := os.ReadDir(absDir)
+	if err != nil {
+		return nil
+	}
+	frag := strings.ToLower(base)
+	var out []string
+	for _, e := range entries {
+		name := e.Name()
+		if strings.HasPrefix(name, ".") && !strings.HasPrefix(base, ".") {
+			continue
+		}
+		if !strings.HasPrefix(strings.ToLower(name), frag) {
+			continue
+		}
+		switch {
+		case e.IsDir():
+			out = append(out, name+"/")
+		case e.Type().IsRegular():
+			out = append(out, name)
+		}
+	}
+	sort.Strings(out)
+	if len(out) > maxFileCandidates {
+		out = out[:maxFileCandidates]
+	}
+	return out
+}
+
+// resolveCompPath turns a typed path prefix into an absolute directory:
+// "~/" expands to the home directory, "/" is absolute, anything else is
+// workspace-relative. Returns "" when it cannot be resolved.
+func (m model) resolveCompPath(dir string) string {
+	switch {
+	case dir == "" || dir == "./":
+		return m.compCwd()
+	case strings.HasPrefix(dir, "~/"):
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return ""
+		}
+		return filepath.Clean(filepath.Join(home, strings.TrimPrefix(dir, "~/")))
+	case strings.HasPrefix(dir, "/"):
+		return filepath.Clean(dir)
+	default:
+		return filepath.Clean(filepath.Join(m.compCwd(), filepath.FromSlash(dir)))
+	}
+}
+
+// handlePathTab completes a plain path token (no "@"): the directory the
+// typed dir part points into is listed synchronously (a single ReadDir is
+// cheap, unlike the whole-workspace @ listing), the first press shows the
+// candidates, further presses cycle, a single candidate fills directly.
+func (m model) handlePathTab(backward bool, prefix, dir, base string) (model, tea.Cmd) {
+	if m.fileComp.active && m.fileComp.pathMode {
+		// A selected directory ends in "/": the next Tab should descend
+		// into it, not cycle the sibling list that produced it. Recompute
+		// from the updated input below; regular files and partial names still
+		// cycle as expected.
+		if strings.HasSuffix(m.input.Value(), "/") {
+			m.fileComp = fileCompState{}
+		} else {
+			if len(m.fileComp.candidates) == 0 {
+				return m, nil
+			}
+			if backward {
+				m.fileComp.index = (m.fileComp.index - 1 + len(m.fileComp.candidates)) % len(m.fileComp.candidates)
+			} else {
+				m.fileComp.index = (m.fileComp.index + 1) % len(m.fileComp.candidates)
+			}
+			m.applyFileCandidate()
+			return m, nil
+		}
+	}
+	candidates := m.pathCandidates(dir, base)
+	if len(candidates) == 0 {
+		return m, nil
+	}
+	if len(candidates) == 1 {
+		m.fileComp = fileCompState{prefix: prefix + dir, pathMode: true}
+		m.insertFileRef(candidates[0])
+		m.layout()
+		return m, nil
+	}
+	m.fileComp = fileCompState{active: true, prefix: prefix + dir, token: base,
+		pathMode: true, candidates: candidates, index: 0}
+	m.applyFileCandidate()
+	m.layout()
+	return m, nil
+}
+
 // handleFileTab processes Tab in chat mode while the cursor ends an
 // @-reference token. The first press computes and shows candidates
 // (fetching the workspace listing async on a cache miss), further presses
@@ -276,6 +415,11 @@ func (m model) handleFileTab(backward bool) (model, tea.Cmd) {
 	}
 	prefix, token, _, ok := fileTokenAtCursor(runes, offset)
 	if !ok {
+		// Not an @-reference: plain path completion when the word looks
+		// like a path (see pathTokenAtCursor).
+		if p2, dir, base, ok2 := pathTokenAtCursor(runes, offset); ok2 {
+			return m.handlePathTab(backward, p2, dir, base)
+		}
 		return m, nil
 	}
 	if m.fileComp.active {
@@ -320,11 +464,18 @@ func (m *model) applyFileCandidate() {
 	m.insertFileRef(m.fileComp.candidates[m.fileComp.index])
 }
 
-// insertFileRef replaces the @-token being completed with a clearly
-// delimited reference: path, backtick-quoted when it contains whitespace,
-// followed by a trailing space so it stays delimited from whatever the
-// user types next. The prefix already carries the "@".
+// insertFileRef replaces the token being completed: in @mode with a
+// clearly delimited reference (path, backtick-quoted when it contains
+// whitespace, followed by a trailing space so it stays delimited from
+// whatever the user types next; the prefix already carries the "@"); in
+// path mode with the plain path — directories carry their own trailing
+// "/" so Tab can descend, and nothing is delimited or rewritten.
 func (m *model) insertFileRef(path string) {
+	if m.fileComp.pathMode {
+		m.input.SetValue(m.fileComp.prefix + path)
+		m.input.CursorEnd()
+		return
+	}
 	ref := path
 	if strings.ContainsAny(path, " \t") {
 		ref = "`" + path + "`"
@@ -345,7 +496,7 @@ func (m *model) applyFileList(msg fileListMsg) {
 		m.fileList = map[string]fileListEntry{}
 	}
 	m.fileList[msg.cwd] = fileListEntry{files: msg.files, at: time.Now()}
-	if !m.fileComp.active || !m.fileComp.loading || m.fileComp.cwd != msg.cwd {
+	if m.fileComp.pathMode || !m.fileComp.active || !m.fileComp.loading || m.fileComp.cwd != msg.cwd {
 		return
 	}
 	filtered := filterFileCandidates(msg.files, m.fileComp.token)

@@ -463,7 +463,7 @@ func newModel(ctx context.Context, comp *sdk.Component, session, natsURL string)
 	applyTheme(theme)
 
 	input := textarea.New()
-	input.Prompt = "> "
+	input.Prompt = ""
 	loc := detectLocale()
 	input.CharLimit = 0
 	input.MaxHeight = maxInputHeight
