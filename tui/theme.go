@@ -385,10 +385,22 @@ func inputDark(th theme) bool {
 // switching between light and dark themes instead of leaving a black input
 // line behind.
 func inputTextareaStyles(th theme) textarea.Styles {
-	if inputDark(th) {
-		return textarea.DefaultDarkStyles()
+	isDark := inputDark(th)
+	styles := textarea.DefaultStyles(isDark)
+	// The default textarea palette backgrounds only CursorLine. That makes
+	// multiline input visibly lose its dark (or light) field background when
+	// Alt+Enter moves the cursor to the next line: the previous line falls
+	// back to the terminal background. Put the surface on Base so every line
+	// shares the same field background; CursorLine can still override it
+	// when the palette wants a distinct active line.
+	if isDark {
+		styles.Focused.Base = lipgloss.NewStyle().Background(lipgloss.Color("0"))
+		styles.Blurred.Base = lipgloss.NewStyle().Background(lipgloss.Color("0"))
+	} else {
+		styles.Focused.Base = lipgloss.NewStyle().Background(lipgloss.Color("255"))
+		styles.Blurred.Base = lipgloss.NewStyle().Background(lipgloss.Color("255"))
 	}
-	return textarea.DefaultLightStyles()
+	return styles
 }
 
 // themeDescription returns the picker blurb for name, or "" when unknown.
