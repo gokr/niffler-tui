@@ -88,6 +88,16 @@ func argBool(args map[string]any, key string) bool {
 // string decoded as-is (edit's read/read_many return the text directly),
 // else the compact JSON, else — for replayed results, which are stored as
 // plain text — the text itself.
+func partialResultVisible(c *toolCall) bool {
+	if len(c.result) == 0 {
+		return false
+	}
+	var marker struct {
+		Partial bool `json:"__partial"`
+	}
+	return json.Unmarshal(c.result, &marker) == nil && marker.Partial
+}
+
 func toolResultText(c *toolCall) string {
 	if len(c.result) == 0 {
 		return ""
@@ -182,7 +192,8 @@ func (m model) renderShellPreview(c *toolCall, full bool) toolPreview {
 	var body []string
 	if c.err != "" {
 		body = append(body, errorStyle.Render(c.err))
-	} else {
+	}
+	if c.err == "" || partialResultVisible(c) {
 		kept, skipped := collapseLines(lines, previewLimit(full, toolPreviewLines), true)
 		if skipped > 0 && !full {
 			body = append(body, metaStyle.Render(
@@ -309,7 +320,8 @@ func (m model) renderReadPreview(c *toolCall, full bool) toolPreview {
 	var body []string
 	if c.err != "" {
 		body = append(body, errorStyle.Render(c.err))
-	} else {
+	}
+	if c.err == "" || partialResultVisible(c) {
 		text := toolResultText(c)
 		lines := resultLines(text)
 		// Highlight by file extension (Pi-style); a path chroma cannot
@@ -340,7 +352,8 @@ func (m model) renderWritePreview(c *toolCall, full bool) toolPreview {
 	var body []string
 	if c.err != "" {
 		body = append(body, errorStyle.Render(c.err))
-	} else {
+	}
+	if c.err == "" || partialResultVisible(c) {
 		lines := resultLines(argString(args, "content"))
 		kept, skipped := collapseLines(lines, previewLimit(full, toolReadLines), false)
 		body = append(body, kept...)
@@ -366,7 +379,8 @@ func (m model) renderGenericPreview(c *toolCall, full bool) toolPreview {
 	var body []string
 	if c.err != "" {
 		body = append(body, errorStyle.Render(c.err))
-	} else {
+	}
+	if c.err == "" || partialResultVisible(c) {
 		lines := resultLines(toolResultText(c))
 		kept, skipped := collapseLines(lines, previewLimit(full, toolReadLines), false)
 		body = append(body, kept...)
@@ -405,7 +419,8 @@ func (m model) renderGrepPreview(c *toolCall, full bool) toolPreview {
 	var body []string
 	if c.err != "" {
 		body = append(body, errorStyle.Render(c.err))
-	} else {
+	}
+	if c.err == "" || partialResultVisible(c) {
 		kept, skipped := collapseLines(styled, previewLimit(full, toolReadLines), false)
 		body = append(body, kept...)
 		if skipped > 0 && !full {
@@ -489,7 +504,8 @@ func (m model) renderFilesPreview(c *toolCall, full bool) toolPreview {
 	var body []string
 	if c.err != "" {
 		body = append(body, errorStyle.Render(c.err))
-	} else {
+	}
+	if c.err == "" || partialResultVisible(c) {
 		lines := resultLines(toolResultText(c))
 		kept, skipped := collapseLines(lines, previewLimit(full, toolReadLines), false)
 		body = append(body, kept...)
