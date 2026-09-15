@@ -135,6 +135,25 @@ func TestStreamingBlocksStayStable(t *testing.T) {
 	}
 }
 
+func TestRetryEventIsVisible(t *testing.T) {
+	m := model{session: "game", viewport: viewport.New(viewport.WithWidth(80), viewport.WithHeight(20))}
+	m.applySessionEvent(sessionEventMsg{kind: "retry", event: sessionEvent{
+		SessionID: "game", Attempt: 2, MaxRetries: -1, DelayMs: 2500,
+		RetryAfterMs: 5000, Budget: "rate-limit-hint",
+	}})
+	if len(m.blocks) != 1 || m.blocks[0].kind != blockMeta {
+		t.Fatalf("retry event blocks = %+v", m.blocks)
+	}
+	want := "retrying LLM (rate-limit-hint) — attempt 2/unbounded; waiting 2.5s (server hint 5.0s)"
+	if got := m.blocks[0].text; got != want {
+		t.Fatalf("retry notice = %q, want %q", got, want)
+	}
+	if got := formatRetryNotice(sessionEvent{Reason: "context-overflow"}); got !=
+		"recovering context after provider rejected an oversized request" {
+		t.Fatalf("context retry notice = %q", got)
+	}
+}
+
 func TestAddHistory(t *testing.T) {
 	m := model{}
 	m.addHistory("hello")

@@ -115,6 +115,12 @@ type sessionEvent struct {
 	Trimmed        int             `json:"trimmed"`
 	Usage          usageStats      `json:"usage"`
 	DurationMs     int             `json:"durationMs"`
+	Attempt        int             `json:"attempt"`
+	MaxRetries     int             `json:"maxRetries"`
+	DelayMs        int             `json:"delayMs"`
+	RetryAfterMs   int             `json:"retryAfterMs"`
+	Budget         string          `json:"budget"`
+	Reason         string          `json:"reason"`
 }
 
 type connectedMsg struct{}
@@ -1821,6 +1827,13 @@ func (m *model) applySessionEvent(msg sessionEventMsg) tea.Cmd {
 			})
 		}
 
+	case "retry":
+		// Retry events are emitted between provider attempts. Keep them visible
+		// in the transcript: a long Retry-After wait otherwise looks like a
+		// frozen terminal, and the budget label explains why retries stop.
+		m.updateRuntimeFromEvent(event)
+		m.addBlock(blockMeta, formatRetryNotice(event))
+
 	case "status":
 		m.updateRuntimeFromEvent(event)
 		if warning := rawJSONString(event.Warning); warning != "" {
@@ -1881,6 +1894,35 @@ func (m *model) appendStreamingText(kind blockKind, idx *int, text string) {
 	m.blocks[target].text += text
 	m.markTranscriptDirty()
 	*idx = target
+}
+
+func formatRetryNotice(event sessionEvent) string {
+	if event.Reason == "context-overflow" {
+		return "recovering context after provider rejected an oversized request"
+	}
+	label := "retrying LLM"
+	if event.Budget != "" {
+		label += " (" + event.Budget + ")"
+	}
+	if event.Attempt > 0 {
+		label += fmt.Sprintf(" — attempt %d", event.Attempt)
+		if event.MaxRetries < 0 {
+			label += "/unbounded"
+		} else if event.MaxRetries > 0 {
+			label += fmt.Sprintf("/%d", event.MaxRetries)
+		}
+	}
+	if event.DelayMs > 0 {
+		if event.DelayMs >= 1000 {
+			label += fmt.Sprintf("; waiting %.1fs", float64(event.DelayMs)/1000)
+		} else {
+			label += fmt.Sprintf("; waiting %dms", event.DelayMs)
+		}
+	}
+	if event.RetryAfterMs > 0 {
+		label += fmt.Sprintf(" (server hint %.1fs)", float64(event.RetryAfterMs)/1000)
+	}
+	return label
 }
 
 func rawJSONBool(raw json.RawMessage) bool {
