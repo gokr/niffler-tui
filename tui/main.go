@@ -478,7 +478,16 @@ func newModel(ctx context.Context, comp *sdk.Component, session, natsURL string)
 	focusCmd := input.Focus()
 
 	view := viewport.New(viewport.WithWidth(80), viewport.WithHeight(20))
-	view.SoftWrap = true
+	// SoftWrap must stay off: the transcript pipeline pre-wraps every block
+	// to the viewport width (clampLines), so the viewport's soft wrap never
+	// engages on real content — but with it on, bubbles computes scroll
+	// geometry (maxYOffset/AtBottom/SetYOffset/GotoBottom, called several
+	// times per frame) by ANSI-measuring every line of the whole scroll
+	// window. At the 3000-row cap that put ~100ms behind each streaming
+	// frame and ~70ms behind every wheel tick — the choppy scrolling felt
+	// while tokens stream. Off, the same geometry is O(1) and rendering is
+	// unchanged (TestSoftWrapRedundantForClampedContent pins this).
+	view.SoftWrap = false
 	view.FillHeight = true
 	configureKeymaps(&input, &view)
 
@@ -2044,10 +2053,6 @@ func (m *model) finalizeThinking() {
 	}
 }
 
-// setStreaming flips the streaming flag, invalidating the transcript cache
-// and the per-block render caches on transition: streaming changes how the
-// active assistant block renders (plain text while tokens flow, markdown
-// once output settles).
 // setStreaming flips the streaming flag. Only the active (unfinalized)
 // assistant block renders differently in streaming mode, and its pieceKey
 // encodes that state — settled blocks keep their cached renderings, so the

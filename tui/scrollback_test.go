@@ -171,6 +171,25 @@ func TestScrollbackLinesFromEnv(t *testing.T) {
 	}
 }
 
+// BenchmarkStreamedSettle measures the per-round streaming settle: the
+// quiet-pause path that flips m.streaming off and re-renders for markdown.
+// Settled blocks must keep their cached pieces across the flip (only the
+// live partial's piece key changes) — when setStreaming still invalidated
+// the whole window, this cost ~65ms per flip on a full scrollback buffer
+// and froze the UI on every pause while streamed thinking settled.
+func BenchmarkStreamedSettle(b *testing.B) {
+	m := streamBenchModel(600, defaultScrollbackLines)
+	b.ResetTimer()
+	b.ReportAllocs()
+	for b.Loop() {
+		b.StopTimer()
+		m.streaming = true
+		m.setStreaming(false)
+		b.StartTimer()
+		_ = m.renderTranscript()
+	}
+}
+
 // BenchmarkStreamedToken measures the full per-token Update (streaming a
 // token through the model) as the session grows. With the scrollback window
 // the cost must stay flat; without it (scrollback=0) it grows linearly —

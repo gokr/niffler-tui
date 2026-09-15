@@ -35,6 +35,23 @@ project aims for [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   content: on send, references that resolve to existing workspace files
   get a footer telling the agent to open them with the read tool.
 
+### Fixed
+
+- **Smooth scrolling and streaming, especially while thinking streams.**
+  The transcript viewport ran with soft wrap on even though every line is
+  pre-wrapped to the viewport width, so bubbles measured the entire scroll
+  window (ANSI-width parsing every one of up to 3000 rows) for every scroll
+  geometry call — several per frame: a wheel tick cost ~80ms and a
+  streaming frame ~130ms, so scrolling while tokens arrived stuttered and
+  lagged behind the pointer. Soft wrap is now off: rendering is verified
+  byte-identical for pre-clamped content and scroll geometry is O(1)
+  (wheel ticks ~7µs, streaming frames ~23ms). Together with the per-block
+  streaming pieces (settled blocks keep their cached renderings across
+  stream/settle flips instead of a ~65-100ms whole-window re-render
+  freeze on every pause), scrolling during streamed thinking is smooth
+  end to end. Benchmarks pinned in `tui/viewport_scroll_perf_test.go`
+  and `BenchmarkStreamedSettle`.
+
 ## [0.3.0] - 2026-09-12
 
 ### Added
