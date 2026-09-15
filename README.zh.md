@@ -112,6 +112,7 @@ Niffler 的 builder 不使用这个 `go.mod`；它创建隔离的模块，replac
   徽标；enter 查看输出尾部（不影响模型的增量读取游标）；d 二次确认后终止
 - `/status [ask]` —— 详细的有效提供商/模型/上下文来源与用量；`ask` 会让 LLM 解读报告
 - `/doctor [deep] [ask]` —— 以 Markdown 表格显示健康检查；`deep` 运行实时探测，`ask` 会让 LLM 解读报告
+- `/export [path]` —— 导出当前发送给提供商的原始 JSON；不带路径时在对话中显示，带路径时相对于对话工作目录写入文件
 - `/components [all|direct|discovered|undiscovered]` —— 本会话实际可调用的工具，
   按组件列出，并显示每个工具的暴露状态
 - `/discover <组件>|tool=名称` —— 将某个组件的工具（或指定的单个工具）暴露给

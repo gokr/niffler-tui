@@ -3,7 +3,10 @@ package main
 import (
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -212,6 +215,52 @@ func localDoctor(m model, cmd slashCommand, argument string) (tea.Model, tea.Cmd
 	m.addBlock(blockMeta, "→ /"+cmd.Name+slashArgText(argument))
 	m.syncViewport(true)
 	return m, m.slashCallCmd(cmd, args)
+}
+
+// localExport asks the session runner for the exact provider-facing request
+// assembled from this conversation's current context. With no path the raw
+// JSON is rendered in the transcript; with a path it is written as-is and a
+// short confirmation is rendered. Export is read-only and never becomes a
+// conversation message or starts an LLM turn.
+func localExport(m model, cmd slashCommand, argument string) (tea.Model, tea.Cmd) {
+	args, err := parseSlashArgs(cmd, argument)
+	if err != nil {
+		m.addBlock(blockError, "/"+cmd.Name+": "+err.Error())
+		m.syncViewport(true)
+		return m, nil
+	}
+	pathArg := strings.TrimSpace(argument)
+	session := m.session
+	cwd := m.compCwd()
+	m.addBlock(blockMeta, "→ /export"+slashArgText(argument))
+	m.syncViewport(true)
+	return m, func() tea.Msg {
+		args["sessionId"] = session
+		args["export"] = true
+		var response struct {
+			Request json.RawMessage `json:"request"`
+		}
+		if err := requestInto(m.comp, "core", "session", args, &response); err != nil {
+			return slashResultMsg{Name: "export", Session: session, Err: err}
+		}
+		if len(response.Request) == 0 {
+			return slashResultMsg{Name: "export", Session: session,
+				Err: fmt.Errorf("session export returned no request")}
+		}
+		if pathArg == "" {
+			return slashResultMsg{Name: "export", Session: session, Result: response.Request}
+		}
+		outputPath := pathArg
+		if !filepath.IsAbs(outputPath) {
+			outputPath = filepath.Join(cwd, outputPath)
+		}
+		if err := os.WriteFile(outputPath, response.Request, 0600); err != nil {
+			return slashResultMsg{Name: "export", Session: session,
+				Err: fmt.Errorf("write %s: %w", pathArg, err)}
+		}
+		return slashResultMsg{Name: "export", Session: session,
+			Result: json.RawMessage(fmt.Sprintf(`{"text":"exported raw LLM request to %s"}`, pathArg))}
+	}
 }
 
 func localNew(m model, cmd slashCommand, argument string) (tea.Model, tea.Cmd) {

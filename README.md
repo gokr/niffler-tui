@@ -132,6 +132,9 @@ Local commands are handled by the TUI and are never sent to the model:
   `ask` sends the report to the LLM for interpretation
 - `/doctor [deep] [ask]` — render a readable Markdown health table;
   `deep` runs live probes and `ask` sends the report to the LLM for interpretation
+- `/export [path]` — export the exact current provider-facing request as raw JSON;
+  without a path it renders the JSON in the transcript, otherwise it writes a
+  file relative to the conversation workspace
 - `/components [all|direct|discovered|undiscovered]` — what this conversation
   can actually call, per component, with each tool's exposure state
 - `/discover <component>|tool=NAME` — expose a component's tools (or one named
