@@ -393,8 +393,11 @@ func profileSelectorItems(loc Locale, current string, profiles []toolProfileSumm
 		if profile.Name == current {
 			title = "● " + title
 		}
-		desc := t(loc, "selector.profileTools", fmt.Sprint(profile.ToolCount),
-			formatTokens(profile.EstTokens))
+		desc := fmt.Sprintf("%d tools, %s", profile.ToolCount, strings.Join(profile.Tools, ", "))
+		if len(profile.Tools) == 0 {
+			desc = t(loc, "selector.profileTools", fmt.Sprint(profile.ToolCount),
+				formatTokens(profile.EstTokens))
+		}
 		if profile.Note != "" {
 			desc += " — " + profile.Note
 		}

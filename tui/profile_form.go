@@ -18,6 +18,7 @@ type profileForm struct {
 	loc    Locale
 	err    string
 	saving bool
+	edit   bool
 }
 
 type profileDraft struct {
@@ -43,6 +44,15 @@ func newProfileForm(width int, loc Locale) profileForm {
 	return f
 }
 
+func newEditProfileForm(profile toolProfileSummary, width int, loc Locale) profileForm {
+	f := newProfileForm(width, loc)
+	f.edit = true
+	f.inputs[0].SetValue(profile.Name)
+	f.inputs[0].Blur()
+	f.inputs[1].SetValue(strings.Join(profile.Tools, ", "))
+	f.inputs[2].SetValue(profile.Note)
+	return f
+}
 func (f *profileForm) setWidth(width int) {
 	for i := range f.inputs {
 		f.inputs[i].SetWidth(max(8, width-20))
