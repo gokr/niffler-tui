@@ -10,6 +10,7 @@
       "main": "tui/main.go",
       "sources": [
         "tui/approvals.go",
+        "tui/alias.go",
         "tui/backend.go",
         "tui/context_status.go",
         "tui/controls.go",

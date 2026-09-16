@@ -370,9 +370,11 @@ type model struct {
 	oauthLogin *oauthLoginState
 
 	// slash is the merged slash-command registry (built-ins + component
-	// registrations); slashComp is the live Tab-completion state.
+	// registrations); slashComp is the live Tab-completion state. aliases
+	// holds the user-defined prompt shortcuts from /alias (alias.go).
 	slash     slashRegistry
 	slashComp slashCompleteState
+	aliases   map[string]string
 
 	// fileComp is the live @file-reference completion state; fileList
 	// caches per-workspace listings for it (filecomp.go).
@@ -516,6 +518,7 @@ func newModel(ctx context.Context, comp *sdk.Component, session, natsURL string)
 		history:      history,
 		historyFile:  historyFile,
 		slash:        newSlashRegistry(),
+		aliases:      loadAliases(),
 		scrollback:   scrollbackLines(),
 		pieceEpoch:   1, // 0 is "never rendered" for blocks
 		usageCache:   map[string]usageTotals{},

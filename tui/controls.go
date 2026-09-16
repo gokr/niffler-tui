@@ -108,6 +108,13 @@ func (m model) executeLocalCommand(command string) (tea.Model, tea.Cmd) {
 	if cmd, ok := builtinCommand(name); ok && cmd.run != nil {
 		return cmd.run(m, cmd, argument)
 	}
+	// A user-defined alias (alias.go) runs its stored prompt as a turn. It
+	// is checked after built-ins, so an alias can never shadow one, and
+	// before the registered plugin commands, so a user's own shortcut wins
+	// over a same-named registration.
+	if _, ok := m.aliases[name]; ok {
+		return m.runAlias(name, argument)
+	}
 	if cmd, ok := m.slash.lookup(name); ok && !cmd.builtin {
 		return m.executeSlashCommand(cmd, argument)
 	}
@@ -385,6 +392,12 @@ func localHelp(m model, cmd slashCommand, argument string) (tea.Model, tea.Cmd) 
 			}
 			lines = append(lines, line+" ("+cmd.Component+")")
 		}
+	}
+	// User-defined aliases (alias.go) get their own section so they never
+	// mix into the built-in listing (help.pluginTitle sets the precedent).
+	if aliases := m.aliasLines(); len(aliases) > 0 {
+		lines = append(lines, "", t(m.loc, "help.aliasTitle"))
+		lines = append(lines, aliases...)
 	}
 	m.addBlock(blockMeta, strings.Join(lines, "\n"))
 	m.syncViewport(true)

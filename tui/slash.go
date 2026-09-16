@@ -189,6 +189,14 @@ func builtinSlashCommands() []slashCommand {
 			{Name: "lang", Kind: "enum", Values: []string{"en", "zh", "zh-TW"}},
 		}},
 		{Name: "restart", Description: "restart the client (picks up a rebuilt binary)", builtin: true, run: localRestart},
+		// User-defined prompt shortcuts: /alias <name> <prompt> (see alias.go).
+		// The declared subcommands drive dispatch, Tab completion and the
+		// `subcommand` enum; a bare /alias name is the add sugar.
+		{Name: "alias", Description: "define prompt shortcuts that send a fixed prompt", builtin: true, run: localAlias, subcommands: aliasSubcommands(), Params: []slashParam{
+			{Name: "subcommand", Kind: "enum", Values: subcommandNames(aliasSubcommands())},
+			{Name: "name", Kind: "string", Description: "alias name"},
+			{Name: "prompt", Kind: "string", Description: "prompt sent as a turn when the alias is invoked"},
+		}},
 		{Name: "help", Description: "show this help", builtin: true, run: localHelp},
 		{Name: "?", Description: "show this help", builtin: true, aliasOf: "help", run: localHelp},
 	}
@@ -489,10 +497,9 @@ func (m model) slashCandidates(value string) (prefix, token string, candidates [
 	if len(fields) == 1 && !strings.HasSuffix(value, " ") {
 		// Completing the command name itself.
 		partial := strings.TrimPrefix(word, "/")
-		names := make([]string, 0, len(m.slash.order))
-		names = append(names, m.slash.order...)
-		sort.Strings(names)
-		return "/", partial, names, nil, false, false
+		// Registry names plus user-defined aliases (alias.go), so a defined
+		// alias completes like any built-in.
+		return "/", partial, m.completionNames(), nil, false, false
 	}
 
 	cmd, ok := m.slash.lookup(word)

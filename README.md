@@ -167,6 +167,11 @@ Local commands are handled by the TUI and are never sent to the model:
 - `/restart` — quit with a reserved exit code so the installed `niffler-tui`
   wrapper re-runs the binary, picking up a rebuilt install after an update;
   run without that wrapper it simply exits
+- `/alias <name> <prompt…>` — define a prompt shortcut: typing `/name` (with
+  any extra words appended to the stored prompt) sends it as an ordinary turn.
+  A bare `/alias` or `/alias list` lists the definitions and `/alias rm <name>`
+  deletes one; definitions persist in the per-user state dir, complete on Tab,
+  and appear in `/help`. Built-in names cannot be shadowed
 - `/help` — command summary, generated from the registered command table so
   it always lists every built-in (and every plugin command)
 

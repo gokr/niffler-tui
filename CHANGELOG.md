@@ -8,6 +8,15 @@ project aims for [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **User-defined `/alias` slash shortcuts.** `/alias <name> <prompt…>` binds a
+  name to a fixed prompt; typing `/name` (with any extra words appended to the
+  prompt) sends it as an ordinary conversation turn. A bare `/alias` or
+  `/alias list` lists the definitions and `/alias rm <name>` (alias `remove`)
+  deletes one. Names normalize to lowercase `[a-z0-9][a-z0-9-]*`, built-in
+  commands cannot be shadowed, and definitions persist in the per-user state
+  dir (`$XDG_STATE_HOME/niffler-tui/aliases`) as a sorted JSON object — a
+  missing or corrupt file is ignored, never fatal. Aliases complete on Tab and
+  are listed in `/help`'s own section.
 - **The busy label says what the turn is doing.** The divider's activity
   label follows the turn's phase instead of a flat "Working": a running
   tool names itself with a short identifying argument (`bash go build
