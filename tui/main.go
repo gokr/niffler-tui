@@ -999,12 +999,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch keyName {
 		case "ctrl+c":
 			return m, tea.Quit
-		case "tab", "shift+tab":
+		case "tab":
 			var cmd tea.Cmd
 			if strings.HasPrefix(strings.TrimSpace(m.input.Value()), "/") {
-				m, cmd = m.handleSlashTab(keyName == "shift+tab")
+				m, cmd = m.handleSlashTab(false)
 			} else {
-				m, cmd = m.handleFileTab(keyName == "shift+tab")
+				m, cmd = m.handleFileTab(false)
 			}
 			return m, cmd
 		case "enter":
@@ -1094,7 +1094,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.cycleThinkingLevel()
 			m.syncViewport(false)
 			return m, nil
-		case "ctrl+g":
+		case "shift+tab":
 			// Rotate the conversation's LLM thinking effort (auto → low →
 			// medium → high); persisted like the model override and applied
 			// by the session runner on the next turn.
