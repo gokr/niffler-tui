@@ -30,6 +30,7 @@ const (
 	modeThemes
 	modeProfiles
 	modeProfileForm
+	modeBgPeek
 )
 
 type selectorItemKind int

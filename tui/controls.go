@@ -1056,6 +1056,28 @@ func (m model) handleControlKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
+	// The ctrl+o worker cycle (modeBgPeek): advance with ctrl+o/tab/n, r
+	// refreshes the roster and the view, esc/q back to chat.
+	if m.mode == modeBgPeek {
+		switch msg.String() {
+		case "esc", "q":
+			m.mode = modeChat
+			m.layout()
+			return m, nil
+		case "ctrl+o", "tab", "n":
+			if len(m.bgPeekRoster) > 0 {
+				m.bgPeekIdx = (m.bgPeekIdx + 1) % len(m.bgPeekRoster)
+			}
+			m.layout()
+			return m, m.loadBgPeekBody()
+		case "r":
+			m.refreshBgPeekRoster()
+			m.layout()
+			return m, m.loadBgPeekBody()
+		}
+		return m, nil
+	}
+
 	// MCP registry search (modeMcpSearch): enter/a on an installable entry
 	// opens the add form prefilled from the entry; esc returns to chat.
 	if m.mode == modeMcpSearch {

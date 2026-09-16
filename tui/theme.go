@@ -54,6 +54,8 @@ type theme struct {
 	barWarn     string
 	barCrit     string
 	barEmpty    string
+	badgeBg     string // background-processes badge (bg N)
+	badgeAgent  string // subagent badge (agent N)
 }
 
 // themeNames is the /theme picker order: lights first (the terminal-default
@@ -99,6 +101,8 @@ var themeRegistry = map[string]theme{
 		barWarn:     "3",
 		barCrit:     "9",
 		barEmpty:    "8",
+		badgeBg:     "3",
+		badgeAgent:  "6",
 	},
 	// light: high-contrast dark-on-white for terminals like macOS
 	// Terminal's default profile.
@@ -127,6 +131,8 @@ var themeRegistry = map[string]theme{
 		barWarn:     "#B45309",
 		barCrit:     "#B91C1C",
 		barEmpty:    "#D1D5DB",
+		badgeBg:     "#B45309",
+		badgeAgent:  "#0E7490",
 	},
 	// sepia: warm paper tones for a light terminal.
 	"sepia": {
@@ -154,6 +160,8 @@ var themeRegistry = map[string]theme{
 		barWarn:     "#A16207",
 		barCrit:     "#B3261E",
 		barEmpty:    "#E0D8C8",
+		badgeBg:     "#A16207",
+		badgeAgent:  "#0F766E",
 	},
 	// solarized-light: the Solarized palette on its light base.
 	"solarized-light": {
@@ -181,6 +189,8 @@ var themeRegistry = map[string]theme{
 		barWarn:     "#B58900",
 		barCrit:     "#DC322F",
 		barEmpty:    "#EEE8D5",
+		badgeBg:     "#B58900",
+		badgeAgent:  "#268BD2",
 	},
 	// solarized-dark: the Solarized palette on its dark base.
 	"solarized-dark": {
@@ -208,6 +218,8 @@ var themeRegistry = map[string]theme{
 		barWarn:     "#B58900",
 		barCrit:     "#DC322F",
 		barEmpty:    "#073642",
+		badgeBg:     "#B58900",
+		badgeAgent:  "#2AA198",
 	},
 	// gruvbox-dark: the retro-groove palette on its dark base.
 	"gruvbox-dark": {
@@ -235,6 +247,8 @@ var themeRegistry = map[string]theme{
 		barWarn:     "#FABD2F",
 		barCrit:     "#FB4934",
 		barEmpty:    "#3C3836",
+		badgeBg:     "#FABD2F",
+		badgeAgent:  "#83A598",
 	},
 	// nord: the Nord palette on polar night.
 	"nord": {
@@ -262,6 +276,8 @@ var themeRegistry = map[string]theme{
 		barWarn:     "#EBCB8B",
 		barCrit:     "#BF616A",
 		barEmpty:    "#3B4252",
+		badgeBg:     "#EBCB8B",
+		badgeAgent:  "#88C0D0",
 	},
 	// dracula: glamour's built-in dracula markdown style plus a matching
 	// chrome palette.
@@ -290,6 +306,8 @@ var themeRegistry = map[string]theme{
 		barWarn:     "#F1FA8C",
 		barCrit:     "#FF5555",
 		barEmpty:    "#44475A",
+		badgeBg:     "#F1FA8C",
+		badgeAgent:  "#8BE9FD",
 	},
 	// tokyo-night: glamour's built-in tokyo-night markdown style plus a
 	// matching chrome palette.
@@ -318,6 +336,8 @@ var themeRegistry = map[string]theme{
 		barWarn:     "#E0AF68",
 		barCrit:     "#F7768E",
 		barEmpty:    "#292E42",
+		badgeBg:     "#E0AF68",
+		badgeAgent:  "#7DCFFF",
 	},
 	// catppuccin-mocha: the Catppuccin Mocha palette.
 	"catppuccin-mocha": {
@@ -345,6 +365,8 @@ var themeRegistry = map[string]theme{
 		barWarn:     "#F9E2AF",
 		barCrit:     "#F38BA8",
 		barEmpty:    "#313244",
+		badgeBg:     "#F9E2AF",
+		badgeAgent:  "#89DCEB",
 	},
 }
 
@@ -443,6 +465,8 @@ func applyTheme(name string) bool {
 		BorderForeground(lipgloss.Color(th.approval)).
 		Padding(1, 2)
 	approvalTitleStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(th.approval))
+	badgeBgStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(th.badgeBg))
+	badgeAgentStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(th.badgeAgent))
 	return true
 }
 

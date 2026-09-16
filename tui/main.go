@@ -248,12 +248,21 @@ type model struct {
 	processesPeekErr     string
 	processesPeekLoading bool
 	bgTicking            bool
-	models               []modelSummary
-	modelsCatalog        string
-	runtime              runtimeResolution
-	modelOverride        string
-	promptTokens         int
-	contextUsed          int
+	// Subagent roster (agent_list's read-only UI affordance) + the ctrl+o
+	// output cycle: running processes and working subagents, one live view
+	// per press.
+	agents        []agentSummary
+	bgPeekRoster  []bgTarget
+	bgPeekIdx     int
+	bgPeekText    string
+	bgPeekErr     string
+	bgPeekLoading bool
+	models        []modelSummary
+	modelsCatalog string
+	runtime       runtimeResolution
+	modelOverride string
+	promptTokens  int
+	contextUsed   int
 	// inputTokens/outputTokens accumulate the session's billed tokens (the
 	// header's ↑/↓ chip); cacheHits/cachePrompt accumulate the prompt-cache
 	// economics (header and /status).
@@ -421,6 +430,8 @@ var (
 	toolCardStyle    = lipgloss.NewStyle()
 	metaStyle        = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
 	errorStyle       = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("9"))
+	badgeBgStyle     = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("3"))
+	badgeAgentStyle  = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("6"))
 )
 
 // dotWithoutPadding is spinner.Dot with each frame's trailing space removed.
@@ -1102,6 +1113,22 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.controlPending = true
 			m.contextNote = t(m.loc, "note.savingEffort")
 			return m, setConversationThinkingCmd(m.comp, m.session, next)
+		case "ctrl+o":
+			// The worker cycle: running background processes and working
+			// subagents, one live view per press. Nothing working -> a
+			// transient note, not an empty mode.
+			roster := bgRoster(m.processes, m.agents)
+			if len(roster) == 0 {
+				m.contextNote = t(m.loc, "note.nothingRunning")
+				m.layout()
+				return m, nil
+			}
+			m.bgPeekRoster = roster
+			m.bgPeekIdx = 0
+			m.mode = modeBgPeek
+			m.layout()
+			return m, tea.Batch(m.loadBgPeekBody(), processesListCmd(m.comp),
+				agentsListCmd(m.comp, m.session))
 		case "esc":
 			// Two-stage stop: first ESC arms the Stop? prompt, second ESC
 			// force-cancels the running turn. Outside a busy turn ESC is left
@@ -1249,6 +1276,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if len(msg.Warnings) > 0 && !m.runtime.OK {
 			m.contextNote = "provider/model controls unavailable: " + msg.Warnings[0]
 		}
+		// The subagent badge loads with the conversation snapshot (the
+		// session id scopes the roster); the tick chain keeps it fresh while
+		// anything works.
+		cmds = append(cmds, agentsListCmd(m.comp, m.session))
 
 	case runtimeRefreshedMsg:
 		if msg.ListErr == nil {
@@ -1582,6 +1613,35 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.mode == modeProcessesPeek {
 			m.layout()
 		}
+		// The ctrl+o cycle shares the peek fetch; land the tail on the
+		// cycled target only (the panel's peek has its own fields).
+		if m.mode == modeBgPeek {
+			if tgt, ok := m.bgPeekTarget(); ok && tgt.kind == "process" && tgt.id == msg.ID {
+				m.bgPeekLoading = false
+				m.bgPeekText = msg.Text
+				if msg.Err != nil {
+					m.bgPeekErr = msg.Err.Error()
+				}
+			}
+			m.layout()
+		}
+
+	case agentsListMsg:
+		// An error means the agent component is absent or too old for the
+		// read-only UI listing: keep the empty roster quietly (the badge
+		// disappears; nothing else depends on it).
+		if msg.Err == nil {
+			m.agents = msg.Agents
+		} else {
+			m.agents = nil
+		}
+		if m.mode == modeBgPeek {
+			m.refreshBgPeekRoster()
+		}
+		if cmd := m.armBgTick(); cmd != nil {
+			cmds = append(cmds, cmd)
+		}
+		m.layout()
 
 	case processesActionMsg:
 		m.controlPending = false
@@ -1598,7 +1658,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case bgTickMsg:
 		// the chain re-arms itself only while something is running
 		if cmd := m.armBgTick(); cmd != nil {
-			cmds = append(cmds, cmd, processesListCmd(m.comp))
+			cmds = append(cmds, cmd, processesListCmd(m.comp), agentsListCmd(m.comp, m.session))
 		}
 
 	case thinkingEffortMsg:
@@ -2375,6 +2435,14 @@ func (m model) View() tea.View {
 			if m.processesPeekErr != "" {
 				parts = append(parts, errorStyle.Render(truncate(m.processesPeekErr, max(1, m.width-1))))
 			}
+		case modeBgPeek:
+			if tgt, ok := m.bgPeekTarget(); ok {
+				parts = append(parts, bgPeekView(m.loc, tgt, m.bgPeekText,
+					m.width, m.height, m.bgPeekLoading, epochNow()))
+			}
+			if m.bgPeekErr != "" {
+				parts = append(parts, errorStyle.Render(truncate(m.bgPeekErr, max(1, m.width-1))))
+			}
 		case modeConnectForm:
 			parts = append(parts, m.providerForm.view(m.width))
 		case modeOAuth:
@@ -2578,11 +2646,19 @@ func (m model) bottomLine() string {
 		}
 		line += chip
 	}
-	if badge := processesBadgeText(m.loc, m.processes); badge != "" {
+	if badge := processesBadgeText(m.loc, m.processes, epochNow()); badge != "" {
 		if line != "" {
 			line += "  │  "
 		}
-		line += badge
+		// Distinct accents so "is a build running" and "is a subagent
+		// working" read at a glance: amber for processes, cyan for subagents.
+		line += badgeBgStyle.Render(badge)
+	}
+	if badge := agentsBadgeText(m.loc, m.agents, epochNow()); badge != "" {
+		if line != "" {
+			line += "  │  "
+		}
+		line += badgeAgentStyle.Render(badge)
 	}
 	if m.contextNote != "" {
 		if line != "" {
@@ -2597,7 +2673,7 @@ func (m model) bottomLine() string {
 // while the last snapshot showed a running process and disarms itself from
 // bgTickMsg when the count reaches zero (one live timer per purpose).
 func (m *model) armBgTick() tea.Cmd {
-	if runningCount(m.processes) == 0 {
+	if runningCount(m.processes) == 0 && runningAgents(m.agents) == 0 {
 		m.bgTicking = false
 		return nil
 	}

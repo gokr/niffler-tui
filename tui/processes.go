@@ -33,6 +33,9 @@ type processSummary struct {
 	Command  string `json:"command"`
 	Status   string `json:"status"`
 	ExitCode int    `json:"exit_code"`
+	// StartedAt is the spawn time (epoch seconds); older components omit
+	// it and the badge/cycle ages degrade to the plain count/status.
+	StartedAt float64 `json:"started_at"`
 }
 
 func (p processSummary) running() bool { return p.Status == "running" }
@@ -124,12 +127,23 @@ func runningCount(processes []processSummary) int {
 	return count
 }
 
-// processesBadgeText is the status-line segment: "bg 2" while anything
-// runs, empty otherwise (most conversations never start one).
-func processesBadgeText(loc Locale, processes []processSummary) string {
+// processesBadgeText is the status-line segment: "bg 2 (7m)" while anything
+// runs, empty otherwise (most conversations never start one). The age is
+// the longest-running entry's; an unknown timestamp (older component)
+// degrades to the plain count.
+func processesBadgeText(loc Locale, processes []processSummary, now ...float64) string {
 	count := runningCount(processes)
 	if count == 0 {
 		return ""
+	}
+	oldest := float64(0)
+	for _, p := range processes {
+		if p.running() && p.StartedAt > oldest {
+			oldest = p.StartedAt
+		}
+	}
+	if oldest > 0 && len(now) > 0 {
+		return t(loc, "processes.badgeAge", strconv.Itoa(count), humanAge(now[0]-oldest))
 	}
 	return t(loc, "processes.badge", strconv.Itoa(count))
 }
