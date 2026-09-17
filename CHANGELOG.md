@@ -46,6 +46,15 @@ project aims for [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **`max` thinking effort is reachable from the TUI.** `shift+tab` stopped at
+  `high` while core's own enum, the web UI's cycle and the providers accept
+  `max`, so the deepest level could not be selected from the terminal at all —
+  and on DeepSeek it is not a synonym for `high`: `minimal`/`low` map to
+  `low`, `medium`/`xhigh` to `high`, and only `max` to `max` (thinking mode
+  itself is on by default at `high`). The cycle is now `auto → low → medium →
+  high → max`, matching the web UI. Levels are still forwarded verbatim as
+  `reasoning_effort` per conversation; there is no per-provider level mapping
+  yet, so a level an endpoint does not accept is sent as-is.
 - **`/restart` hands the conversation over instead of losing it.** The
   restarted client came up as a brand-new UI and asked core's ui registry for
   the conversation it was on; whenever the predecessor's best-effort release

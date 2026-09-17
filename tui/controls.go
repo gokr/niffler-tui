@@ -1503,9 +1503,12 @@ func (m *model) cycleThinkingLevel() {
 	m.invalidatePieces()
 }
 
-// effortCycle is the LLM thinking-effort rotation for ctrl+g: empty means
-// the provider default (no reasoning_effort sent).
-var effortCycle = []string{"", "low", "medium", "high"}
+// effortCycle is the LLM thinking-effort rotation for shift+tab: empty means
+// the provider default (no reasoning_effort sent at all). max is the deepest
+// level core accepts and is not a synonym for high on providers that expose
+// one — DeepSeek maps minimal/low→low, medium/xhigh→high and max→max — so the
+// TUI offers the same ladder the web UI does.
+var effortCycle = []string{"", "low", "medium", "high", "max"}
 
 // nextThinkingEffort returns the effort level following the current
 // per-conversation selection.

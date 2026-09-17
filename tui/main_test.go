@@ -1422,7 +1422,7 @@ func TestThinkingEffortCycle(t *testing.T) {
 	if got := m.effortLabel(); got != "auto" {
 		t.Fatalf("empty effort label = %q, want auto", got)
 	}
-	want := []string{"low", "medium", "high", ""}
+	want := []string{"low", "medium", "high", "max", ""}
 	for i, level := range want {
 		next := m.nextThinkingEffort()
 		if next != level {

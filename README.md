@@ -63,8 +63,8 @@ Keys:
 - `Ctrl+Up` / `Ctrl+Down`: scroll the transcript one line at a time
 - `Ctrl+T`: cycle thinking visibility (`full` → `brief` → `off`)
 - `Ctrl+E`: cycle tool-card detail (`brief` → `medium` → `full` → `off`)
-- `Ctrl+G`: rotate the conversation's LLM thinking effort
-  (`auto` → `low` → `medium` → `high`)
+- `Shift+Tab`: rotate the conversation's LLM thinking effort
+  (`auto` → `low` → `medium` → `high` → `max`)
 - `Esc`: while busy, the first press arms a "Stop?" prompt and the second
   force-cancels the running turn
 - Mouse: wheel scrolls the transcript; plain drag selects and copies; left
@@ -100,12 +100,15 @@ Reasoning is compacted for display: edge newlines are trimmed and blank-line
 runs are capped at one blank line, so paragraph breaks between thinking
 blocks stay visible without stacking into walls of empty rows.
 
-`Ctrl+G` rotates the conversation's LLM thinking *effort* —
-`auto` (provider default) → `low` → `medium` → `high`. The selection is
-persisted per conversation like the model override, applies between turns,
-and is forwarded to the LLM as `reasoning_effort` only when set, so
-providers without reasoning-effort support never see it. The current
-selection shows in the header as `effort:auto|low|medium|high`.
+`Shift+Tab` rotates the conversation's LLM thinking *effort* —
+`auto` (provider default) → `low` → `medium` → `high` → `max`. The selection
+is persisted per conversation like the model override, applies between turns,
+and is forwarded to the LLM as `reasoning_effort` only when set, so providers
+without reasoning-effort support never see it. Levels are not a uniform scale
+across providers — DeepSeek, for one, maps `minimal`/`low` to `low`,
+`medium`/`xhigh` to `high` and `max` to `max` — so `max` is the only step
+above `high` where the provider exposes one. The current selection shows in
+the header as `effort:auto|low|medium|high|max`.
 
 Local commands are handled by the TUI and are never sent to the model:
 
