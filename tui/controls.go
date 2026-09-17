@@ -370,9 +370,17 @@ func localLocale(m model, cmd slashCommand, argument string) (tea.Model, tea.Cmd
 // niffler-tui wrapper) re-runs the binary — the point is picking up a rebuilt
 // install after a plugin update, which the running process cannot do itself.
 // Without such a wrapper this simply exits. Any in-flight turn keeps running
-// in its session runner and is replayed from the store after the restart.
+// in its session runner and is replayed from the store after the restart, and
+// the conversation plus this client's ui-registry identity carry over to the
+// successor through the handoff record (handoff.go).
 func localRestart(m model, cmd slashCommand, argument string) (tea.Model, tea.Cmd) {
 	m.restart = true
+	// Record the handoff before quitting: the successor adopts this client's
+	// registry identity, so the conversation survives even though the exit path
+	// deliberately skips the release for a restart — that is the restart which
+	// picks up a rebuilt install, where the predecessor may be an older build
+	// that cannot release at all.
+	writeHandoff(m.natsURL, m.launchDir, m.uiID, m.session)
 	m.addBlock(blockMeta, t(m.loc, "chat.restarting"))
 	m.syncViewport(true)
 	return m, tea.Quit

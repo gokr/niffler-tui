@@ -2888,9 +2888,18 @@ func main() {
 	// project's conversation, not the previous one's.
 	natsURL := resolveNATSURL()
 	launchDir := initialCwd()
+	// A /restart predecessor hands its registry identity — and the conversation
+	// it was on — to this process (handoff.go), so a restart resumes that
+	// conversation even when the predecessor's release never reached core.
+	handoffUI, handoffSession := consumeHandoff(natsURL, launchDir, time.Now())
 	defaultSession := strings.TrimSpace(os.Getenv("NIF_SESSION"))
 	if defaultSession == "" {
 		defaultSession = loadLastSession(natsURL, launchDir)
+	}
+	if defaultSession == "" {
+		// The handoff names the conversation too: a missing or unreadable
+		// last-session file must not turn a handover into a fresh conversation.
+		defaultSession = handoffSession
 	}
 	if defaultSession == "" {
 		defaultSession = "console"
@@ -2922,8 +2931,18 @@ func main() {
 	// to the caller's own subject, so "tui-<hex>" makes directed approvals
 	// private to this terminal (two plain "tui"s shared one subject), and
 	// the ui registry numbers each client ("Niffler 1", "Niffler 2", ...).
-	uiID := newUIID()
-	uiName := "tui-" + uiID
+	//
+	// The registry identity is inherited when a /restart predecessor handed it
+	// over — that is what keeps the conversation's claim, and the "Niffler N"
+	// label, in the same hands across the restart. The component name is always
+	// fresh: it is this process's approval subject, and a hard-exited
+	// predecessor never announced a departure, so reusing its name would leave
+	// a duplicate in the catalog.
+	uiID := handoffUI
+	if uiID == "" {
+		uiID = newUIID()
+	}
+	uiName := "tui-" + newUIID()
 
 	comp := sdk.New(uiName, componentVersion)
 	comp.Client = true
@@ -3027,19 +3046,18 @@ func main() {
 		os.Exit(1)
 	}
 	if fm, ok := final.(model); ok {
-		// Best-effort lease + claim release; the lease also self-expires in
-		// core, so a short timeout and ignored errors are fine.
-		if fm.comp != nil && fm.uiID != "" {
-			_, _ = fm.comp.Request("core", "ui",
-				map[string]any{"op": "release", "ui": fm.uiID}, 500*time.Millisecond)
-		}
 		// /restart hands the restart to whoever launched us: the installed
 		// wrapper loops on this exit code and re-runs the binary from disk, so
 		// the fresh process picks up a rebuilt install. Run() returns the final
 		// model, which carries the flag set by the command.
 		if fm.restart {
+			// The successor inherits this identity through the handoff record
+			// localRestart wrote, so the registration must stay warm: releasing
+			// it here would make the successor a stranger that core refuses the
+			// very conversation the handoff is carrying over.
 			os.Exit(restartExitCode)
 		}
+		releaseUI(fm.comp, fm.uiID)
 	}
 	comp.Close()
 }

@@ -166,7 +166,9 @@ Local commands are handled by the TUI and are never sent to the model:
   run reads as one block (per-run display toggle)
 - `/restart` — quit with a reserved exit code so the installed `niffler-tui`
   wrapper re-runs the binary, picking up a rebuilt install after an update;
-  run without that wrapper it simply exits
+  run without that wrapper it simply exits. The conversation you were in, and
+  this client's identity (its `Niffler N` label), carry over to the successor,
+  which resumes it even if the old process never released it
 - `/alias <name> <prompt…>` — define a prompt shortcut: typing `/name` (with
   any extra words appended to the stored prompt) sends it as an ordinary turn.
   A bare `/alias` or `/alias list` lists the definitions and `/alias rm <name>`

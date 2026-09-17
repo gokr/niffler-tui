@@ -46,6 +46,24 @@ project aims for [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **`/restart` hands the conversation over instead of losing it.** The
+  restarted client came up as a brand-new UI and asked core's ui registry for
+  the conversation it was on; whenever the predecessor's best-effort release
+  never landed — a request lost on a busy bus, a crash, a SIGKILL, or the
+  older build that `/restart` exists to replace, which cannot release at all —
+  the registry still owned it, the claim was refused, and the refusal is
+  obeyed by opening a new empty conversation. (The only trace on screen was a
+  single meta line naming the owner.) The predecessor now writes a handoff
+  record — its registry identity plus the conversation — beside the
+  last-session file, and a start within two minutes adopts that identity:
+  re-registering a warm id keeps its display number and a claim by the owner
+  is idempotent, so both the conversation and the `Niffler N` label survive
+  the restart. The record is consumed once and ordinary launches still mint a
+  fresh identity, so two terminals in one workspace cannot silently share a
+  conversation. A restart also skips the release (the successor inherits the
+  registration), while every other exit releases it with retries and reports a
+  failure on stderr instead of leaving the conversation looking open for the
+  rest of the 20s lease.
 - **Smooth scrolling and streaming, especially while thinking streams.**
   The transcript viewport ran with soft wrap on even though every line is
   pre-wrapped to the viewport width, so bubbles measured the entire scroll

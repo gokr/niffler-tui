@@ -18,6 +18,7 @@
         "tui/filecomp.go",
         "tui/history.go",
         "tui/highlight.go",
+        "tui/handoff.go",
         "tui/i18n.go",
         "tui/mcp_form.go",
         "tui/lsp_form.go",
@@ -33,6 +34,7 @@
         "tui/toolrender.go",
         "tui/toolcard.go",
         "tui/transcript.go",
+        "tui/uirelease.go",
         "tui/processes.go"
       ],
       "interactive": true,
