@@ -31,15 +31,29 @@ import (
 // finished). StartedAt is the running turn's start or the last
 // activation's start; older components omit it and the age stays empty.
 type agentSummary struct {
-	SessionID string  `json:"sessionId"`
-	Parent    string  `json:"parent"`
-	Depth     int     `json:"depth"`
-	Status    string  `json:"status"`
-	Task      string  `json:"task"`
-	StartedAt float64 `json:"startedAt"`
+	SessionID  string  `json:"sessionId"`
+	Parent     string  `json:"parent"`
+	Depth      int     `json:"depth"`
+	Status     string  `json:"status"`
+	LastStatus string  `json:"lastStatus"`
+	JobID      string  `json:"jobId"`
+	Task       string  `json:"task"`
+	Error      string  `json:"error"`
+	StartedAt  float64 `json:"startedAt"`
 }
 
 func (a agentSummary) running() bool { return a.Status == "running" }
+
+func agentSettlementText(a agentSummary) string {
+	if a.LastStatus != "failed" && a.LastStatus != "stopped" {
+		return ""
+	}
+	label := "subagent " + a.LastStatus
+	if a.Error != "" {
+		label += ": " + a.Error
+	}
+	return label
+}
 
 // agentsListMsg carries the roster snapshot for the badge and the ctrl+o
 // cycle. An error means the component is absent or too old: keep the empty
@@ -47,6 +61,14 @@ func (a agentSummary) running() bool { return a.Status == "running" }
 type agentsListMsg struct {
 	Agents []agentSummary
 	Err    error
+}
+
+// agentEventMsg wakes the UI on lifecycle events so the badge does not wait
+// for an unrelated process tick. The roster remains authoritative.
+type agentEventMsg struct {
+	Parent string `json:"parent"`
+	Status string `json:"status"`
+	Error  string `json:"error"`
 }
 
 func loadAgents(comp *sdk.Component, session string) ([]agentSummary, error) {

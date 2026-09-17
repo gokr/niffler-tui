@@ -33,6 +33,15 @@ func TestWorkerBadgesAndRoster(t *testing.T) {
 	}
 }
 
+func TestAgentSettlementText(t *testing.T) {
+	if got := agentSettlementText(agentSummary{LastStatus: "failed", Error: "token budget exhausted"}); got != "subagent failed: token budget exhausted" {
+		t.Fatalf("failed settlement = %q", got)
+	}
+	if got := agentSettlementText(agentSummary{LastStatus: "done"}); got != "" {
+		t.Fatalf("done settlement should be quiet: %q", got)
+	}
+}
+
 func TestWorkerBadgeDegradesWithoutTimestamp(t *testing.T) {
 	if got := processesBadgeText(LocaleEN, []processSummary{{ID: "p1", Status: "running"}}, 1000); got != "bg 1" {
 		t.Fatalf("timestamp-less process badge = %q", got)
