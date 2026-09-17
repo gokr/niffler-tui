@@ -2,6 +2,7 @@ package main
 
 import (
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -31,6 +32,22 @@ func TestCatalogsComplete(tt *testing.T) {
 		}
 		if catalogZhTW[k] == "" {
 			tt.Errorf("zh-TW missing key %q", k)
+		}
+	}
+}
+
+func TestHelpKeysMatchBindings(tt *testing.T) {
+	// The help line is prose, so nothing else keeps it honest: a rebinding that
+	// forgets it leaves the user reading the wrong key. Assert per locale.
+	for _, loc := range []Locale{LocaleEN, LocaleZH, LocaleZHTW} {
+		text := t(loc, "help.keys")
+		if strings.Contains(text, "ctrl+g") {
+			tt.Errorf("%s help.keys still advertises ctrl+g: %q", loc, text)
+		}
+		for _, want := range []string{"shift+tab", "ctrl+o", "ctrl+t", "ctrl+e"} {
+			if !strings.Contains(text, want) {
+				tt.Errorf("%s help.keys omits %s: %q", loc, want, text)
+			}
 		}
 	}
 }
