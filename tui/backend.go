@@ -259,8 +259,11 @@ type modelActionMsg struct {
 }
 
 // providerBusEventMsg signals a change on ev.provider.>; the client refreshes
-// provider and runtime state in response.
-type providerBusEventMsg struct{}
+// provider and runtime state in response. Changed marks the events that prove
+// the active backend moved (ev.provider.switch with a different nickname): the
+// conversation's model pin belongs to the provider it was chosen under, so it
+// must be dropped then. Other provider events only refresh the views.
+type providerBusEventMsg struct{ Changed bool }
 
 type modelsCatalogUpdatedMsg struct{}
 

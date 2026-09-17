@@ -832,6 +832,28 @@ func (m model) providerDefaultModel() string {
 	return ""
 }
 
+// providerActionChangedProvider reports whether a completed provider action
+// moved the active backend: a switch to another nickname, the environment
+// fallback, an add (the connect form activates what it adds), or removing the
+// currently active provider. Re-selecting the already active provider and
+// metadata-only actions (update, strip) keep the same backend.
+func (m model) providerActionChangedProvider(msg providerActionMsg) bool {
+	active := m.providerStatus.Provider.Nickname
+	switch msg.Action {
+	case "switch", "add":
+		return msg.Nickname != "" && msg.Nickname != active
+	case "environment":
+		return m.providerStatus.Source != "environment"
+	case "remove":
+		for _, provider := range m.providers {
+			if provider.Nickname == msg.Nickname {
+				return provider.Active
+			}
+		}
+	}
+	return false
+}
+
 func (m model) handleControlKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	if msg.String() == "ctrl+c" {
 		return m, tea.Quit

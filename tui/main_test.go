@@ -1058,24 +1058,74 @@ func TestRuntimeRefreshKeepsSuccessfulResolutionOnOptionalFailure(t *testing.T) 
 	}
 }
 
-func TestProviderChangeRetainsConversationModelAndClearsFormSecret(t *testing.T) {
+func TestProviderSwitchDropsStaleConversationModel(t *testing.T) {
 	m := newTestModel()
 	m.modelOverride = "conversation-model"
+	m.providerStatus = providerStatusResponse{Source: "store",
+		Provider: providerSummary{Nickname: "old"}}
+
+	// Switching to a different provider drops the pin: the model was chosen
+	// for the old provider and may not exist on the new one.
+	updated, cmd := m.Update(providerActionMsg{Action: "switch", Nickname: "work"})
+	got := updated.(model)
+	if got.modelOverride != "" {
+		t.Fatalf("provider switch kept the previous provider's model pin: %q", got.modelOverride)
+	}
+	if cmd == nil {
+		t.Fatal("provider switch did not schedule the model clear and runtime refresh")
+	}
+
+	// Re-selecting the already active provider is not a backend change.
+	m = newTestModel()
+	m.modelOverride = "conversation-model"
+	m.providerStatus = providerStatusResponse{Source: "store",
+		Provider: providerSummary{Nickname: "work"}}
+	updated, _ = m.Update(providerActionMsg{Action: "switch", Nickname: "work"})
+	if got = updated.(model); got.modelOverride != "conversation-model" {
+		t.Fatalf("re-selecting the active provider erased the model pin: %q", got.modelOverride)
+	}
+
+	// Metadata-only actions leave the backend and the pin alone.
+	updated, _ = got.Update(providerActionMsg{Action: "update", Nickname: "work"})
+	if got = updated.(model); got.modelOverride != "conversation-model" {
+		t.Fatalf("provider update erased the model pin: %q", got.modelOverride)
+	}
+}
+
+func TestProviderSwitchByAnotherClientDropsStaleConversationModel(t *testing.T) {
+	m := newTestModel()
+	m.modelOverride = "conversation-model"
+
+	// A switch event proves the backend moved; the stale pin goes.
+	updated, cmd := m.Update(providerBusEventMsg{Changed: true})
+	got := updated.(model)
+	if got.modelOverride != "" {
+		t.Fatalf("switch event kept the previous provider's model pin: %q", got.modelOverride)
+	}
+	if cmd == nil {
+		t.Fatal("switch event did not schedule the model clear and runtime refresh")
+	}
+
+	// Metadata events (update, oauth) only refresh the views.
+	m = newTestModel()
+	m.modelOverride = "conversation-model"
+	updated, _ = m.Update(providerBusEventMsg{})
+	if got = updated.(model); got.modelOverride != "conversation-model" {
+		t.Fatalf("provider metadata event erased the model pin: %q", got.modelOverride)
+	}
+}
+
+func TestProviderActionClearsFormSecret(t *testing.T) {
+	m := newTestModel()
+	m.modelOverride = "conversation-model"
+	m.providerStatus = providerStatusResponse{Source: "store",
+		Provider: providerSummary{Nickname: "old"}}
 	m.providerForm = newProviderForm(nil, runtimeResolution{}, 80, LocaleEN)
 	m.providerForm.inputs[providerFieldAPIKey].SetValue("sk-never-retain")
 	updated, _ := m.Update(providerActionMsg{Action: "switch", Nickname: "work"})
 	got := updated.(model)
-	if got.modelOverride != "conversation-model" {
-		t.Fatalf("global provider switch erased session model: %q", got.modelOverride)
-	}
 	if got.providerForm.inputs[providerFieldAPIKey].Value() != "" {
 		t.Fatal("provider action retained the API key in UI state")
-	}
-
-	updated, _ = got.Update(providerBusEventMsg{})
-	got = updated.(model)
-	if got.modelOverride != "conversation-model" {
-		t.Fatalf("provider event erased session model: %q", got.modelOverride)
 	}
 }
 

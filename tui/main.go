@@ -1444,6 +1444,19 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.providerDeleteErr = ""
 		m.addBlock(blockMeta, label)
 		m.syncViewport(true)
+		// A provider action that moved the active backend invalidates the
+		// conversation's model pin: the pinned id was chosen for the provider
+		// it was set under, and carrying it over is how a stale model — one
+		// the new provider may not even serve — stayed selected. Drop the pin
+		// so the newly active provider's configured default applies; the
+		// model-only session call persists the clear and its response reports
+		// the resolved runtime. Actions that keep the same backend (or only
+		// update settings) leave the pin alone.
+		if m.providerActionChangedProvider(msg) && m.modelOverride != "" {
+			previous := m.modelOverride
+			m.modelOverride = ""
+			cmds = append(cmds, setConversationModelCmd(m.comp, m.session, "", previous))
+		}
 		cmds = append(cmds, refreshRuntimeCmd(m.comp, m.session, m.modelOverride))
 
 	case mcpServersMsg:
@@ -1726,6 +1739,14 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.syncViewport(true)
 
 	case providerBusEventMsg:
+		// A switch from another client (or a plugin) also moves the backend
+		// out from under the conversation's model pin, so reconcile it here
+		// too. Events that only changed provider metadata just refresh.
+		if msg.Changed && m.modelOverride != "" {
+			previous := m.modelOverride
+			m.modelOverride = ""
+			cmds = append(cmds, setConversationModelCmd(m.comp, m.session, "", previous))
+		}
 		cmds = append(cmds, refreshRuntimeCmd(m.comp, m.session, m.modelOverride))
 
 	case modelsCatalogUpdatedMsg:
@@ -2915,10 +2936,21 @@ func main() {
 		kind := strings.TrimPrefix(subject, "ev.session.")
 		program.Send(sessionEventMsg{kind: kind, event: event})
 	})
-	comp.On("ev.provider.>", func(_ *sdk.Component, subject string, _ json.RawMessage) {
-		if program != nil {
-			program.Send(providerBusEventMsg{})
+	comp.On("ev.provider.>", func(_ *sdk.Component, subject string, payload json.RawMessage) {
+		if program == nil {
+			return
 		}
+		changed := false
+		if subject == "ev.provider.switch" {
+			var event struct {
+				Nickname string `json:"nickname"`
+				Previous string `json:"previous"`
+			}
+			if json.Unmarshal(payload, &event) == nil && event.Nickname != event.Previous {
+				changed = true
+			}
+		}
+		program.Send(providerBusEventMsg{Changed: changed})
 	})
 	comp.On("ev.models.updated", func(_ *sdk.Component, _ string, _ json.RawMessage) {
 		if program != nil {
