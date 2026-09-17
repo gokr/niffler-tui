@@ -254,8 +254,11 @@ type model struct {
 	// Subagent roster (agent_list's read-only UI affordance) + the ctrl+o
 	// output cycle: running processes and working subagents, one live view
 	// per press.
-	agents        []agentSummary
-	bgPeekRoster  []bgTarget
+	agents       []agentSummary
+	bgPeekRoster []bgTarget
+	// childAct is the live activity of this conversation's subagents, fed by
+	// the ev.session.* frames of every session on the bus (agents.go).
+	childAct      map[string]childActivity
 	bgPeekIdx     int
 	bgPeekText    string
 	bgPeekErr     string
@@ -1120,7 +1123,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// The worker cycle: running background processes and working
 			// subagents, one live view per press. Nothing working -> a
 			// transient note, not an empty mode.
-			roster := bgRoster(m.processes, m.agents)
+			roster := bgRoster(m.processes, m.agents, m.childAct, epochNow())
 			if len(roster) == 0 {
 				m.contextNote = t(m.loc, "note.nothingRunning")
 				m.layout()
@@ -1767,6 +1770,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case sessionEventMsg:
 		if msg.event.SessionID == m.session {
 			cmds = append(cmds, m.applySessionEvent(msg))
+		} else {
+			// Another session's frames are this conversation's subagents (and
+			// other clients' children): fold the known ones into the activity
+			// map the worker badge and cycle read.
+			m.noteChildActivity(msg.kind, msg.event)
 		}
 
 	case turnDoneMsg:
@@ -2481,7 +2489,7 @@ func (m model) View() tea.View {
 		case modeBgPeek:
 			if tgt, ok := m.bgPeekTarget(); ok {
 				parts = append(parts, bgPeekView(m.loc, tgt, m.bgPeekText,
-					m.width, m.height, m.bgPeekLoading, epochNow()))
+					m.width, m.height, m.bgPeekLoading, m.bgPeekContextOf()))
 			}
 			if m.bgPeekErr != "" {
 				parts = append(parts, errorStyle.Render(truncate(m.bgPeekErr, max(1, m.width-1))))
@@ -2697,7 +2705,7 @@ func (m model) bottomLine() string {
 		// working" read at a glance: amber for processes, cyan for subagents.
 		line += badgeBgStyle.Render(badge)
 	}
-	if badge := agentsBadgeText(m.loc, m.agents, epochNow()); badge != "" {
+	if badge := agentsBadgeText(m.loc, m.agents, m.childAct, epochNow()); badge != "" {
 		if line != "" {
 			line += "  │  "
 		}
@@ -2716,7 +2724,7 @@ func (m model) bottomLine() string {
 // while the last snapshot showed a running process and disarms itself from
 // bgTickMsg when the count reaches zero (one live timer per purpose).
 func (m *model) armBgTick() tea.Cmd {
-	if runningCount(m.processes) == 0 && runningAgents(m.agents) == 0 {
+	if runningCount(m.processes) == 0 && runningAgents(m.agents, m.childAct, epochNow()) == 0 {
 		m.bgTicking = false
 		return nil
 	}
