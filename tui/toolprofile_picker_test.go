@@ -112,7 +112,41 @@ func TestProfilePickerMarksAndClearsSelection(t *testing.T) {
 	}
 }
 
-// TestProfilePickerEscLeavesSelection pins that backing out changes nothing.
+// TestProfilePickerEditAndDeleteShortcuts verifies the picker-specific key
+// bindings rather than relying on Enter's normal selection path.
+func TestProfilePickerEditAndDeleteShortcuts(t *testing.T) {
+	m := newTestModel()
+	m.width, m.height = 80, 24
+	m.openProfileSelectorWith(testProfiles())
+	m.selector.list.Select(1) // review, after the default entry
+
+	updated, _ := m.handleControlKey(tea.KeyPressMsg{Code: 'e'})
+	got := updated.(model)
+	if got.mode != modeProfileForm || !got.profileForm.edit {
+		t.Fatalf("e mode = %v edit = %v, want edit form", got.mode, got.profileForm.edit)
+	}
+	if got.profileForm.inputs[0].Value() != "review" ||
+		got.profileForm.inputs[1].Value() != "read, grep" {
+		t.Fatalf("edit form was not prefilled: name=%q selectors=%q",
+			got.profileForm.inputs[0].Value(), got.profileForm.inputs[1].Value())
+	}
+
+	m = newTestModel()
+	m.width, m.height = 80, 24
+	m.openProfileSelectorWith(testProfiles())
+	m.selector.list.Select(1)
+	updated, cmd := m.handleControlKey(tea.KeyPressMsg{Code: 'd'})
+	got = updated.(model)
+	if cmd != nil || got.profileConfirmDelete != "review" || got.controlPending {
+		t.Fatalf("first d: confirm=%q pending=%v cmd=%v", got.profileConfirmDelete, got.controlPending, cmd != nil)
+	}
+	updated, cmd = got.handleControlKey(tea.KeyPressMsg{Code: 'd'})
+	got = updated.(model)
+	if cmd == nil || got.profileConfirmDelete != "" || !got.controlPending {
+		t.Fatalf("second d: confirm=%q pending=%v cmd=%v", got.profileConfirmDelete, got.controlPending, cmd != nil)
+	}
+}
+
 func TestProfilePickerEscLeavesSelection(t *testing.T) {
 	m := newTestModel()
 	m.width, m.height = 80, 24

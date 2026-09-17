@@ -163,7 +163,9 @@ const (
 
 type model struct {
 	profileForm profileForm
-	toolProfile string // client selection for subsequently created conversations
+	// Profile selection is client state for new conversations; bootstrap
+	// loads only the selected conversation's persisted controls.
+	toolProfile string
 	// UI identity + lease (core's ui registry): the component name is
 	// "tui-<hex>" so approval routing is private to this terminal, and the
 	// registry number is the "Niffler 1" header label. launchDir keys the
@@ -222,6 +224,7 @@ type model struct {
 	providerForm          providerForm
 	providerConfirmDelete string // nickname armed for two-stage delete in /provider
 	providerDeleteErr     string
+	profileConfirmDelete  string // name armed for two-stage delete in /profile
 	providers             []providerSummary
 	providerStatus        providerStatusResponse
 	catalogProviders      []catalogProvider
@@ -1458,14 +1461,15 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case profileSavedMsg:
 		return m.applyProfileSaved(msg)
 
+	case profileDeletedMsg:
+		return m.applyProfileDeleted(msg)
+
 	case profilesMsg:
 		if m.mode != modeProfiles {
 			return m, nil
 		}
 		if msg.Err == nil {
-			if m.mode == modeProfiles {
-				m.openProfileSelectorWith(msg.Profiles)
-			}
+			m.openProfileSelectorWith(msg.Profiles)
 		} else {
 			m.contextNote = msg.Err.Error()
 			m.mode = modeChat
@@ -1624,6 +1628,17 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 			m.layout()
+		}
+
+	case agentEventMsg:
+		if msg.Parent == "" || msg.Parent == m.session {
+			if msg.Status == "failed" {
+				m.contextNote = "subagent failed"
+				if msg.Error != "" {
+					m.contextNote += ": " + msg.Error
+				}
+			}
+			cmds = append(cmds, agentsListCmd(m.comp, m.session))
 		}
 
 	case agentsListMsg:
@@ -2390,6 +2405,13 @@ func (m model) View() tea.View {
 			control = m.selector.list.View()
 			parts = append(parts, control)
 			footer := t(m.loc, "footer.filterChoose")
+			if m.mode == modeProfiles {
+				if m.profileConfirmDelete != "" {
+					footer = errorStyle.Render(t(m.loc, "footer.confirmRemove", m.profileConfirmDelete))
+				} else {
+					footer = t(m.loc, "footer.filterSwitch")
+				}
+			}
 			if m.mode == modeProviders {
 				if m.providerDeleteErr != "" {
 					footer = errorStyle.Render(m.providerDeleteErr)
@@ -2901,6 +2923,24 @@ func main() {
 	comp.On("ev.models.updated", func(_ *sdk.Component, _ string, _ json.RawMessage) {
 		if program != nil {
 			program.Send(modelsCatalogUpdatedMsg{})
+		}
+	})
+	comp.On("ev.agent.started", func(_ *sdk.Component, _ string, payload json.RawMessage) {
+		if program == nil {
+			return
+		}
+		var event agentEventMsg
+		if json.Unmarshal(payload, &event) == nil {
+			program.Send(event)
+		}
+	})
+	comp.On("ev.agent.notice", func(_ *sdk.Component, _ string, payload json.RawMessage) {
+		if program == nil {
+			return
+		}
+		var event agentEventMsg
+		if json.Unmarshal(payload, &event) == nil {
+			program.Send(event)
 		}
 	})
 	// Catalog changes (components registering/departing) refresh the slash

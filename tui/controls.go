@@ -71,6 +71,7 @@ func (m model) switchSession(id string) model {
 	m.draft = ""
 	m.input.SetValue("")
 	m.mcpConfirmDelete = ""
+	m.profileConfirmDelete = ""
 	// Completion state is per-input, not per-session: the cleared input
 	// invalidates any active candidate list.
 	m.slashComp = slashCompleteState{}
@@ -947,7 +948,42 @@ func (m model) handleControlKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m, cmd
 	}
 
-	// LSP server management (modeLsp): a = add, e/enter = edit (built-ins
+	// Profile management shortcuts: e edits the selected profile; d/x removes
+	// it after a second press. Enter still selects it.
+	if m.mode == modeProfiles {
+		key := msg.String()
+		selected, ok := m.selector.selected()
+		armed := m.profileConfirmDelete
+		if armed != "" && (!ok || selected.id != armed) {
+			m.profileConfirmDelete = ""
+		}
+		if ok && selected.kind == selectorProfile && !m.busy {
+			profile, isProfile := selected.payload.(toolProfileSummary)
+			switch key {
+			case "e":
+				if isProfile {
+					m.profileForm = newEditProfileForm(profile, m.width, m.loc)
+					m.profileConfirmDelete = ""
+					m.mode = modeProfileForm
+					m.layout()
+					return m, m.profileForm.focusField(1)
+				}
+			case "d", "x":
+				if !isProfile {
+					return m, nil
+				}
+				if armed != "" {
+					m.profileConfirmDelete = ""
+					m.controlPending = true
+					return m, deleteProfileCmd(m.comp, selected.id)
+				}
+				m.profileConfirmDelete = selected.id
+				m.layout()
+				return m, nil
+			}
+		}
+	}
+
 	// open as overrides), d/x = remove (two-stage, user entries only).
 	if m.mode == modeLsp {
 		key := msg.String()

@@ -907,6 +907,11 @@ type profilesResponse struct {
 	Profiles []toolProfileSummary `json:"profiles"`
 }
 
+type profileDeletedMsg struct {
+	name string
+	err  error
+}
+
 // profilesMsg carries the stored tool profiles for the /profile picker.
 type profilesMsg struct {
 	Profiles []toolProfileSummary
@@ -918,6 +923,19 @@ func profilesCmd(comp *sdk.Component) tea.Cmd {
 		var response profilesResponse
 		err := requestInto(comp, "core", "profile", map[string]any{"op": "list"}, &response)
 		return profilesMsg{Profiles: response.Profiles, Err: err}
+	}
+}
+
+func deleteProfileCmd(comp *sdk.Component, name string) tea.Cmd {
+	return func() tea.Msg {
+		var response okResponse
+		err := requestInto(comp, "core", "profile", map[string]any{
+			"op": "delete", "name": name,
+		}, &response)
+		if err == nil && !response.OK {
+			err = fmt.Errorf("profile delete failed")
+		}
+		return profileDeletedMsg{name: name, err: err}
 	}
 }
 

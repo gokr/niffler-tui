@@ -139,23 +139,28 @@ func (m model) submitProfileForm() (tea.Model, tea.Cmd) {
 	m.profileForm.err = ""
 	m.profileForm.saving = true
 	comp, loc := m.comp, m.loc
+	overwrite := m.profileForm.edit
 	return m, func() tea.Msg {
-		err := createProfile(draft, loc, func(tool string, args map[string]any, out any) error {
+		err := saveProfile(draft, loc, overwrite, func(tool string, args map[string]any, out any) error {
 			return requestInto(comp, "core", tool, args, out)
 		})
 		return profileSavedMsg{name: draft.name, err: err}
 	}
 }
 
-// createProfile validates without temporary store writes. The list-before-save
-// duplicate check is best effort: core's save is an upsert, not create-if-absent.
 func createProfile(d profileDraft, loc Locale, request func(string, map[string]any, any) error) error {
+	return saveProfile(d, loc, false, request)
+}
+
+// saveProfile validates selectors before storing. Creation refuses duplicate
+// names; edit intentionally upserts the selected profile.
+func saveProfile(d profileDraft, loc Locale, overwrite bool, request func(string, map[string]any, any) error) error {
 	var existing profilesResponse
 	if err := request("profile", map[string]any{"op": "list"}, &existing); err != nil {
 		return err
 	}
 	for _, p := range existing.Profiles {
-		if p.Name == d.name {
+		if p.Name == d.name && !overwrite {
 			return fmt.Errorf("%s", t(loc, "profileForm.exists", d.name))
 		}
 	}
@@ -203,6 +208,20 @@ func missingProfileSelectors(selectors []string, components []visibilityComponen
 		}
 	}
 	return missing
+}
+
+func (m model) applyProfileDeleted(msg profileDeletedMsg) (tea.Model, tea.Cmd) {
+	m.controlPending = false
+	if msg.err != nil {
+		m.contextNote = msg.err.Error()
+		return m, nil
+	}
+	m.profileConfirmDelete = ""
+	if m.toolProfile == msg.name {
+		m.toolProfile = ""
+	}
+	m.contextNote = "Profile removed: " + msg.name
+	return m, profilesCmd(m.comp)
 }
 
 func (m model) applyProfileSaved(msg profileSavedMsg) (tea.Model, tea.Cmd) {

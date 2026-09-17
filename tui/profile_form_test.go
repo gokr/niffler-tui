@@ -211,7 +211,39 @@ func TestProfileFormSaveFlow(t *testing.T) {
 	}
 }
 
-// TestProfileFormSaveRefusals covers every refusal path: an existing name, an
+// TestProfileFormEditOverwritesExisting verifies edit uses the same selector
+// validation but intentionally upserts the selected name.
+func TestProfileFormEditOverwritesExisting(t *testing.T) {
+	var saved bool
+	request := func(tool string, args map[string]any, out any) error {
+		switch tool {
+		case "profile":
+			if args["op"] == "list" {
+				out.(*profilesResponse).Profiles = []toolProfileSummary{{Name: "review"}}
+				return nil
+			}
+			if args["op"] == "save" {
+				saved = true
+				out.(*okResponse).OK = true
+				return nil
+			}
+		case "status":
+			out.(*struct {
+				Components []visibilityComponent `json:"components"`
+			}).Components = liveTestComponents()
+			return nil
+		}
+		t.Fatalf("unexpected request: %s %#v", tool, args)
+		return nil
+	}
+	if err := saveProfile(profileDraft{name: "review", tools: []string{"edit.read"}}, LocaleEN, true, request); err != nil {
+		t.Fatalf("edit save failed: %v", err)
+	}
+	if !saved {
+		t.Fatal("edit did not reach profile save")
+	}
+}
+
 // unresolvable selector, and a save the store did not acknowledge. None may
 // write, and each must surface in the form rather than leaving it spinning.
 func TestProfileFormSaveRefusals(t *testing.T) {
