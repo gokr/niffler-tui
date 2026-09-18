@@ -138,6 +138,10 @@ Local commands are handled by the TUI and are never sent to the model:
 - `/export [path]` — export the exact current provider-facing request as raw JSON;
   without a path it renders the JSON in the transcript, otherwise it writes a
   file relative to the conversation workspace
+- `/compact` — run the replaceable compactor now (no LLM turn): older history
+  is replaced with a verified checkpoint, so a long conversation can be
+  compacted before it hits the automatic pressure ladder; a compactor decline
+  is reported, never silently degraded to a lossy trim
 - `/components [all|direct|discovered|undiscovered]` — what this conversation
   can actually call, per component, with each tool's exposure state
 - `/discover <component>|tool=NAME` — expose a component's tools (or one named

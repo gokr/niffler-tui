@@ -567,3 +567,75 @@ func TestLocaleCommandIsRegistered(t *testing.T) {
 		t.Fatalf("tab completion for /loc = %q, want /locale", got)
 	}
 }
+
+// TestCompactCommandDispatch covers /compact's guard rails and the control
+// call it issues: a disconnected client only notes it, a busy turn is
+// refused, and an idle conversation dispatches the core control call with
+// the control plane marked pending (no turn is started).
+func TestCompactCommandDispatch(t *testing.T) {
+	m := newTestModel()
+	m.mergeSlashRegistry(nil)
+	updated, cmd := m.executeLocalCommand("/compact")
+	if cmd != nil {
+		t.Fatalf("/compact while disconnected returned a command")
+	}
+	if updated.(model).contextNote == "" {
+		t.Fatalf("/compact while disconnected should set a context note")
+	}
+
+	m = newTestModel()
+	m.mergeSlashRegistry(nil)
+	m.connected = true
+	m.busy = true
+	updated, cmd = m.executeLocalCommand("/compact")
+	if cmd != nil {
+		t.Fatalf("/compact while busy returned a command")
+	}
+	got := updated.(model)
+	if len(got.blocks) == 0 || got.blocks[len(got.blocks)-1].kind != blockError ||
+		!strings.Contains(got.blocks[len(got.blocks)-1].text, "Wait for the turn") {
+		t.Fatalf("/compact while busy should add an error block: %+v", got.blocks)
+	}
+
+	m = newTestModel()
+	m.mergeSlashRegistry(nil)
+	m.connected = true
+	m.session = "s1"
+	updated, cmd = m.executeLocalCommand("/compact")
+	if cmd == nil {
+		t.Fatalf("/compact while idle should return a command")
+	}
+	if !updated.(model).controlPending {
+		t.Fatalf("/compact should mark the control plane pending")
+	}
+}
+
+// TestCompactResultApplies covers the Update handler: a settled result adds
+// the transcript note and clears the pending flag, while a result for another
+// conversation is dropped so it cannot settle the current view.
+func TestCompactResultApplies(t *testing.T) {
+	m := newTestModel()
+	m.session = "s1"
+	m.controlPending = true
+	m.contextNote = "compacting…"
+	um, _ := m.Update(compactResultMsg{
+		Session: "s1", Compacted: true, Before: 12345, After: 678, Generation: 3,
+	})
+	got := um.(model)
+	if got.controlPending || got.contextNote != "" {
+		t.Fatalf("settled compact should clear pending/note: pending=%v note=%q",
+			got.controlPending, got.contextNote)
+	}
+	if len(got.blocks) == 0 || got.blocks[len(got.blocks)-1].kind != blockMeta ||
+		!strings.Contains(got.blocks[len(got.blocks)-1].text, "12345") {
+		t.Fatalf("compact result should add a meta block: %+v", got.blocks)
+	}
+
+	m2 := newTestModel()
+	m2.session = "other"
+	m2.controlPending = true
+	um2, _ := m2.Update(compactResultMsg{Session: "s1", Compacted: true})
+	if !um2.(model).controlPending {
+		t.Fatalf("a stale compact result must not clear controlPending")
+	}
+}

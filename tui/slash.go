@@ -169,6 +169,7 @@ func builtinSlashCommands() []slashCommand {
 		{Name: "export", Description: "export the current provider request as raw JSON; optionally write it to a file", builtin: true, run: localExport, Params: []slashParam{
 			{Name: "path", Kind: "string", Description: "optional output path, relative to the conversation workspace"},
 		}},
+		{Name: "compact", Description: "compact this conversation now: replace older history with a checkpoint", builtin: true, run: localCompact},
 		{Name: "components", Description: "show what this conversation can call", builtin: true, run: localComponents, Params: []slashParam{
 			{Name: "filter", Kind: "enum", Values: []string{"all", "direct", "discovered", "undiscovered", "unknown"}},
 		}},

@@ -117,6 +117,7 @@ Niffler 的 builder 不使用這個 `go.mod`；它建立隔離的模組，replac
 - `/status [ask]` —— 詳細的有效供應商/模型/上下文來源與用量；`ask` 會讓 LLM 解讀報告
 - `/doctor [deep] [ask]` —— 以 Markdown 表格顯示健康檢查；`deep` 執行即時探測，`ask` 會讓 LLM 解讀報告
 - `/export [path]` —— 匯出目前傳給供應商的原始 JSON；不帶路徑時在對話中顯示，帶路徑時相對於對話工作目錄寫入檔案
+- `/compact` —— 立即執行可替換的壓縮器（不產生 LLM 回合）：較早的歷史會被取代為經驗證的檢查點，長對話可在觸發自動壓力階梯前主動壓縮；壓縮器拒絕時會明確回報，絕不會無聲降級為有損裁剪
 - `/components [all|direct|discovered|undiscovered]` —— 本對話實際可呼叫的工具，
   按元件列出，並顯示每個工具的曝光狀態
 - `/discover <元件>|tool=名稱` —— 將某個元件的工具（或指定的單一工具）曝光給

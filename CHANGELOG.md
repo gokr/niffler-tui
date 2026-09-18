@@ -8,6 +8,13 @@ project aims for [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Manual compaction: `/compact`.** Runs the conversation's replaceable
+  compactor on demand — older history is replaced with a verified checkpoint,
+  with no LLM turn and no user message — instead of waiting for the automatic
+  pressure ladder. The transcript reports `Compacted: ~N → ~M tokens
+  (generation K)`; a decline (no compactor configured, nothing compactable)
+  is reported explicitly rather than falling back to a lossy trim. Requires a
+  core with the `{compact: true}` session control.
 - **User-defined `/alias` slash shortcuts.** `/alias <name> <prompt…>` binds a
   name to a fixed prompt; typing `/name` (with any extra words appended to the
   prompt) sends it as an ordinary conversation turn. A bare `/alias` or

@@ -16,6 +16,11 @@ import (
 
 const controlTimeout = 10 * time.Second
 
+// compactTimeout is longer than controlTimeout: the compactor may make
+// several LLM calls inside its own 90s budget, so /compact waits for the
+// whole rung instead of the control-plane norm.
+const compactTimeout = 150 * time.Second
+
 // okResponse is the minimal envelope of backend RPC results that carry only
 // a success flag. Warning carries a partial-failure notice (e.g. "stored but
 // bridge did not start") that the UI must still surface.
@@ -266,6 +271,19 @@ type modelActionMsg struct {
 type providerBusEventMsg struct{ Changed bool }
 
 type modelsCatalogUpdatedMsg struct{}
+
+// compactResultMsg reports one manual /compact control call. Session guards
+// against a stale result after a conversation switch; Err is a transport or
+// decode failure, not a declined compaction (that is Compacted=false + Reason).
+type compactResultMsg struct {
+	Session    string
+	Compacted  bool
+	Reason     string
+	Before     int
+	After      int
+	Generation int
+	Err        error
+}
 
 func requestInto(comp *sdk.Component, component, tool string, args any, out any) error {
 	raw, err := comp.Request(component, tool, args, controlTimeout)
@@ -612,6 +630,38 @@ func setConversationModelCmd(comp *sdk.Component, session, selected, previous st
 			},
 			Warning: response.Warning,
 			Err:     err,
+		}
+	}
+}
+
+// compactConversationCmd runs the manual compaction control (/compact): core
+// executes the replaceable-compactor rung on demand, with no LLM turn and no
+// user message. It is a control call like the model save above, so the reply
+// is decoded here rather than through requestInto (longer timeout).
+func compactConversationCmd(comp *sdk.Component, session string) tea.Cmd {
+	return func() tea.Msg {
+		var response struct {
+			OK         bool   `json:"ok"`
+			Compacted  bool   `json:"compacted"`
+			Reason     string `json:"reason"`
+			Before     int    `json:"beforeTokens"`
+			After      int    `json:"afterTokens"`
+			Generation int    `json:"generation"`
+		}
+		raw, err := comp.Request("core", "session", map[string]any{
+			"sessionId": session, "compact": true,
+		}, compactTimeout)
+		if err == nil {
+			if uerr := json.Unmarshal(raw, &response); uerr != nil {
+				err = fmt.Errorf("decode core.session: %w", uerr)
+			} else if !response.OK {
+				err = fmt.Errorf("compaction failed")
+			}
+		}
+		return compactResultMsg{
+			Session: session, Compacted: response.Compacted,
+			Reason: response.Reason, Before: response.Before,
+			After: response.After, Generation: response.Generation, Err: err,
 		}
 	}
 }

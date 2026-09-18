@@ -1695,6 +1695,23 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case thinkingEffortMsg:
 		m.applyThinkingEffort(msg)
 
+	case compactResultMsg:
+		if msg.Session != m.session {
+			break
+		}
+		m.controlPending = false
+		m.contextNote = ""
+		if msg.Err != nil {
+			m.addBlock(blockError, "compact: "+msg.Err.Error())
+		} else if !msg.Compacted {
+			m.addBlock(blockMeta, "Nothing compacted: "+msg.Reason)
+		} else {
+			m.addBlock(blockMeta, fmt.Sprintf("Compacted: ~%d → ~%d tokens (generation %d)",
+				msg.Before, msg.After, msg.Generation))
+			cmds = append(cmds, refreshRuntimeCmd(m.comp, m.session, m.modelOverride))
+		}
+		m.syncViewport(true)
+
 	case modelActionMsg:
 		// A conversation-scoped save belongs to the session it was fired for;
 		// after a switch neither its runtime snapshot nor the rollback apply.
