@@ -166,7 +166,7 @@ func builtinSlashCommands() []slashCommand {
 			{Name: "deep", Kind: "bool", Description: "run thorough live probes"},
 			{Name: "ask", Kind: "bool", Description: "ask the LLM to interpret the report"},
 		}},
-		{Name: "export", Description: "export the current provider request as raw JSON; optionally write it to a file", builtin: true, run: localExport, Params: []slashParam{
+		{Name: "export", Description: "export the current provider request as pretty-printed JSON; optionally write it to a file", builtin: true, run: localExport, Params: []slashParam{
 			{Name: "path", Kind: "string", Description: "optional output path, relative to the conversation workspace"},
 		}},
 		{Name: "compact", Description: "compact this conversation now: replace older history with a checkpoint", builtin: true, run: localCompact},

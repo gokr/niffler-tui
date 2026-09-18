@@ -141,9 +141,9 @@ Local commands are handled by the TUI and are never sent to the model:
   `ask` sends the report to the LLM for interpretation
 - `/doctor [deep] [ask]` — render a readable Markdown health table;
   `deep` runs live probes and `ask` sends the report to the LLM for interpretation
-- `/export [path]` — export the exact current provider-facing request as raw JSON;
-  without a path it renders the JSON in the transcript, otherwise it writes a
-  file relative to the conversation workspace
+- `/export [path]` — export the exact current provider-facing request as
+  pretty-printed JSON; without a path it renders the JSON in the transcript
+  (capped), otherwise it writes the file relative to the conversation workspace
 - `/compact` — run the replaceable compactor now (no LLM turn): older history
   is replaced with a verified checkpoint, so a long conversation can be
   compacted before it hits the automatic pressure ladder; a compactor decline

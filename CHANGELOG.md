@@ -60,6 +60,16 @@ project aims for [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   content: on send, references that resolve to existing workspace files
   get a footer telling the agent to open them with the read tool.
 
+### Changed
+
+- **`/export` pretty-prints the request, and the transcript keeps it byte for
+  byte.** The provider-facing request now arrives indented via `json.Indent`
+  instead of as one compact line, so a request can be read and diffed. The
+  transcript renders the indented document itself (not a decode/re-encode,
+  which would sort keys and re-spell numbers) and caps it at 2000 bytes on a
+  rune boundary, saying so in place; the file form writes the whole document
+  unchanged.
+
 ### Fixed
 
 - **`max` thinking effort is reachable from the TUI.** `shift+tab` stopped at

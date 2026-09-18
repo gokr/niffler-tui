@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
@@ -10,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"charm.land/bubbles/v2/textinput"
 	tea "charm.land/bubbletea/v2"
@@ -242,11 +244,56 @@ func localDoctor(m model, cmd slashCommand, argument string) (tea.Model, tea.Cmd
 	return m, m.slashCallCmd(cmd, args)
 }
 
+// prettyRequest indents a JSON document for display or for writing to disk.
+// json.Indent is used instead of a decode/re-encode so key order, number
+// spelling and string escapes survive byte for byte — /export exists to
+// reproduce a provider request exactly, whitespace aside.
+func prettyRequest(raw json.RawMessage) ([]byte, error) {
+	var out bytes.Buffer
+	if err := json.Indent(&out, raw, "", "  "); err != nil {
+		return nil, err
+	}
+	return out.Bytes(), nil
+}
+
+// exportInlineLimit caps the /export document rendered in the transcript; the
+// file branch is deliberately uncapped, a path being how a caller asks for the
+// whole request.
+const exportInlineLimit = 2000
+
+// exportInline wraps a pretty request as a result object carrying a "text"
+// field, because formatSlashResult renders that field verbatim while its
+// fallback decodes and re-encodes the document — sorting keys and re-spelling
+// numbers (1e3 becomes 1000), exactly the drift /export exists to avoid. That
+// fallback's own cap neither applies to the "text" branch nor respects runes,
+// so the transcript window is applied here, cut on a rune boundary, with a
+// note pointing at the file branch for the whole document.
+func exportInline(pretty []byte) json.RawMessage {
+	text := string(pretty)
+	if len(text) > exportInlineLimit {
+		cut := exportInlineLimit
+		for cut > 0 && !utf8.RuneStart(text[cut]) {
+			cut--
+		}
+		text = text[:cut] + "\n… truncated — pass a path to /export for the full request"
+	}
+	out, err := json.Marshal(struct {
+		Text string `json:"text"`
+	}{Text: text})
+	if err != nil {
+		// Unreachable for a string field in a struct; show the document itself
+		// rather than nothing if a future change makes it possible.
+		return json.RawMessage(pretty)
+	}
+	return out
+}
+
 // localExport asks the session runner for the exact provider-facing request
-// assembled from this conversation's current context. With no path the raw
-// JSON is rendered in the transcript; with a path it is written as-is and a
-// short confirmation is rendered. Export is read-only and never becomes a
-// conversation message or starts an LLM turn.
+// assembled from this conversation's current context. With no path the JSON is
+// rendered in the transcript byte for byte (rune-safely capped by
+// exportInline); with a path the pretty-printed JSON is written whole to that
+// file and a short confirmation is rendered. Export is read-only and never
+// becomes a conversation message or starts an LLM turn.
 func localExport(m model, cmd slashCommand, argument string) (tea.Model, tea.Cmd) {
 	args, err := parseSlashArgs(cmd, argument)
 	if err != nil {
@@ -272,19 +319,24 @@ func localExport(m model, cmd slashCommand, argument string) (tea.Model, tea.Cmd
 			return slashResultMsg{Name: "export", Session: session,
 				Err: fmt.Errorf("session export returned no request")}
 		}
+		pretty, err := prettyRequest(response.Request)
+		if err != nil {
+			return slashResultMsg{Name: "export", Session: session,
+				Err: fmt.Errorf("session export returned invalid JSON: %w", err)}
+		}
 		if pathArg == "" {
-			return slashResultMsg{Name: "export", Session: session, Result: response.Request}
+			return slashResultMsg{Name: "export", Session: session, Result: exportInline(pretty)}
 		}
 		outputPath := pathArg
 		if !filepath.IsAbs(outputPath) {
 			outputPath = filepath.Join(cwd, outputPath)
 		}
-		if err := os.WriteFile(outputPath, response.Request, 0600); err != nil {
+		if err := os.WriteFile(outputPath, pretty, 0600); err != nil {
 			return slashResultMsg{Name: "export", Session: session,
 				Err: fmt.Errorf("write %s: %w", pathArg, err)}
 		}
 		return slashResultMsg{Name: "export", Session: session,
-			Result: json.RawMessage(fmt.Sprintf(`{"text":"exported raw LLM request to %s"}`, pathArg))}
+			Result: json.RawMessage(fmt.Sprintf(`{"text":"exported pretty-printed LLM request to %s"}`, pathArg))}
 	}
 }
 
