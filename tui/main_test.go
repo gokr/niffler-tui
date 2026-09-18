@@ -1970,7 +1970,7 @@ func TestSessionSelectorEnterSwitchesOrDismisses(t *testing.T) {
 	m.selector = newSelector("Sessions", sessionSelectorItems(LocaleEN, "current", []sessionSummary{
 		{ID: "current", Title: "Current"},
 		{ID: "other", Title: "Other"},
-	}), 80, 20)
+	}, false), 80, 20)
 	// sessionSelectorItems prepends "+ New session"; select the current
 	// session entry (index 1).
 	m.selector.list.Select(1)
@@ -1992,7 +1992,7 @@ func TestSessionSelectorEnterSwitchesOrDismisses(t *testing.T) {
 	got.selector = newSelector("Sessions", sessionSelectorItems(LocaleEN, "current", []sessionSummary{
 		{ID: "current", Title: "Current"},
 		{ID: "other", Title: "Other"},
-	}), 80, 20)
+	}, false), 80, 20)
 	got.selector.list.Select(2)
 	updated, cmd = got.handleControlKey(tea.KeyPressMsg{Code: tea.KeyEnter})
 	got = updated.(model)

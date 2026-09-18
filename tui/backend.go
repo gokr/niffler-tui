@@ -408,11 +408,23 @@ func loadConversationState(comp *sdk.Component, session string) (conversationSta
 }
 
 // sessionSummary is one conversation listed from the store for /session.
+//
+// Parent is the subagent lineage the agent component records (store kind
+// sessionmeta): a non-empty parent means the conversation exists as a
+// delegated child's own session. The browser hides those by default — a
+// conversation that delegates accumulates dozens of them, and they are not
+// what a human switches between. Closed marks a retired child (its records
+// survive; only further continuation refuses).
 type sessionSummary struct {
 	ID        string
 	Title     string
 	CreatedAt float64
+	Parent    string
+	Closed    bool
 }
+
+// subagent reports whether the conversation is a delegated child session.
+func (s sessionSummary) subagent() bool { return s.Parent != "" }
 
 // sessionListMsg carries the store's conversations for the /session selector.
 type sessionListMsg struct {
@@ -420,37 +432,116 @@ type sessionListMsg struct {
 	Err      error
 }
 
-// loadSessionList lists every conversation (session) in the store, newest
-// first. Columns include the persisted model override so the selector can
-// show per-session configuration.
-type sessionRow struct {
-	ID    string `json:"id"`
-	Value struct {
-		Title     string  `json:"title"`
-		CreatedAt float64 `json:"createdAt"`
-	} `json:"value"`
+// storePageLimit is the store's per-call cap (its `limit` is clamped to this).
+const storePageLimit = 1000
+
+// storeMaxPages bounds a paged read so a huge kind cannot make the UI chatty:
+// ten pages is 10k documents, far beyond what a session list needs.
+const storeMaxPages = 10
+
+// pageStoreList reads every document of one kind by following the store's
+// nextAfter cursor, up to storeMaxPages. A single `list` answers with at most
+// 100 documents in id order, so the browser used to see an arbitrary slice of
+// the keyspace — with subagent sessions in it, the human's own conversations
+// were often not in the window at all. Items stay raw so one helper serves
+// every kind the browser reads.
+func pageStoreList(comp *sdk.Component, kind string) ([]json.RawMessage, error) {
+	var all []json.RawMessage
+	after := ""
+	for page := 0; page < storeMaxPages; page++ {
+		var response struct {
+			Items     []json.RawMessage `json:"items"`
+			HasMore   bool              `json:"hasMore"`
+			NextAfter string            `json:"nextAfter"`
+		}
+		args := map[string]any{"kind": kind, "limit": storePageLimit}
+		if after != "" {
+			args["after"] = after
+		}
+		if err := requestInto(comp, "store", "list", args, &response); err != nil {
+			return nil, err
+		}
+		all = append(all, response.Items...)
+		if !response.HasMore || response.NextAfter == "" {
+			break
+		}
+		after = response.NextAfter
+	}
+	return all, nil
 }
 
+// conversationHeader is the stored conversation fields the browser reads.
+type conversationHeader struct {
+	Title     string  `json:"title"`
+	CreatedAt float64 `json:"createdAt"`
+}
+
+// sessionRow is one stored conversation header.
+type sessionRow struct {
+	ID    string             `json:"id"`
+	Value conversationHeader `json:"value"`
+}
+
+// sessionMeta is the agent component's lineage record for a child session.
+type sessionMeta struct {
+	Parent string `json:"parent"`
+	Closed bool   `json:"closed"`
+}
+
+// metaRow is one subagent-lineage record: the child session id plus the
+// parent that spawned it.
+type metaRow struct {
+	ID    string      `json:"id"`
+	Value sessionMeta `json:"value"`
+}
+
+// loadSessionList lists the store's conversations, newest first, each marked
+// with its subagent lineage. The lineage read is best-effort: when it fails
+// (an older core, a store hiccup) the conversations still list, only without
+// the filter — degrading to the previous behavior instead of an empty browser.
 func loadSessionList(comp *sdk.Component) ([]sessionSummary, error) {
-	var response struct {
-		Items []sessionRow `json:"items"`
-	}
-	if err := requestInto(comp, "store", "list", map[string]any{
-		"kind": "conversation",
-	}, &response); err != nil {
+	rows, err := pageStoreList(comp, "conversation")
+	if err != nil {
 		return nil, err
 	}
-	sessions := make([]sessionSummary, 0, len(response.Items))
-	for _, row := range response.Items {
+	conversations := make([]sessionRow, 0, len(rows))
+	for _, raw := range rows {
+		var row sessionRow
+		if json.Unmarshal(raw, &row) == nil {
+			conversations = append(conversations, row)
+		}
+	}
+	var metas []metaRow
+	if raws, err := pageStoreList(comp, "sessionmeta"); err == nil {
+		for _, raw := range raws {
+			var meta metaRow
+			if json.Unmarshal(raw, &meta) == nil {
+				metas = append(metas, meta)
+			}
+		}
+	}
+	return buildSessionSummaries(conversations, metas), nil
+}
+
+// buildSessionSummaries joins conversation headers with their lineage records
+// and orders the result newest first. Pure, so the join (which decides what the
+// browser hides) is testable without a bus.
+func buildSessionSummaries(conversations []sessionRow, metas []metaRow) []sessionSummary {
+	lineage := make(map[string]metaRow, len(metas))
+	for _, meta := range metas {
+		lineage[meta.ID] = meta
+	}
+	sessions := make([]sessionSummary, 0, len(conversations))
+	for _, row := range conversations {
 		sessions = append(sessions, sessionSummary{
 			ID: row.ID, Title: row.Value.Title, CreatedAt: row.Value.CreatedAt,
+			Parent: lineage[row.ID].Value.Parent, Closed: lineage[row.ID].Value.Closed,
 		})
 	}
-	// newest first
 	sort.SliceStable(sessions, func(i, j int) bool {
 		return sessions[i].CreatedAt > sessions[j].CreatedAt
 	})
-	return sessions, nil
+	return sessions
 }
 
 func sessionListCmd(comp *sdk.Component) tea.Cmd {

@@ -417,7 +417,11 @@ func profileSelectorItems(loc Locale, current string, profiles []toolProfileSumm
 
 // sessionSelectorItems builds the /session list: the current session first,
 // then every stored conversation (newest first), plus a "new session" entry.
-func sessionSelectorItems(loc Locale, current string, sessions []sessionSummary) []list.Item {
+// Subagent sessions — the conversations the agent component spawned for
+// delegated work — are hidden unless showSubagents is set: they are not what a
+// human switches between, and a delegating conversation accumulates dozens of
+// them. A shown one is marked ↳ and names the parent that spawned it.
+func sessionSelectorItems(loc Locale, current string, sessions []sessionSummary, showSubagents bool) []list.Item {
 	items := make([]list.Item, 0, len(sessions)+2)
 	items = append(items, selectorItem{
 		kind: selectorNewSession,
@@ -425,7 +429,13 @@ func sessionSelectorItems(loc Locale, current string, sessions []sessionSummary)
 		description: t(loc, "selector.newSessionDesc"),
 	})
 	for _, s := range sessions {
+		if s.subagent() && !showSubagents {
+			continue
+		}
 		title := s.ID
+		if s.subagent() {
+			title = "↳ " + title
+		}
 		marked := ""
 		if s.ID == current {
 			marked = "● "
@@ -439,6 +449,9 @@ func sessionSelectorItems(loc Locale, current string, sessions []sessionSummary)
 			title = marked + s.ID
 		}
 		description := s.ID
+		if s.subagent() {
+			description = t(loc, "selector.sessionSubagent", s.Parent) + " · " + description
+		}
 		if stamp := fmtTimeShort(s.CreatedAt); stamp != "" {
 			description += " · " + stamp
 		}

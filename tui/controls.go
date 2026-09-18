@@ -822,9 +822,37 @@ func (m *model) sessionListSelecting() {
 
 // openSessionSelector rebuilds the /session list with the fetched sessions.
 func (m *model) openSessionSelector(sessions []sessionSummary) {
-	m.selector = newSelector(t(m.loc, "selector.sessions"),
-		sessionSelectorItems(m.loc, m.session, sessions), m.width, m.height-3)
+	m.sessionList = sessions
 	m.mode = modeSessions
+	m.rebuildSessionSelector()
+}
+
+// rebuildSessionSelector renders the browser from the loaded sessions and the
+// current subagent-filter state: the `a` toggle rebuilds it in place, and the
+// title reports how many child sessions the filter is holding back.
+func (m *model) rebuildSessionSelector() {
+	hidden, total := 0, 0
+	for _, s := range m.sessionList {
+		if !s.subagent() {
+			continue
+		}
+		total++
+		if !m.showSubagents {
+			hidden++
+		}
+	}
+	title := t(m.loc, "selector.sessions")
+	switch {
+	case total == 0:
+	case m.showSubagents:
+		title = t(m.loc, "selector.sessionsShown", strconv.Itoa(total))
+	default:
+		title = t(m.loc, "selector.sessionsHidden",
+			strconv.Itoa(len(m.sessionList)-hidden), strconv.Itoa(hidden))
+	}
+	m.selector = newSelector(title,
+		sessionSelectorItems(m.loc, m.session, m.sessionList, m.showSubagents),
+		m.width, m.height-3)
 	m.layout()
 }
 
@@ -1308,6 +1336,14 @@ func (m model) handleControlKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		var cmd tea.Cmd
 		m.selector.list, cmd = m.selector.list.Update(msg)
 		return m, cmd
+	}
+	// The conversation browser (modeSessions): `a` shows or hides the subagent
+	// sessions the list holds back by default. Handled after the filter guard
+	// so typing an `a` into the filter box filters instead of toggling.
+	if m.mode == modeSessions && msg.String() == "a" {
+		m.showSubagents = !m.showSubagents
+		m.rebuildSessionSelector()
+		return m, nil
 	}
 	// Provider management shortcuts (modeProviders only): e = edit the selected
 	// provider, d/x = delete it. Two-stage delete: first press arms it, the second

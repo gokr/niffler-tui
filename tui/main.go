@@ -280,10 +280,15 @@ type model struct {
 	bgPeekPendingAgent bool
 	models             []modelSummary
 	modelsCatalog      string
-	runtime            runtimeResolution
-	modelOverride      string
-	promptTokens       int
-	contextUsed        int
+	// The /session browser: the loaded conversations (with their subagent
+	// lineage) and whether the child sessions are shown. A view preference for
+	// this run, not persisted state.
+	sessionList   []sessionSummary
+	showSubagents bool
+	runtime       runtimeResolution
+	modelOverride string
+	promptTokens  int
+	contextUsed   int
 	// inputTokens/outputTokens accumulate the session's billed tokens (the
 	// header's ↑/↓ chip); cacheHits/cachePrompt accumulate the prompt-cache
 	// economics (header and /status).
@@ -2544,6 +2549,9 @@ func (m model) View() tea.View {
 			control = m.selector.list.View()
 			parts = append(parts, control)
 			footer := t(m.loc, "footer.filterChoose")
+			if m.mode == modeSessions {
+				footer = t(m.loc, "footer.sessions")
+			}
 			if m.mode == modeProfiles {
 				if m.profileConfirmDelete != "" {
 					footer = errorStyle.Render(t(m.loc, "footer.confirmRemove", m.profileConfirmDelete))

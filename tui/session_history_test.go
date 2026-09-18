@@ -257,7 +257,7 @@ func TestConversationHistoryMsgKeepsSelectorMode(t *testing.T) {
 	m.session = "console"
 	m.historyGen = 1
 	m.mode = modeSessions
-	m.selector = newSelector("Sessions", sessionSelectorItems(LocaleEN, "console", nil), 80, 20)
+	m.selector = newSelector("Sessions", sessionSelectorItems(LocaleEN, "console", nil, false), 80, 20)
 
 	updated, _ := m.Update(conversationHistoryMsg{
 		Session: "console", Gen: 1,
