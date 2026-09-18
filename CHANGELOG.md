@@ -72,6 +72,23 @@ project aims for [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **The worker badge stops naming things that have already finished.** The
+  badge's slow refresh (one `process_list`/`agent_list` every 10s *while
+  something runs*) died after its first tick: the tick handler asked
+  `armBgTick` — an "at most once" gate meant for the other callers, the
+  armSpinner lesson — while `bgTicking` was still set by the arming that caused
+  that very tick, so it always got nil back: no fetch, no re-arm. Nothing
+  refreshed the snapshots afterwards until an unrelated event (a tool call's
+  done frame, opening ctrl+o, loading a conversation), which is why `bg 1 (7m)`
+  kept counting a process that had exited minutes earlier while the ctrl+o
+  cycle — fetching its own snapshot — showed an empty list in the same instant,
+  and why the row cleared only on the way back from it. The tick now clears its
+  own guard, fetches, and restarts the chain while the last snapshot still
+  shows work; the snapshot handlers disarm it when nothing is left. A
+  background process's exit notice — which the runner already folds in as
+  `ev.session.notice` — takes the snapshot too, so the badge clears in the
+  instant the conversation hears about the exit rather than on the next tick.
+  (`TestBgTickRefreshesThenDisarmsWhenIdle`; it fails on the previous handler.)
 - **`max` thinking effort is reachable from the TUI.** `shift+tab` stopped at
   `high` while core's own enum, the web UI's cycle and the providers accept
   `max`, so the deepest level could not be selected from the terminal at all —

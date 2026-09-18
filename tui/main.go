@@ -1688,9 +1688,19 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		cmds = append(cmds, processesListCmd(m.comp))
 
 	case bgTickMsg:
-		// the chain re-arms itself only while something is running
+		// Claim the timer for this handler *before* re-arming it: armBgTick is an
+		// "at most once" gate for the other callers (the armSpinner lesson), so
+		// asking it here — with bgTicking still set by the arming that caused this
+		// very tick — always answered nil. The chain died after its first tick: no
+		// snapshot was fetched again, and the badge kept naming a process or
+		// subagent that had already finished until some unrelated event (a tool
+		// call's done frame, ctrl+o, a conversation load) happened to refresh it.
+		// Fetch, then restart the chain only while the last snapshot still shows
+		// work; the snapshot handlers disarm it when nothing is left.
+		m.bgTicking = false
+		cmds = append(cmds, processesListCmd(m.comp), agentsListCmd(m.comp, m.session))
 		if cmd := m.armBgTick(); cmd != nil {
-			cmds = append(cmds, cmd, processesListCmd(m.comp), agentsListCmd(m.comp, m.session))
+			cmds = append(cmds, cmd)
 		}
 
 	case thinkingEffortMsg:
@@ -1979,6 +1989,13 @@ func (m *model) applySessionEvent(msg sessionEventMsg) tea.Cmd {
 		if event.Content != "" {
 			m.addBlock(blockNotice, event.Content)
 		}
+		// A background process's exit notice rides this kind (the processes
+		// component steers a process-exited notice at the runner, which folds it
+		// in — components/processes/main.nim publishExitNotice), so take the
+		// badge's snapshot from it: the child is gone in the same instant the
+		// conversation hears about it, instead of looking alive until a poll
+		// happens to ask. Refreshing on every notice is one cheap call.
+		bgCmd = processesListCmd(m.comp)
 
 	case "status":
 		m.updateRuntimeFromEvent(event)

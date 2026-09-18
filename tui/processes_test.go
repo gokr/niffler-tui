@@ -121,3 +121,39 @@ func TestClampTail(t *testing.T) {
 		t.Fatalf("zero lines: %q", got)
 	}
 }
+
+// The badge's refresh chain must survive its own tick. armBgTick is an "at most
+// once" gate for the other callers (the armSpinner lesson), so a tick handler
+// that asked it while bgTicking was still set got nil back: no snapshot fetch,
+// no re-arm. The chain died after its first tick and the badge then kept
+// claiming a background process was running long after it had exited — until
+// some unrelated event (a tool call's done frame, opening ctrl+o, a
+// conversation load) happened to refresh the snapshot.
+func TestBgTickRefreshesThenDisarmsWhenIdle(t *testing.T) {
+	m := newTestModel()
+	m.processes = testProcesses() // p10 + p2 running, p3 + p4 finished
+	m.bgTicking = true            // the state a live chain is in when its tick fires
+
+	updated, cmd := m.Update(bgTickMsg{})
+	m = updated.(model)
+	if cmd == nil {
+		t.Fatal("bgTickMsg issued no work — the chain dies after one tick and the badge goes stale")
+	}
+	if !m.bgTicking {
+		t.Fatal("the chain must stay armed while a process is still running")
+	}
+	if got := processesBadgeText(LocaleEN, m.processes); got != "bg 2" {
+		t.Fatalf("the tick must not change the snapshot before its fetch lands: %q", got)
+	}
+
+	// The fetch's result: everything finished. The next tick disarms the chain.
+	m.processes = []processSummary{{ID: "p2", Label: "dev-server", Status: "exited(code 0)"}}
+	updated, _ = m.Update(bgTickMsg{})
+	m = updated.(model)
+	if m.bgTicking {
+		t.Fatal("the chain must disarm once nothing is running")
+	}
+	if got := processesBadgeText(LocaleEN, m.processes); got != "" {
+		t.Fatalf("a finished process must not keep the badge: %q", got)
+	}
+}
