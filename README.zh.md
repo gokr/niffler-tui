@@ -113,6 +113,7 @@ Niffler 的 builder 不使用这个 `go.mod`；它创建隔离的模块，replac
 - `/status [ask]` —— 详细的有效提供商/模型/上下文来源与用量；`ask` 会让 LLM 解读报告
 - `/doctor [deep] [ask]` —— 以 Markdown 表格显示健康检查；`deep` 运行实时探测，`ask` 会让 LLM 解读报告
 - `/export [path]` —— 导出当前发送给提供商的原始 JSON；不带路径时在对话中显示，带路径时相对于对话工作目录写入文件
+- `/compact` —— 立即运行可替换的压缩器（不产生 LLM 回合）：较早的历史被替换为经验证的检查点，长对话可在触发自动压力阶梯前主动压缩；压缩器拒绝时会明确报告，绝不会静默降级为有损裁剪
 - `/components [all|direct|discovered|undiscovered]` —— 本会话实际可调用的工具，
   按组件列出，并显示每个工具的暴露状态
 - `/discover <组件>|tool=名称` —— 将某个组件的工具（或指定的单个工具）暴露给

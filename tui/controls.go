@@ -152,6 +152,23 @@ func localDiscover(m model, cmd slashCommand, argument string) (tea.Model, tea.C
 	return m, m.toolVisibilityCmd(cmd.Name, argument)
 }
 
+func localCompact(m model, cmd slashCommand, argument string) (tea.Model, tea.Cmd) {
+	if !m.connected {
+		m.contextNote = t(m.loc, "note.notConnected")
+		return m, nil
+	}
+	if m.busy {
+		m.addBlock(blockError, "Wait for the turn to finish before compacting.")
+		m.syncViewport(true)
+		return m, nil
+	}
+	// The compact control runs the replaceable compactor with no turn; the
+	// header note carries the wait until the result lands.
+	m.controlPending = true
+	m.contextNote = t(m.loc, "note.compacting")
+	return m, compactConversationCmd(m.comp, m.session)
+}
+
 func localProfile(m model, cmd slashCommand, argument string) (tea.Model, tea.Cmd) {
 	// A bare /profile opens the picker (the help text and README promise a
 	// listing with the current choice marked); an argument still applies
