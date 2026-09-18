@@ -2895,3 +2895,26 @@ func TestArmSpinnerIsIdempotent(t *testing.T) {
 		t.Fatal("idle tick must leave the chain stopped")
 	}
 }
+
+// Regression: the runner emits ev.session.notice when it folds background
+// machinery (settlement notice, process exit, wake prompt). The TUI used to
+// drop those frames, so a wake turn's transcript showed an assistant reply
+// with nothing that prompted it (docs/WIRE.md "Settlement notices").
+func TestNoticeEventRendersMachineryRow(t *testing.T) {
+	m := model{session: "game", viewport: viewport.New(viewport.WithWidth(80), viewport.WithHeight(20))}
+	m.applySessionEvent(sessionEventMsg{kind: "notice", event: sessionEvent{
+		SessionID: "game",
+		Content:   "[subagent agent-1 done]\nfixed the tests",
+	}})
+	if len(m.blocks) != 1 || m.blocks[0].kind != blockNotice {
+		t.Fatalf("notice event blocks = %+v", m.blocks)
+	}
+	if got := m.blocks[0].text; got != "[subagent agent-1 done]\nfixed the tests" {
+		t.Fatalf("notice text = %q", got)
+	}
+	// A payload without content (older runners) must not add an empty row.
+	m.applySessionEvent(sessionEventMsg{kind: "notice", event: sessionEvent{SessionID: "game"}})
+	if len(m.blocks) != 1 {
+		t.Fatalf("empty notice added a block: %+v", m.blocks)
+	}
+}

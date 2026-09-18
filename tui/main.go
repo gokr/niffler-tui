@@ -435,6 +435,7 @@ var (
 	toolStyle        = lipgloss.NewStyle().Foreground(lipgloss.Color("3"))
 	toolCardStyle    = lipgloss.NewStyle()
 	metaStyle        = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
+	noticeStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("8")).Italic(true)
 	errorStyle       = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("9"))
 	badgeBgStyle     = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("3"))
 	badgeAgentStyle  = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("6"))
@@ -1952,6 +1953,15 @@ func (m *model) applySessionEvent(msg sessionEventMsg) tea.Cmd {
 		// frozen terminal, and the budget label explains why retries stop.
 		m.updateRuntimeFromEvent(event)
 		m.addBlock(blockMeta, formatRetryNotice(event))
+
+	case "notice":
+		// The runner folded background machinery into this conversation: a
+		// settlement notice, a process exit, or the opening of an autonomous
+		// wake turn. Render it as its own dim row — the payload carries the
+		// text (docs/WIRE.md "Settlement notices"), so no store round-trip.
+		if event.Content != "" {
+			m.addBlock(blockNotice, event.Content)
+		}
 
 	case "status":
 		m.updateRuntimeFromEvent(event)

@@ -65,6 +65,7 @@ const (
 	blockTool
 	blockMeta
 	blockError
+	blockNotice
 )
 
 type transcriptBlock struct {
@@ -215,6 +216,30 @@ func (m *model) renderBlock(i int) string {
 	return out
 }
 
+// noticeLines renders a notice block's text as a collapsed machinery row:
+// the head line (e.g. "[subagent agent-… done]") takes the ▸ prefix, the
+// bounded summary beneath it is indented, so a multi-line notice still reads
+// as one attributed row rather than pasted user text.
+func noticeLines(text string) string {
+	lines := strings.Split(strings.TrimRight(text, "\n"), "\n")
+	if len(lines) == 0 || (len(lines) == 1 && lines[0] == "") {
+		return "▸ notice"
+	}
+	var b strings.Builder
+	for i, line := range lines {
+		if i == 0 {
+			b.WriteString("▸ ")
+		} else {
+			b.WriteString("  ")
+		}
+		b.WriteString(line)
+		if i < len(lines)-1 {
+			b.WriteString("\n")
+		}
+	}
+	return b.String()
+}
+
 // renderPiece renders block i from scratch (no caching, no width clamp) as
 // the exact styled string the transcript joins.
 func (m *model) renderPiece(i int) string {
@@ -251,6 +276,13 @@ func (m *model) renderPiece(i int) string {
 		return toolStyle.Render("tool> " + block.text)
 	case blockMeta:
 		return metaStyle.Render(block.text)
+	case blockNotice:
+		// Settlement/wake machinery folded in by the runner (subagent done,
+		// process exited, an autonomous wake turn's prompt): dim and
+		// prefixed so it reads as a system row, never as something the human
+		// typed. The head line names what happened; the bounded summary the
+		// runner attached follows it.
+		return noticeStyle.Render(noticeLines(block.text))
 	case blockError:
 		return errorStyle.Render("error> " + block.text)
 	}

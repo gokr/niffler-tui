@@ -459,6 +459,7 @@ func applyTheme(name string) bool {
 		toolCardStyle = lipgloss.NewStyle()
 	}
 	metaStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(th.meta))
+	noticeStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(th.meta)).Italic(true)
 	errorStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(th.error))
 	approvalBoxStyle = lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).

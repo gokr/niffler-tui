@@ -8,6 +8,16 @@ project aims for [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Settlement notices and autonomous wakes are visible in the transcript.**
+  When a background subagent (or process) settles, the runner folds a
+  structurally marked message into the parent conversation — and now wakes an
+  idle parent for it. The TUI renders both the folded notice and the wake
+  prompt as a dim `▸` machinery row (head line + bounded summary), live from
+  `ev.session.notice` and on transcript replay, instead of dropping the event
+  and showing an assistant reply nothing prompted. This is what makes
+  "my subagents finished" visible without asking: the parent conversation
+  moves on its own (`NIF_AGENT_WAKES`, docs/WIRE.md "Autonomous wake").
+
 - **User-defined `/alias` slash shortcuts.** `/alias <name> <prompt…>` binds a
   name to a fixed prompt; typing `/name` (with any extra words appended to the
   prompt) sends it as an ordinary conversation turn. A bare `/alias` or

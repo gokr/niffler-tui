@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"errors"
 	"strconv"
 	"strings"
@@ -314,5 +315,56 @@ func TestLastMessageSeqBinarySearch(t *testing.T) {
 	empty := func(string, int) ([]storedMessage, error) { return nil, nil }
 	if got, _ := lastMessageSeq(empty); got != 0 {
 		t.Fatalf("empty conversation seq = %d, want 0", got)
+	}
+}
+
+// Regression: machinery the runner folds in (settlement notices, process
+// exits, wake-turn prompts) is a stored user message carrying a `notice`
+// marker. Replay must render it as a dim notice row, never as a user bubble
+// — the human never typed it (docs/WIRE.md "Settlement notices").
+func TestReplayConversationRendersNoticesAsMachinery(t *testing.T) {
+	blocks := replayConversation([]storedMessage{
+		{Role: "user", Content: "spawn three workers"},
+		{
+			Role:    "user",
+			Content: "[subagent agent-1 done]\nfixed the tests\n(full reply: 1200 bytes — agent_status {jobId: \"job-1\"})",
+			Notice:  json.RawMessage(`{"kind":"subagent-settled","jobId":"job-1","child":"agent-1","status":"done"}`),
+		},
+		{
+			Role:    "user",
+			Content: "[wake] background subagent settled",
+			Notice:  json.RawMessage(`{"kind":"wake"}`),
+		},
+		storedAssistant("all done", ""),
+	})
+
+	if len(blocks) != 4 {
+		t.Fatalf("blocks = %d, want 4: %+v", len(blocks), blocks)
+	}
+	if blocks[0].kind != blockUser {
+		t.Fatalf("human input must stay a user block: %+v", blocks[0])
+	}
+	if blocks[1].kind != blockNotice || blocks[1].text != "[subagent agent-1 done]\nfixed the tests\n(full reply: 1200 bytes — agent_status {jobId: \"job-1\"})" {
+		t.Fatalf("settlement notice block = %+v", blocks[1])
+	}
+	if blocks[2].kind != blockNotice || blocks[2].text != "[wake] background subagent settled" {
+		t.Fatalf("wake block = %+v", blocks[2])
+	}
+	if blocks[3].kind != blockAssistant {
+		t.Fatalf("assistant block = %+v", blocks[3])
+	}
+}
+
+func TestNoticeLinesPrefixesHeadAndKeepsSummary(t *testing.T) {
+	got := noticeLines("[subagent agent-1 done]\nfixed the tests")
+	want := "▸ [subagent agent-1 done]\n  fixed the tests"
+	if got != want {
+		t.Fatalf("noticeLines = %q, want %q", got, want)
+	}
+	if got := noticeLines(""); got != "▸ notice" {
+		t.Fatalf("empty notice = %q", got)
+	}
+	if got := noticeLines("single line"); got != "▸ single line" {
+		t.Fatalf("single-line notice = %q", got)
 	}
 }

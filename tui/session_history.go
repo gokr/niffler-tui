@@ -31,6 +31,7 @@ type storedMessage struct {
 	Name       string           `json:"name"`
 	ToolCalls  []storedToolCall `json:"tool_calls"`
 	DurationMs int              `json:"durationMs"`
+	Notice     json.RawMessage  `json:"notice"`
 }
 
 // storedToolCall is one entry of an assistant message's tool_calls array in
@@ -214,6 +215,14 @@ func replayConversation(messages []storedMessage) []transcriptBlock {
 		switch msg.Role {
 		case "user":
 			if msg.Content == "" {
+				continue
+			}
+			if msg.Notice != nil {
+				// Runtime machinery the runner folded in (subagent-settled,
+				// process-exited, or a wake turn's prompt): render dim and
+				// attributed, never as a plain user bubble (docs/WIRE.md
+				// "Settlement notices").
+				scratch.addBlock(blockNotice, msg.Content)
 				continue
 			}
 			scratch.addBlock(blockUser, msg.Content)
