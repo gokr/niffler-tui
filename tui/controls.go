@@ -1192,7 +1192,8 @@ func (m model) handleControlKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	}
 
 	// The ctrl+o worker cycle (modeBgPeek): advance with ctrl+o/tab/n, r
-	// refreshes the roster and the view, esc/q back to chat.
+	// refreshes the roster and the pane (a fresh transcript window), esc/q back
+	// to chat. Switching worker drops the pane: it belongs to the old one.
 	if m.mode == modeBgPeek {
 		switch msg.String() {
 		case "esc", "q":
@@ -1203,10 +1204,12 @@ func (m model) handleControlKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			if len(m.bgPeekRoster) > 0 {
 				m.bgPeekIdx = (m.bgPeekIdx + 1) % len(m.bgPeekRoster)
 			}
+			m.resetBgPeekPane()
 			m.layout()
 			return m, m.loadBgPeekBody()
 		case "r":
 			m.refreshBgPeekRoster()
+			m.resetBgPeekPane()
 			m.layout()
 			return m, m.loadBgPeekBody()
 		}

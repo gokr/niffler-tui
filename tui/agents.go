@@ -19,12 +19,15 @@ package main
 // text), which makes the cycle card live, admits a child whose status the
 // roster has not caught up with, and lets the badge count instead of lag.
 //
-// The cycle shows the whole worker list — processes and subagents, selected
-// entry expanded — so "how many are there" is answered by looking, not by
-// rotating. A process entry shows its raw tail; a subagent entry is a status
-// card (status, age, job, session, running tool, last output line, task),
-// because a child's output reaches the parent conversation as settlement
-// notices anyway.
+// The cycle is split: the worker roster on top — so "how many are there" is
+// answered by looking, not by rotating — and an output pane below it for the
+// selected worker, filling the screen's remaining rows. A process pane is its
+// raw stdout tail; a subagent pane is the tail of its own persisted
+// transcript, continued live from a store cursor while the pane is open
+// (its frames carry streamed text only, and the transcript is where its tool
+// calls and their output land). A pane refresh runs every couple of seconds,
+// because a tail that only moves when the user presses r is not a view of
+// what is going on.
 
 import (
 	"encoding/json"
@@ -147,7 +150,7 @@ func (m *model) noteChildActivity(kind string, event sessionEvent) {
 		}
 		act.Phase, act.Tool = "tool", event.Tool
 		act.Now = event.Tool
-		if snippet := activitySnippet(event.Tool, childToolArgs(event.Args)); snippet != "" {
+		if snippet := activitySnippet(event.Tool, toolArgsMap(event.Args)); snippet != "" {
 			act.Now += " " + snippet
 		}
 	case "assistant":
@@ -192,9 +195,10 @@ func lastVisibleLine(s string) string {
 	return ""
 }
 
-// childToolArgs decodes a toolcall frame's args for the snippet helper; bad
-// JSON yields nil, which renders as the bare tool name.
-func childToolArgs(raw json.RawMessage) map[string]any {
+// toolArgsMap decodes a tool call's raw JSON arguments for the snippet
+// helper (a session frame's args, or a stored tool_call's arguments string);
+// bad JSON yields nil, which renders as the bare tool name.
+func toolArgsMap(raw json.RawMessage) map[string]any {
 	if len(raw) == 0 {
 		return nil
 	}
@@ -362,33 +366,75 @@ func bgRoster(processes []processSummary, agents []agentSummary, act map[string]
 }
 
 // bgPeekContext is everything the view needs beyond the selected target: the
-// whole roster (rendered as the list you can count), the selection, and the
-// live child activity.
+// whole roster (rendered as the list you can count), the selection, the live
+// child activity, and the output pane's content.
 type bgPeekContext struct {
 	Roster   []bgTarget
 	Index    int
 	Activity map[string]childActivity
 	Now      float64
+	// Tail is the output pane for the selected target: a subagent's
+	// persisted transcript lines (continued live from a store cursor while
+	// the pane is open), or a process's raw output tail. Empty while the
+	// first read is in flight — the pane then says so instead of showing
+	// another worker's output.
+	Tail []string
 }
 
-// bgPeekView renders the cycle: the worker list, the selected entry expanded
-// (raw tail for a process, a live status card for a subagent), and the footer
-// hint. Pure so the layout is testable.
-func bgPeekView(loc Locale, tgt bgTarget, text string, width, height int, loading bool, ctx bgPeekContext) string {
-	var b strings.Builder
-	age := ""
-	if tgt.startedAt > 0 {
-		age = humanAge(ctx.Now - tgt.startedAt)
+// The pane split. The roster keeps at most a third of the screen (the count
+// stays visible without rotating), the output pane takes the rest, and the
+// pane never shrinks below bgPeekMinPane rows: a card that lists twelve
+// workers and shows two lines of output answered "who is running" while
+// hiding "what are they doing", which is what the cycle is opened for.
+const (
+	bgPeekMinPane    = 8
+	bgPeekMaxRoster  = 12
+	bgPeekChromeRows = 4 // view header (1), rule below the roster, blank, footer hint
+)
+
+// bgPeekRosterEntries is how many roster entries the list shows: at most a
+// third of the screen, and never the whole roster when it is long. The title
+// row and the up-to-two "+N more" rows are added on top by bgPeekList.
+func bgPeekRosterEntries(rosterLen, height int) int {
+	if rosterLen == 0 {
+		return 0
 	}
-	if list := bgPeekList(loc, ctx, width); list != "" {
-		b.WriteString(list)
-		b.WriteString("\n\n")
+	entries := min(rosterLen, max(3, height/3))
+	return min(entries, bgPeekMaxRoster)
+}
+
+// bgPeekPaneRows is the output pane's row budget: everything left after the
+// roster block and the card's meta rows, never below bgPeekMinPane.
+func bgPeekPaneRows(height, rosterRows, metaRows int) int {
+	return max(bgPeekMinPane, height-bgPeekChromeRows-rosterRows-metaRows)
+}
+
+// bgPeekWindow is the slice of the roster the list shows: at most maxRows
+// entries, kept centered on the selection so the selected worker is never the
+// one the cap hides.
+func bgPeekWindow(count, index, maxRows int) (lo, hi int) {
+	if maxRows <= 0 || count <= maxRows {
+		return 0, count
 	}
+	lo = index - maxRows/2
+	if lo < 0 {
+		lo = 0
+	}
+	if lo > count-maxRows {
+		lo = count - maxRows
+	}
+	return lo, lo + maxRows
+}
+
+// bgPeekCard builds the selected worker's card: the meta rows above the pane
+// (status, what it is doing now, job, session, task) and the pane's own rows.
+// A process pane is its raw output tail; a subagent pane is the tail of its
+// persisted transcript — its answers, its tool calls and their bounded
+// outcomes — which is what turns one summary line into a usable view.
+func bgPeekCard(loc Locale, tgt bgTarget, text string, width int, age string, ctx bgPeekContext) (meta, pane []string) {
 	if tgt.kind == "agent" {
 		act := ctx.Activity[tgt.id]
-		title := t(loc, "bgpeek.titleAgent", tgt.status, age)
-		b.WriteString(lipglossBold(title))
-		b.WriteString("\n\n")
+		meta = append(meta, lipglossBold(truncate(t(loc, "bgpeek.titleAgent", tgt.status, age), width)))
 		now := act.Now
 		if now == "" {
 			if ago := humanAge(ctx.Now - act.LastSeen); act.LastSeen > 0 && ago != "" {
@@ -397,50 +443,83 @@ func bgPeekView(loc Locale, tgt bgTarget, text string, width, height int, loadin
 				now = t(loc, "bgpeek.agentNoActivity")
 			}
 		}
-		b.WriteString(wrapLine(t(loc, "bgpeek.agentNow", now), width))
-		b.WriteString("\n")
-		if act.Output != "" {
-			b.WriteString(wrapLine(t(loc, "bgpeek.agentOutput", truncate(act.Output, max(8, width-8))), width))
-			b.WriteString("\n")
-		}
+		meta = append(meta, truncate(t(loc, "bgpeek.agentNow", now), width))
 		if act.Error != "" {
-			b.WriteString(wrapLine(t(loc, "bgpeek.agentError", act.Error), width))
-			b.WriteString("\n")
+			meta = append(meta, errorStyle.Render(truncate(t(loc, "bgpeek.agentError", act.Error), width)))
 		}
 		if tgt.jobID != "" {
-			b.WriteString(t(loc, "bgpeek.agentJob", tgt.jobID))
-			b.WriteString("\n")
+			meta = append(meta, truncate(t(loc, "bgpeek.agentJob", tgt.jobID), width))
 		}
-		b.WriteString(t(loc, "bgpeek.agentSession", tgt.id))
-		b.WriteString("\n")
+		meta = append(meta, truncate(t(loc, "bgpeek.agentSession", tgt.id), width))
 		if task := strings.TrimSpace(tgt.task); task != "" {
-			b.WriteString(wrapLine(t(loc, "bgpeek.agentTask", task), width))
-			b.WriteString("\n")
+			meta = appendRows(meta, t(loc, "bgpeek.agentTask", firstLine(task)), width, 2)
 		}
-		b.WriteString(metaStyle.Render(t(loc, "bgpeek.agentHint")))
-	} else {
-		title := t(loc, "bgpeek.titleProc", tgt.id, tgt.label, tgt.status, age)
-		b.WriteString(lipglossBold(title))
-		b.WriteString("\n\n")
-		body := text
-		if loading {
-			body = t(loc, "processes.peekLoading")
-		} else if strings.TrimSpace(body) == "" {
-			body = t(loc, "processes.peekEmpty")
-		} else {
-			body = clampTail(body, max(3, height-6-len(ctx.Roster)))
+		pane = ctx.Tail
+		if len(pane) == 0 && act.Output != "" {
+			// Nothing persisted yet (a child that just started, or a store
+			// read in flight): the last streamed line still belongs here.
+			meta = append(meta, truncate(t(loc, "bgpeek.agentOutput", act.Output), width))
 		}
-		b.WriteString(body)
+		return meta, pane
 	}
+	meta = append(meta, lipglossBold(truncate(
+		t(loc, "bgpeek.titleProc", tgt.id, tgt.label, tgt.status, age), width)))
+	return meta, resultLines(text)
+}
+
+// bgPeekView renders the cycle: the worker roster on top, a rule, the selected
+// entry's card, and the output pane filling the rest — the last rows of the
+// worker's output rather than a single summary line. Pure so the layout is
+// testable.
+func bgPeekView(loc Locale, tgt bgTarget, text string, width, height int, loading bool, ctx bgPeekContext) string {
+	age := ""
+	if tgt.startedAt > 0 {
+		age = humanAge(ctx.Now - tgt.startedAt)
+	}
+	meta, pane := bgPeekCard(loc, tgt, text, width, age, ctx)
+
+	var b strings.Builder
+	rosterRows := 0
+	if list := bgPeekList(loc, ctx, width, bgPeekRosterEntries(len(ctx.Roster), height)); list != "" {
+		b.WriteString(list)
+		b.WriteString("\n")
+		rosterRows = strings.Count(list, "\n") + 1
+	}
+	b.WriteString(metaStyle.Render(strings.Repeat("─", max(8, min(width-1, 72)))))
+	b.WriteString("\n")
+	for _, row := range meta {
+		b.WriteString(row)
+		b.WriteString("\n")
+	}
+	b.WriteString(bgPeekPane(loc, pane, loading, width,
+		bgPeekPaneRows(height, rosterRows, len(meta))))
 	b.WriteString("\n\n" + metaStyle.Render(t(loc, "bgpeek.help")))
 	return b.String()
 }
 
-// bgPeekList renders the worker list with the selected entry marked, so the
-// count and the neighbours are visible without rotating. Empty when there is
-// nothing to list (the caller already handles the no-worker case).
-func bgPeekList(loc Locale, ctx bgPeekContext, width int) string {
-	if len(ctx.Roster) == 0 {
+// bgPeekPane renders the output pane: the last rows of the target's output,
+// hard-wrapped to the width so a long line stays readable instead of being
+// cut, or the loading/empty note when there is nothing yet.
+func bgPeekPane(loc Locale, pane []string, loading bool, width, rows int) string {
+	var wrapped []string
+	for _, line := range pane {
+		wrapped = append(wrapped, strings.Split(wrapLine(line, width), "\n")...)
+	}
+	if len(wrapped) == 0 {
+		if loading {
+			return metaStyle.Render(t(loc, "processes.peekLoading"))
+		}
+		return metaStyle.Render(t(loc, "processes.peekEmpty"))
+	}
+	kept, _ := collapseLines(wrapped, rows, true) // the tail: newest output wins
+	return strings.Join(kept, "\n")
+}
+
+// bgPeekList renders the worker list with the selected entry marked, a window
+// of at most maxEntries rows: the count and the neighbours stay visible
+// without rotating, and a hidden window edge says how much is out of sight.
+func bgPeekList(loc Locale, ctx bgPeekContext, width, maxEntries int) string {
+	if len(ctx.Roster) == 0 || maxEntries <= 0 {
 		return ""
 	}
 	agents, processes := 0, 0
@@ -451,10 +530,16 @@ func bgPeekList(loc Locale, ctx bgPeekContext, width int) string {
 			processes++
 		}
 	}
+	lo, hi := bgPeekWindow(len(ctx.Roster), ctx.Index, maxEntries)
 	var b strings.Builder
 	b.WriteString(lipglossBold(t(loc, "bgpeek.listTitle",
 		strconv.Itoa(len(ctx.Roster)), strconv.Itoa(agents), strconv.Itoa(processes))))
-	for i, tgt := range ctx.Roster {
+	if lo > 0 {
+		b.WriteString("\n" + metaStyle.Render(truncate(
+			t(loc, "bgpeek.listMore", strconv.Itoa(lo)), max(8, width-2))))
+	}
+	for i := lo; i < hi; i++ {
+		tgt := ctx.Roster[i]
 		marker := "  "
 		if i == ctx.Index {
 			marker = "▸ "
@@ -477,7 +562,22 @@ func bgPeekList(loc Locale, ctx bgPeekContext, width int) string {
 		}
 		b.WriteString("\n" + marker + truncate(line, max(8, width-2)))
 	}
+	if hi < len(ctx.Roster) {
+		b.WriteString("\n" + metaStyle.Render(truncate(
+			t(loc, "bgpeek.listMore", strconv.Itoa(len(ctx.Roster)-hi)), max(8, width-2))))
+	}
 	return b.String()
+}
+
+// appendRows wraps text to width and appends at most maxRows rows to the
+// card's meta block: a longer task line is cut rather than allowed to push
+// the output pane out of the view, keeping the row budget predictable.
+func appendRows(rows []string, text string, width, maxRows int) []string {
+	all := strings.Split(wrapLine(text, width), "\n")
+	if len(all) > maxRows {
+		all = all[:maxRows]
+	}
+	return append(rows, all...)
 }
 
 // firstLine clips a task to its first line for the list view.
@@ -506,36 +606,155 @@ func (m *model) bgPeekContextOf() bgPeekContext {
 	return bgPeekContext{
 		Roster: m.bgPeekRoster, Index: m.bgPeekIdx,
 		Activity: m.childAct, Now: epochNow(),
+		Tail: m.bgPeekPaneLines(),
 	}
 }
 
-// loadBgPeekBody fetches the current target's live view: the raw tail for a
+// bgPeekPaneLines is the pane content for the selected target. Content that
+// belongs to another worker — the roster rebuilt under the cycle, or an
+// abandoned read — is dropped rather than attributed to the wrong entry.
+func (m model) bgPeekPaneLines() []string {
+	tgt, ok := m.bgPeekTarget()
+	if !ok || m.bgPeekPaneFor != tgt.id {
+		return nil
+	}
+	if tgt.kind == "agent" {
+		return m.bgPeekTail
+	}
+	return resultLines(m.bgPeekText)
+}
+
+// bgPeekPaneAttributed is "the pane in hand belongs to the selected worker":
+// same entry, and the attribution the pane was opened with. It is the
+// stale-pane guard the view renders with and the check a landed read uses
+// before it fills the pane.
+func (m model) bgPeekPaneAttributed(kind, id string) bool {
+	tgt, ok := m.bgPeekTarget()
+	return ok && tgt.kind == kind && tgt.id == id && m.bgPeekPaneFor == id
+}
+
+// resetBgPeekPane drops the pane's content and its attribution, so the next
+// load reads the (new) worker's own output.
+func (m *model) resetBgPeekPane() {
+	m.bgPeekPaneFor, m.bgPeekCursor, m.bgPeekText, m.bgPeekErr = "", "", "", ""
+	m.bgPeekTail, m.bgPeekLoading = nil, false
+}
+
+// attributeBgPeekPane points the pane at the selected worker, dropping any
+// content that belonged to another one (the roster can rebuild under the
+// cycle, and a landed read must never paint one worker's output under
+// another's name).
+func (m *model) attributeBgPeekPane() {
+	tgt, ok := m.bgPeekTarget()
+	if !ok || !m.bgPeekPaneAttributed(tgt.kind, tgt.id) {
+		m.resetBgPeekPane()
+	}
+	if ok {
+		m.bgPeekPaneFor = tgt.id
+	}
+}
+
+// loadBgPeekBody fetches the current target's output pane: the raw tail for a
 // process (the shared peek fetch, tail: "1" — it re-reads without touching
-// the model's drain cursor), nothing for an agent (its card renders from the
-// roster plus the session frames noteChildActivity has been folding in).
+// the model's drain cursor), the transcript tail for a subagent. A worker
+// whose pane is not attributed yet starts a fresh read; afterwards the
+// subagent read continues from the store cursor the last page returned, so a
+// refresh is one cheap page instead of re-reading the window.
 func (m *model) loadBgPeekBody() tea.Cmd {
 	tgt, ok := m.bgPeekTarget()
-	m.bgPeekText, m.bgPeekErr = "", ""
 	if !ok {
 		return nil
 	}
+	m.attributeBgPeekPane()
+	m.bgPeekErr = ""
+	m.bgPeekLoading = m.bgPeekCursor == "" && m.bgPeekText == "" && len(m.bgPeekTail) == 0
 	if tgt.kind == "process" {
-		m.bgPeekLoading = true
 		return processesPeekCmd(m.comp, tgt.id)
 	}
-	m.bgPeekLoading = false
-	return nil
+	return workerTailCmd(m.comp, tgt.id, m.bgPeekCursor)
 }
 
 // refreshBgPeekRoster rebuilds the cycle from fresh snapshots, keeping the
-// position when the roster only grew, clamping when it shrank.
+// position when the roster only grew, clamping when it shrank — and dropping
+// the pane when the entry at that position is now a different worker.
 func (m *model) refreshBgPeekRoster() {
+	before, hadBefore := m.bgPeekTarget()
 	roster := bgRoster(m.processes, m.agents, m.childAct, epochNow())
 	if m.bgPeekIdx >= len(roster) {
 		m.bgPeekIdx = 0
 	}
 	m.bgPeekRoster = roster
+	if after, ok := m.bgPeekTarget(); !ok || !hadBefore || after.id != before.id {
+		m.resetBgPeekPane()
+	}
 }
+
+// appendPaneLines appends freshly read lines to the pane and keeps the last
+// bgPeekTailMaxLines of them: the pane only ever renders its tail, so a long
+// working subagent must not grow the buffer for the whole session.
+func appendPaneLines(existing, added []string) []string {
+	if len(added) == 0 {
+		return existing
+	}
+	lines := append(existing, added...)
+	if len(lines) > bgPeekTailMaxLines {
+		lines = lines[len(lines)-bgPeekTailMaxLines:]
+	}
+	return lines
+}
+
+// bgPeekTickMsg drives the output pane's live refresh while the cycle is open.
+// A tail view that only moves when the user presses r is not a view of what is
+// going on: the pane re-reads every couple of seconds until the cycle closes.
+type bgPeekTickMsg struct{}
+
+const bgPeekTickInterval = 2 * time.Second
+
+func bgPeekTickCmd() tea.Cmd {
+	return tea.Tick(bgPeekTickInterval, func(time.Time) tea.Msg { return bgPeekTickMsg{} })
+}
+
+// armBgPeekTick is an "at most once" gate for the pane's timer (the armSpinner
+// lesson): the pending tick is the only thing that clears the flag, so a
+// leave-and-reopen cannot leave two live timers behind.
+func (m *model) armBgPeekTick() tea.Cmd {
+	if m.bgPeekTicking || m.mode != modeBgPeek {
+		return nil
+	}
+	m.bgPeekTicking = true
+	return bgPeekTickCmd()
+}
+
+// settlePendingBgPeek decides a ctrl+o that found nothing in a possibly-stale
+// snapshot: an answer that shows work opens the cycle right away (the other
+// answer lands into the open roster), while the note is only answered once
+// both refreshes have come back empty — one snapshot still in flight must not
+// turn into "nothing is running".
+func (m *model) settlePendingBgPeek() tea.Cmd {
+	if !m.bgPeekPending {
+		return nil
+	}
+	roster := bgRoster(m.processes, m.agents, m.childAct, epochNow())
+	if len(roster) == 0 {
+		if m.bgPeekPendingProc || m.bgPeekPendingAgent {
+			return nil // the other snapshot is still on its way
+		}
+		m.bgPeekPending = false
+		m.contextNote = t(m.loc, "note.nothingRunning")
+		m.layout()
+		return nil
+	}
+	m.bgPeekPending, m.bgPeekPendingProc, m.bgPeekPendingAgent = false, false, false
+	m.bgPeekRoster = roster
+	m.bgPeekIdx = 0
+	m.resetBgPeekPane()
+	m.mode = modeBgPeek
+	m.layout()
+	return tea.Batch(m.loadBgPeekBody(), m.armBgPeekTick())
+}
+
+// bgPeekTailMaxLines bounds the pane's line buffer (see appendPaneLines).
+const bgPeekTailMaxLines = 400
 
 // wrapLine hard-wraps one logical line at width columns (ansi-aware via the
 // same width helper the status row uses), so a long task text cannot push

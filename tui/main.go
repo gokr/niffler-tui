@@ -252,23 +252,38 @@ type model struct {
 	processesPeekLoading bool
 	bgTicking            bool
 	// Subagent roster (agent_list's read-only UI affordance) + the ctrl+o
-	// output cycle: running processes and working subagents, one live view
-	// per press.
+	// output cycle: the worker roster and the selected worker's output pane.
 	agents       []agentSummary
 	bgPeekRoster []bgTarget
 	// childAct is the live activity of this conversation's subagents, fed by
 	// the ev.session.* frames of every session on the bus (agents.go).
-	childAct      map[string]childActivity
-	bgPeekIdx     int
+	childAct  map[string]childActivity
+	bgPeekIdx int
+	// The output pane: bgPeekPaneFor names the worker the content belongs to
+	// (a rebuilt roster must never show another worker's output), bgPeekText
+	// carries a process's raw tail, bgPeekTail a subagent's transcript rows
+	// continued from bgPeekCursor. bgPeekTicking guards the pane's refresh
+	// timer while the cycle is open (one live timer per purpose).
+	bgPeekPaneFor string
 	bgPeekText    string
+	bgPeekTail    []string
+	bgPeekCursor  string
 	bgPeekErr     string
 	bgPeekLoading bool
-	models        []modelSummary
-	modelsCatalog string
-	runtime       runtimeResolution
-	modelOverride string
-	promptTokens  int
-	contextUsed   int
+	bgPeekTicking bool
+	// A ctrl+o that found no worker locally waits for the two snapshot reads
+	// (they may simply be stale) before answering "nothing is running";
+	// bgPeekPending is that unanswered press, the two flags the reads it waits
+	// for.
+	bgPeekPending      bool
+	bgPeekPendingProc  bool
+	bgPeekPendingAgent bool
+	models             []modelSummary
+	modelsCatalog      string
+	runtime            runtimeResolution
+	modelOverride      string
+	promptTokens       int
+	contextUsed        int
 	// inputTokens/outputTokens accumulate the session's billed tokens (the
 	// header's ↑/↓ chip); cacheHits/cachePrompt accumulate the prompt-cache
 	// economics (header and /status).
@@ -1122,19 +1137,24 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, setConversationThinkingCmd(m.comp, m.session, next)
 		case "ctrl+o":
 			// The worker cycle: running background processes and working
-			// subagents, one live view per press. Nothing working -> a
-			// transient note, not an empty mode.
+			// subagents, the roster above an output pane.
 			roster := bgRoster(m.processes, m.agents, m.childAct, epochNow())
 			if len(roster) == 0 {
-				m.contextNote = t(m.loc, "note.nothingRunning")
+				// The local snapshots may simply be stale — a process another
+				// client started, a subagent this client has not heard from — so
+				// refresh both first and let the answers decide, instead of
+				// answering "nothing is running" from a list that never held
+				// them.
+				m.bgPeekPending, m.bgPeekPendingProc, m.bgPeekPendingAgent = true, true, true
 				m.layout()
-				return m, nil
+				return m, tea.Batch(processesListCmd(m.comp), agentsListCmd(m.comp, m.session))
 			}
 			m.bgPeekRoster = roster
 			m.bgPeekIdx = 0
+			m.resetBgPeekPane()
 			m.mode = modeBgPeek
 			m.layout()
-			return m, tea.Batch(m.loadBgPeekBody(), processesListCmd(m.comp),
+			return m, tea.Batch(m.loadBgPeekBody(), m.armBgPeekTick(), processesListCmd(m.comp),
 				agentsListCmd(m.comp, m.session))
 		case "esc":
 			// Two-stage stop: first ESC arms the Stop? prompt, second ESC
@@ -1624,6 +1644,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if cmd := m.armBgTick(); cmd != nil {
 			cmds = append(cmds, cmd)
 		}
+		m.bgPeekPendingProc = false
+		if cmd := m.settlePendingBgPeek(); cmd != nil {
+			cmds = append(cmds, cmd)
+		}
 
 	case processesPeekMsg:
 		m.processesPeekLoading = false
@@ -1634,10 +1658,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.mode == modeProcessesPeek {
 			m.layout()
 		}
-		// The ctrl+o cycle shares the peek fetch; land the tail on the
-		// cycled target only (the panel's peek has its own fields).
+		// The ctrl+o cycle shares the peek fetch; land the tail on the cycled
+		// target only, and only while the pane in hand is its own (the panel's
+		// peek has its own fields).
 		if m.mode == modeBgPeek {
-			if tgt, ok := m.bgPeekTarget(); ok && tgt.kind == "process" && tgt.id == msg.ID {
+			if m.bgPeekPaneAttributed("process", msg.ID) {
 				m.bgPeekLoading = false
 				m.bgPeekText = msg.Text
 				if msg.Err != nil {
@@ -1646,6 +1671,43 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			m.layout()
 		}
+
+	case workerTailMsg:
+		// The subagent pane's next rows. A read that lands after the cycle
+		// moved on belongs to nobody: drop it instead of attributing another
+		// worker's output to the selected one.
+		if m.mode == modeBgPeek && m.bgPeekPaneAttributed("agent", msg.Session) {
+			m.bgPeekLoading = false
+			if msg.Err != nil {
+				m.bgPeekErr = msg.Err.Error()
+			} else {
+				if msg.From == "" {
+					m.bgPeekTail = nil // a fresh window replaces the pane
+				}
+				m.bgPeekTail = appendPaneLines(m.bgPeekTail, msg.Lines)
+				if msg.Cursor != "" {
+					m.bgPeekCursor = msg.Cursor
+				}
+			}
+			m.layout()
+		}
+
+	case bgPeekTickMsg:
+		// The pane's own refresh chain (agents.go): it re-arms itself only
+		// while the cycle is still open, and owning the flag here is what keeps
+		// a second timer from ever being armed (the armSpinner lesson).
+		m.bgPeekTicking = false
+		if m.mode != modeBgPeek {
+			break
+		}
+		// Every worker finished while the cycle sat open: nothing left to
+		// show, so hand the screen back instead of painting an empty pane.
+		if _, ok := m.bgPeekTarget(); !ok {
+			m.mode = modeChat
+			m.layout()
+			break
+		}
+		cmds = append(cmds, m.loadBgPeekBody(), m.armBgPeekTick())
 
 	case agentEventMsg:
 		if msg.Parent == "" || msg.Parent == m.session {
@@ -1671,6 +1733,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.refreshBgPeekRoster()
 		}
 		if cmd := m.armBgTick(); cmd != nil {
+			cmds = append(cmds, cmd)
+		}
+		m.bgPeekPendingAgent = false
+		if cmd := m.settlePendingBgPeek(); cmd != nil {
 			cmds = append(cmds, cmd)
 		}
 		m.layout()

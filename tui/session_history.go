@@ -356,3 +356,162 @@ func storedToolOutcome(content string) (json.RawMessage, string) {
 	}
 	return json.RawMessage(content), ""
 }
+
+// ---- the ctrl+o pane: a subagent's own output ------------------------------
+//
+// A subagent's frames carry streamed text only, so a card built from them can
+// say "responding" and one line of what came out — not what the child is
+// actually doing. Its persisted transcript is where the rest lives: every
+// message it exchanged (task, answers, tool calls, tool output) is written to
+// the store as it completes. The pane therefore reads a window of that
+// transcript and then continues from a cursor, which makes a refresh one cheap
+// page instead of a re-read, and the pane's rows the last N lines of real
+// output.
+
+// workerTailMessages is the window the pane's first read fetches: enough
+// messages that their rendered rows fill a terminal, few enough that a short
+// child costs one store page.
+const workerTailMessages = 40
+
+// workerTailMaxMessages bounds a single continuation read, so a fast child
+// cannot make one refresh unbounded (the next refresh picks up the rest).
+const workerTailMaxMessages = 200
+
+// loadWorkerTailPage reads a window of a conversation's LAST messages plus the
+// cursor that continues past them — the pane's starting point. A full first
+// page means the window must land on the newest messages, not the oldest (the
+// same rule a conversation replay follows); a conversation shorter than the
+// window is one page.
+func loadWorkerTailPage(comp *sdk.Component, session string, want int) (conversationMessagePage, error) {
+	first, err := listConversationPage(comp, session, "", "", want)
+	if err != nil || len(first.Messages) < want {
+		return first, err
+	}
+	seqPage := func(prefix string, limit int) ([]storedMessage, error) {
+		page, err := listConversationPage(comp, session, prefix, "", limit)
+		return page.Messages, err
+	}
+	last, err := lastMessageSeq(seqPage)
+	if err != nil {
+		return conversationMessagePage{}, err
+	}
+	cursor := tailCursor(session, last, want)
+	if cursor == "" {
+		return first, nil
+	}
+	window, err := listConversationPage(comp, session, "", cursor, want)
+	if err != nil || len(window.Messages) == 0 {
+		return first, err
+	}
+	return window, nil
+}
+
+// workerTailMsg carries the pane's next lines for one subagent. From is the
+// cursor the read started after ("" = a fresh window) and Cursor the one that
+// continues past what it read.
+type workerTailMsg struct {
+	Session string
+	From    string
+	Lines   []string
+	Cursor  string
+	Err     error
+}
+
+func workerTailCmd(comp *sdk.Component, session, from string) tea.Cmd {
+	return func() tea.Msg {
+		if comp == nil || session == "" {
+			return workerTailMsg{Session: session, From: from}
+		}
+		var page conversationMessagePage
+		var err error
+		if from == "" {
+			page, err = loadWorkerTailPage(comp, session, workerTailMessages)
+		} else {
+			page, err = listConversationPage(comp, session, "", from, workerTailMaxMessages)
+		}
+		if err != nil {
+			return workerTailMsg{Session: session, From: from, Err: err}
+		}
+		return workerTailMsg{Session: session, From: from,
+			Lines: workerTailLines(page.Messages), Cursor: page.Cursor}
+	}
+}
+
+// workerTailLines renders a subagent's transcript tail as the plain rows the
+// pane shows: what it was asked, what it answered, each tool call, and a
+// bounded preview of every tool outcome. It is deliberately not the
+// transcript's card renderer — this text lands in a small scrolling pane, so
+// every message becomes rows and the pane keeps the last of them. Reasoning is
+// left out (the noisiest, least factual part of a child's stream), and runtime
+// notices keep their ▸ marker so machinery stays distinguishable from the
+// task.
+func workerTailLines(messages []storedMessage) []string {
+	var lines []string
+	add := func(prefix, text string, maxRows int) {
+		text = strings.TrimRight(text, "\n")
+		if strings.TrimSpace(text) == "" {
+			return
+		}
+		kept, _ := collapseLines(resultLines(text), maxRows, true)
+		for i, row := range kept {
+			if i == 0 {
+				lines = append(lines, prefix+row)
+			} else {
+				lines = append(lines, "  "+row)
+			}
+		}
+	}
+	for _, msg := range messages {
+		switch msg.Role {
+		case "user":
+			if msg.Notice != nil {
+				add("▸ ", msg.Content, 3)
+				continue
+			}
+			add("» ", msg.Content, 4)
+		case "assistant":
+			add("", msg.Content, 12)
+			for _, call := range msg.ToolCalls {
+				line := "→ " + call.Function.Name
+				if snippet := activitySnippet(call.Function.Name,
+					toolArgsMap(storedToolArgs(call.Function.Arguments))); snippet != "" {
+					line += " " + snippet
+				}
+				lines = append(lines, line)
+			}
+		case "tool":
+			outcome, errText := storedToolOutcome(msg.Content)
+			if errText != "" {
+				add("! "+msg.Name+" ", errText, 3)
+				continue
+			}
+			add("← "+msg.Name+" ", storedToolText(outcome), 3)
+		case "error":
+			add("! ", msg.Content, 3)
+		}
+	}
+	return lines
+}
+
+// storedToolText is a persisted tool outcome as display text: a {"text": …}
+// wrapper unwraps to its body, a bare JSON string decodes, and anything else is
+// shown as stored — many tools persist plain text, some a JSON object.
+func storedToolText(raw json.RawMessage) string {
+	if len(raw) == 0 {
+		return ""
+	}
+	var wrapper struct {
+		Text string `json:"text"`
+	}
+	if err := json.Unmarshal(raw, &wrapper); err == nil && wrapper.Text != "" {
+		return wrapper.Text
+	}
+	var plain string
+	if err := json.Unmarshal(raw, &plain); err == nil {
+		return plain
+	}
+	if compact := compactJSON(raw); compact != "" && compact != "null" {
+		return compact
+	}
+	return string(raw)
+}
