@@ -272,35 +272,39 @@ func TestConversationHistoryMsgKeepsSelectorMode(t *testing.T) {
 	}
 }
 
-func TestSeqPrefixAndTailStart(t *testing.T) {
+func TestSeqPrefixAndTailCursor(t *testing.T) {
 	if got := seqPrefix(42); got != "000042" {
 		t.Fatalf("seqPrefix(42) = %q", got)
 	}
-	if got := historyTailStart(0); got != "" {
-		t.Fatalf("empty history tail start = %q", got)
+	// The cursor is the id of the message BEFORE the window: the store's
+	// `after` is exclusive, and a longer idPrefix selects only the one message
+	// whose id carries that literal prefix.
+	if got := tailCursor("conv", 0, 40); got != "" {
+		t.Fatalf("empty history tail cursor = %q", got)
 	}
-	if got := historyTailStart(historyPageSize); got != "" {
-		t.Fatalf("exactly-full history tail start = %q", got)
+	if got := tailCursor("conv", 40, 40); got != "" {
+		t.Fatalf("exactly-full history tail cursor = %q", got)
 	}
-	if got := historyTailStart(historyPageSize + 1); got != seqPrefix(2) {
-		t.Fatalf("overflow tail start = %q, want %q", got, seqPrefix(2))
+	if got := tailCursor("conv", 41, 40); got != "conv:"+seqPrefix(1) {
+		t.Fatalf("overflow tail cursor = %q, want %q", got, "conv:"+seqPrefix(1))
 	}
-	if got := historyTailStart(2500); got != seqPrefix(1501) {
-		t.Fatalf("tail start = %q, want %q", got, seqPrefix(1501))
+	if got := tailCursor("conv", 2500, 1000); got != "conv:"+seqPrefix(1500) {
+		t.Fatalf("tail cursor = %q, want %q", got, "conv:"+seqPrefix(1500))
 	}
 }
 
 func TestLastMessageSeqBinarySearch(t *testing.T) {
-	ids := map[int]bool{1: true, 2: true, 5: true, 999: true, 1000: true, 1001: true, 4242: true}
+	// Message ids are contiguous from 1, which is what makes a prefix probe
+	// monotone: the store answers with the messages whose id starts with the
+	// padded probe, and id N exists exactly while N <= last.
+	const last = 4242
 	fetch := func(prefix string, _ int) ([]storedMessage, error) {
 		start, err := strconv.Atoi(prefix)
 		if err != nil {
 			t.Fatalf("probe prefix %q is not numeric: %v", prefix, err)
 		}
-		for n := start; n <= 1_000_000; n++ {
-			if ids[n] {
-				return []storedMessage{{Role: "user"}}, nil
-			}
+		if start <= last {
+			return []storedMessage{{Role: "user"}}, nil
 		}
 		return nil, nil
 	}
@@ -308,8 +312,8 @@ func TestLastMessageSeqBinarySearch(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got != 4242 {
-		t.Fatalf("lastMessageSeq = %d, want 4242", got)
+	if got != last {
+		t.Fatalf("lastMessageSeq = %d, want %d", got, last)
 	}
 
 	empty := func(string, int) ([]storedMessage, error) { return nil, nil }

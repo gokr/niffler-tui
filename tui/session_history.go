@@ -34,14 +34,18 @@ type storedMessage struct {
 	Notice     json.RawMessage  `json:"notice"`
 }
 
+// storedToolFunction is a stored tool call's function object (the normalized
+// OpenAI shape core persists).
+type storedToolFunction struct {
+	Name      string `json:"name"`
+	Arguments string `json:"arguments"`
+}
+
 // storedToolCall is one entry of an assistant message's tool_calls array in
 // the normalized OpenAI shape core persists.
 type storedToolCall struct {
-	ID       string `json:"id"`
-	Function struct {
-		Name      string `json:"name"`
-		Arguments string `json:"arguments"`
-	} `json:"function"`
+	ID       string             `json:"id"`
+	Function storedToolFunction `json:"function"`
 }
 
 // conversationHistoryMsg carries one conversation's replayed transcript.
@@ -66,12 +70,13 @@ const historyPageSize = 1000
 // loadConversationHistory lists a conversation's message documents in
 // stored order (ids are zero-padded, so key order == chronological order).
 //
-// The store list tool returns the FIRST page and has no cursor, so a
+// A single store page carries at most historyPageSize documents, so a
 // conversation that fills the page would otherwise be replayed from its
 // oldest messages. When the first page is full we binary-search the padded
-// id space for the highest stored sequence (tiny one-item probes) and fetch
-// the tail window instead: resuming a long conversation must land on its
-// latest messages. Older messages stay available in the store for core.
+// id space for the highest stored sequence (tiny one-item probes) and read
+// the tail window with the store's id cursor: resuming a long conversation
+// must land on its latest messages. Older messages stay available in the
+// store for core (and for recall).
 func loadConversationHistory(comp *sdk.Component, session string) ([]storedMessage, error) {
 	fetch := func(prefix string, limit int) ([]storedMessage, error) {
 		return listConversationMessages(comp, session, prefix, limit)
@@ -87,46 +92,102 @@ func loadConversationHistory(comp *sdk.Component, session string) ([]storedMessa
 	if err != nil {
 		return nil, err
 	}
-	if start := historyTailStart(last); start != "" {
-		return fetch(start, historyPageSize)
+	if cursor := tailCursor(session, last, historyPageSize); cursor != "" {
+		window, err := listConversationMessagesAfter(comp, session, cursor, historyPageSize)
+		if err != nil {
+			return nil, err
+		}
+		if len(window) > 0 {
+			return window, nil
+		}
 	}
 	return messages, nil // the full page was already the whole history
 }
 
-// historyTailStart returns the id suffix of the tail window ending at last,
-// or "" when the first page already covers the conversation.
-func historyTailStart(last int) string {
-	if last <= historyPageSize {
+// tailCursor is the store cursor that starts the window of `size` messages
+// ending at `last`: the id of the message one sequence BEFORE the window, which
+// is what the store's exclusive `after` takes. It is "" when a read from the
+// beginning already covers the conversation.
+//
+// The window is selected by cursor and never by a longer idPrefix: the store's
+// `idPrefix` is a literal prefix scan ("<conv>:000015" matches that one
+// message, not everything from it on), so a prefix-built window silently
+// returned a single message — long replayed conversations showed their
+// thousandth message instead of their last thousand (docs/MANUAL.md "Reading
+// a conversation").
+func tailCursor(session string, last, size int) string {
+	if size <= 0 || last <= size {
 		return ""
 	}
-	return seqPrefix(last - historyPageSize + 1)
+	return session + ":" + seqPrefix(last-size)
 }
 
-// listConversationMessages fetches one page of a conversation's messages
-// starting at the given id suffix ("" = from the first message).
-func listConversationMessages(comp *sdk.Component, session, suffix string, limit int) ([]storedMessage, error) {
+// conversationMessagePage is one store page of a conversation's messages plus
+// the cursor that continues past it. The cursor is the id of the last item
+// read — the store's own exclusive `after` contract; `nextAfter` is only
+// reported while another page exists, so the last page must take it from the
+// item.
+type conversationMessagePage struct {
+	Messages []storedMessage
+	Cursor   string
+	HasMore  bool
+}
+
+// listConversationPage fetches one page of a conversation's messages: from a
+// sequence suffix ("" = from the first message), and/or continuing past an id
+// cursor ("" = no cursor). Both selectors compose, which is what lets the
+// ctrl+o pane read a window once and afterwards only what landed since.
+func listConversationPage(comp *sdk.Component, session, suffix, after string, limit int) (conversationMessagePage, error) {
 	var response struct {
 		Items []struct {
+			ID    string        `json:"id"`
 			Value storedMessage `json:"value"`
 		} `json:"items"`
+		HasMore bool `json:"hasMore"`
 	}
-	err := requestInto(comp, "store", "list", map[string]any{
+	args := map[string]any{
 		"kind": "message", "idPrefix": session + ":" + suffix, "limit": limit,
-	}, &response)
+	}
+	if after != "" {
+		args["after"] = after
+	}
+	if err := requestInto(comp, "store", "list", args, &response); err != nil {
+		return conversationMessagePage{}, err
+	}
+	page := conversationMessagePage{HasMore: response.HasMore}
+	for _, item := range response.Items {
+		page.Messages = append(page.Messages, item.Value)
+		page.Cursor = item.ID
+	}
+	return page, nil
+}
+
+// listConversationMessages is the page primitive for callers that only want
+// the messages (the transcript replay and the sequence probes).
+func listConversationMessages(comp *sdk.Component, session, suffix string, limit int) ([]storedMessage, error) {
+	page, err := listConversationPage(comp, session, suffix, "", limit)
 	if err != nil {
 		return nil, err
 	}
-	messages := make([]storedMessage, 0, len(response.Items))
-	for _, item := range response.Items {
-		messages = append(messages, item.Value)
+	return page.Messages, nil
+}
+
+// listConversationMessagesAfter continues a conversation's read from an id
+// cursor — the form that selects a range (the prefix form selects only keys
+// starting with the literal prefix).
+func listConversationMessagesAfter(comp *sdk.Component, session, after string, limit int) ([]storedMessage, error) {
+	page, err := listConversationPage(comp, session, "", after, limit)
+	if err != nil {
+		return nil, err
 	}
-	return messages, nil
+	return page.Messages, nil
 }
 
 // lastMessageSeq finds the highest stored message sequence for a
-// conversation. The list tool returns the first item at-or-after a prefix,
-// which makes "an item exists >= N" monotone in N: a binary search over the
-// six-digit sequence space needs ~20 one-item probes. Sequences beyond
+// conversation. Message ids are contiguous from 1 and padded to six digits, so
+// the store's literal-prefix probe for sequence N answers with message N
+// exactly while N <= last: "message N exists" is monotone in N, and a binary
+// search over the sequence space needs ~20 one-item probes. Sequences beyond
 // 999999 are out of scope at conversation scale.
 func lastMessageSeq(fetch func(prefix string, limit int) ([]storedMessage, error)) (int, error) {
 	lo, hi := 0, 999_999
