@@ -63,6 +63,9 @@ Keys:
 - `Ctrl+Up` / `Ctrl+Down`: scroll the transcript one line at a time
 - `Ctrl+T`: cycle thinking visibility (`full` → `brief` → `off`)
 - `Ctrl+E`: cycle tool-card detail (`brief` → `medium` → `full` → `off`)
+- `Ctrl+O`: the worker cycle — running background processes and working
+  subagents, one live card per worker (status, age, running tool, last output
+  line); with nothing running it answers "nothing is running (bg/agent)"
 - `Shift+Tab`: rotate the conversation's LLM thinking effort
   (`auto` → `low` → `medium` → `high` → `max`)
 - `Esc`: while busy, the first press arms a "Stop?" prompt and the second
@@ -235,8 +238,14 @@ pauses, avoiding an expensive full Markdown render on every token.
 On startup and after every conversation switch (`/session`, `/new`, or an
 entry in the browser), the output area is rebuilt from the session's stored
 messages — user and assistant turns, reasoning, grouped tool cards with
-their arguments and results, and turn errors — so the previous conversation
-is visible and scrollable instead of starting blank.
+their arguments and results, turn errors, and dim `▸` machinery rows for
+folded runtime notices (a subagent that settles, a background process that
+exits, or the prompt of an autonomous wake turn) — so the previous
+conversation is visible and scrollable instead of starting blank. Those
+notice rows also arrive live: a parent conversation woken because a child
+finished shows the settlement and the reply that followed it, without the
+human having to ask. The status line adds `agent N (age)` while subagents
+work and a `bg N` badge while background processes run.
 
 The viewport keeps a bounded scrollback window (the last 3000 rendered lines
 by default, with a marker where earlier messages are hidden), which is what
