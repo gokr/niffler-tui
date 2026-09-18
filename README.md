@@ -66,9 +66,13 @@ Keys:
 - `Ctrl+Up` / `Ctrl+Down`: scroll the transcript one line at a time
 - `Ctrl+T`: cycle thinking visibility (`full` → `brief` → `off`)
 - `Ctrl+E`: cycle tool-card detail (`brief` → `medium` → `full` → `off`)
-- `Ctrl+O`: the worker cycle — running background processes and working
-  subagents, one live card per worker (status, age, running tool, last output
-  line); with nothing running it answers "nothing is running (bg/agent)"
+- `Ctrl+O`: the worker cycle — the worker roster on top (running background
+  processes and working subagents, with status and age) and an output pane
+  below it filling the rest of the screen: for a background process its raw
+  stdout tail, for a subagent the tail of its own transcript (its answers,
+  its tool calls and a bounded preview of each outcome), refreshed live while
+  the cycle is open. `Ctrl+O`/`Tab`/`n` rotates workers, `r` re-reads, `Esc`
+  returns; with nothing running it answers "nothing is running (bg/agent)"
 - `Shift+Tab`: rotate the conversation's LLM thinking effort
   (`auto` → `low` → `medium` → `high` → `max`)
 - `Esc`: while busy, the first press arms a "Stop?" prompt and the second
@@ -163,7 +167,10 @@ Local commands are handled by the TUI and are never sent to the model:
   conversations created while it is selected.
 - `/new [id]` — start a fresh conversation
 - `/session` — conversation browser; switch or resume sessions, or start a
-  new one
+  new one. **Subagent sessions are hidden by default** — a conversation that
+  delegates work spawns a session per child, and those would otherwise crowd
+  out your own conversations. `a` toggles them in (each marked `↳` and naming
+  the parent it belongs to); the title shows how many are being held back
 - `/locale [en|zh|zh-TW]` — switch the UI language (persisted)
 - `/theme [name]` — switch the UI color theme (persisted); a bare `/theme`
   opens a picker with a live preview, and every theme pairs the chrome

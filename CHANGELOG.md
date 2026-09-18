@@ -8,6 +8,25 @@ project aims for [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **ctrl+o is a split view: the worker roster on top, a real output pane
+  below.** The worker cycle used to render one card per worker — a status line
+  plus, for a subagent, a single "last output" row — so the answer to "what is
+  actually going on" was rarely on screen. The roster (capped to a third of the
+  screen, with a `+N more` edge when it is longer) now sits above an output
+  pane that takes the remaining rows: for a background process its raw stdout
+  tail, for a subagent the tail of its own persisted transcript — its answers,
+  its tool calls with arguments, and a bounded preview of every tool outcome
+  — so the last twenty-odd rows of real output are visible without leaving the
+  view. The pane refreshes itself every 2s while the cycle is open (the
+  subagent read continues from a store cursor, one cheap page per refresh),
+  `ctrl+o`/`tab`/`n` rotates workers, `r` re-reads a fresh window, and the
+  cycle hands the screen back to the chat once the last worker finishes.
+- **The `/session` browser hides subagent sessions.** A conversation that
+  delegates work spawns a session per child (`sessionmeta.parent`), and those
+  are not what a human switches between — with dozens of them the list was
+  mostly children. They are held back by default now, with the count in the
+  title; `a` toggles them in, each marked `↳` and naming the parent it belongs
+  to. Selecting a child still works like any other conversation.
 - **Settlement notices and autonomous wakes are visible in the transcript.**
   When a background subagent (or process) settles, the runner folds a
   structurally marked message into the parent conversation — and now wakes an
@@ -72,6 +91,16 @@ project aims for [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **A long conversation's replay window was one message, not the last
+  thousand.** The store's `idPrefix` is a literal prefix scan — `idPrefix
+  "<conv>:000015"` matches that one message — so the tail window a long
+  transcript was replayed from (built by extending the sequence prefix) came
+  back with a single document: resuming a conversation past the 1000-message
+  page cap showed its thousandth message instead of its last thousand. The
+  window is now selected with the store's exclusive `after` cursor, which is
+  what selects a range, and the same cursor form carries the new ctrl+o
+  subagent pane (checked against a live store: the window is the last 40
+  messages, the continuation only what landed since).
 - **The worker badge stops naming things that have already finished.** The
   badge's slow refresh (one `process_list`/`agent_list` every 10s *while
   something runs*) died after its first tick: the tick handler asked
