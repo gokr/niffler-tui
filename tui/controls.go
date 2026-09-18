@@ -32,6 +32,9 @@ func (m model) switchSession(id string) model {
 	}
 	m.usageCache[m.session] = m.usageSnapshot()
 	m.session = id
+	if m.gate != nil {
+		m.gate.setSessions(id, m.agents)
+	}
 	m.restoreUsage(m.usageCache[id])
 	m.cwd = initialCwd()
 	// Remember the active conversation so a restart resumes it (explicit

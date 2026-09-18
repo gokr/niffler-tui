@@ -15,6 +15,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"charm.land/bubbles/v2/key"
@@ -130,6 +131,117 @@ type connectStoppedMsg struct{}
 type sessionEventMsg struct {
 	kind  string
 	event sessionEvent
+}
+
+// sessionTokenFlushEvery bounds how often merged token frames reach the UI
+// queue during a heavy stream: the wire can carry hundreds of token frames
+// per second and the renderer coalesces painting anyway, so one merged event
+// every ~50ms is visually identical and keeps the queue shallow.
+const sessionTokenFlushEvery = 50 * time.Millisecond
+
+// sessionEventGate is the flood guard between the raw ev.session.> wire tap
+// and the UI queue. Every conversation's token stream shares one subject, so
+// a single busy conversation can emit hundreds of frames per second that no
+// other TUI cares about. The gate drops frames for sessions this TUI does
+// not display (the current conversation plus its subagent children, mirrored
+// from the roster) and coalesces the remaining token frames into periodic
+// merged events, so the bubbletea queue and the NATS client's subscription
+// buffer cannot fall behind the wire rate (slow-consumer drops).
+type sessionEventGate struct {
+	mu       sync.Mutex
+	current  string
+	children map[string]bool
+	batch    map[string]*tokenAccum
+}
+
+type tokenAccum struct {
+	content   strings.Builder
+	reasoning strings.Builder
+}
+
+func newSessionEventGate(current string) *sessionEventGate {
+	return &sessionEventGate{current: current, children: map[string]bool{},
+		batch: map[string]*tokenAccum{}}
+}
+
+// setSessions mirrors the model's view of which sessions matter: the
+// displayed conversation and its subagent children (the roster snapshot).
+func (g *sessionEventGate) setSessions(current string, children []agentSummary) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.current = current
+	g.children = map[string]bool{}
+	for _, a := range children {
+		if a.SessionID != "" {
+			g.children[a.SessionID] = true
+		}
+	}
+}
+
+// interested reports whether a frame for id still matters to this TUI.
+// An empty id keeps the pre-gate behavior: the UI decides.
+func (g *sessionEventGate) interested(id string) bool {
+	if id == "" {
+		return true
+	}
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return id == g.current || g.children[id]
+}
+
+// addToken folds one token frame into the session's pending batch. The
+// flusher tick and flushSession own sending, which bounds the queue rate.
+func (g *sessionEventGate) addToken(ev sessionEvent) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	acc := g.batch[ev.SessionID]
+	if acc == nil {
+		acc = &tokenAccum{}
+		g.batch[ev.SessionID] = acc
+	}
+	if ev.Content != "" {
+		acc.content.WriteString(ev.Content)
+	}
+	if ev.Reasoning != "" {
+		acc.reasoning.WriteString(ev.Reasoning)
+	}
+}
+
+// flushSession drains one session's pending token batch into a single merged
+// event (nil when empty). Called before forwarding a structural event of the
+// same session so the token tail lands ahead of it.
+func (g *sessionEventGate) flushSession(id string) *sessionEvent {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return g.takeLocked(id)
+}
+
+// flushAll drains every pending batch.
+func (g *sessionEventGate) flushAll() []sessionEvent {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	var out []sessionEvent
+	for id := range g.batch {
+		if ev := g.takeLocked(id); ev != nil {
+			out = append(out, *ev)
+		}
+	}
+	return out
+}
+
+// takeLocked removes and merges one session's batch; the caller holds g.mu.
+func (g *sessionEventGate) takeLocked(id string) *sessionEvent {
+	acc := g.batch[id]
+	if acc == nil {
+		return nil
+	}
+	delete(g.batch, id)
+	content := acc.content.String()
+	reasoning := acc.reasoning.String()
+	if content == "" && reasoning == "" {
+		return nil
+	}
+	return &sessionEvent{SessionID: id, Content: content, Reasoning: reasoning}
 }
 
 // turnDoneMsg completes a session turn. session is the conversation the
@@ -254,6 +366,10 @@ type model struct {
 	// Subagent roster (agent_list's read-only UI affordance) + the ctrl+o
 	// output cycle: the worker roster and the selected worker's output pane.
 	agents       []agentSummary
+	// gate drops and coalesces ev.session.* frames before the UI queue; it
+	// mirrors this model's session + roster so the wire flood of other
+	// conversations never reaches Update (see sessionEventGate).
+	gate *sessionEventGate
 	bgPeekRoster []bgTarget
 	// childAct is the live activity of this conversation's subagents, fed by
 	// the ev.session.* frames of every session on the bus (agents.go).
@@ -1734,6 +1850,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else {
 			m.agents = nil
 		}
+		if m.gate != nil {
+			m.gate.setSessions(m.session, m.agents)
+		}
 		if m.mode == modeBgPeek {
 			m.refreshBgPeekRoster()
 		}
@@ -3072,6 +3191,12 @@ func main() {
 
 	comp := sdk.New(uiName, componentVersion)
 	comp.Client = true
+	// The wire tap for ev.session.> sees every conversation's frames; one
+	// busy conversation can flood at hundreds of frames per second. The gate
+	// drops frames for sessions this TUI neither displays nor parents and
+	// coalesces the rest's token frames, so the UI queue and the NATS
+	// client's subscription buffer keep up (no slow-consumer drops).
+	gate := newSessionEventGate(*session)
 	var program *tea.Program
 	comp.On("ev.session.>", func(_ *sdk.Component, subject string, payload json.RawMessage) {
 		var event sessionEvent
@@ -3079,8 +3204,34 @@ func main() {
 			return
 		}
 		kind := strings.TrimPrefix(subject, "ev.session.")
+		if !gate.interested(event.SessionID) {
+			return
+		}
+		if kind == "token" {
+			gate.addToken(event)
+			return
+		}
+		// Structural events flush the session's token tail first so the
+		// merged frame lands ahead of them (per-subject wire order holds).
+		if tail := gate.flushSession(event.SessionID); tail != nil {
+			program.Send(sessionEventMsg{kind: "token", event: *tail})
+		}
 		program.Send(sessionEventMsg{kind: kind, event: event})
 	})
+	// Bound the queue rate: merged token events reach the UI on a fixed
+	// cadence instead of per wire frame.
+	go func() {
+		ticker := time.NewTicker(sessionTokenFlushEvery)
+		defer ticker.Stop()
+		for range ticker.C {
+			if program == nil {
+				continue
+			}
+			for _, ev := range gate.flushAll() {
+				program.Send(sessionEventMsg{kind: "token", event: ev})
+			}
+		}
+	}()
 	comp.On("ev.provider.>", func(_ *sdk.Component, subject string, payload json.RawMessage) {
 		if program == nil {
 			return
@@ -3161,6 +3312,8 @@ func main() {
 	})
 
 	m := newModel(ctx, comp, *session, natsURL)
+	m.gate = gate
+	m.gate.setSessions(m.session, m.agents)
 	m.uiID = uiID
 	m.uiName = uiName
 	m.launchDir = launchDir
