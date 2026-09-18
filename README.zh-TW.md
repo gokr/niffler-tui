@@ -2,15 +2,13 @@
 
 [English](README.md) · [简体中文](README.zh.md) · 繁體中文 · [Discord](https://discord.gg/ThJFEAJUAk)
 
+> 🤖 AI 自動翻譯，可能落後於英文版；以 [English](README.md) 為準。
+
 Niffler 的 Bubble Tea 終端機客戶端。和桌面 UI 一樣，它是個匯流排客戶端：
 經 `svc.core.call` 驅動 `session` 呼叫，並渲染 `ev.session.*` 的 token、
 tool-call、assistant 與 completion 事件。
 
 該組件以零工具註冊。執行它不會給任何 LLM 的工具上下文新增東西。
-
-介面語言（en/zh/zh-TW）依序由 `/locale` 的持久化選擇、`NIF_TUI_LOCALE`、
-`LANG`/`LC_ALL`（zh_TW/zh_HK → 繁體，其他 zh → 簡體）決定，預設英文；
-執行期可用 `/locale [en|zh|zh-TW]` 即時切換。
 
 ## 建置
 
@@ -47,6 +45,9 @@ Niffler 的 builder 不使用這個 `go.mod`；它建立隔離的模組，replac
 - `NIF_NATS_URL` 選擇匯流排。未設定時，客戶端依序檢查
   `$NIF_ROOT/var/nats-url`、`./var/nats-url`，最後是
   `nats://127.0.0.1:4222`。
+- 介面語言依序由 `/locale` 持久化的選擇、`NIF_TUI_LOCALE`
+  （`en`/`zh`/`zh-TW`）、`LANG`/`LC_ALL`（zh_TW/zh_HK → 繁體，其他 zh →
+  簡體）決定，最後回退英文。
 
 按鍵：
 
@@ -129,7 +130,11 @@ Niffler 的 builder 不使用這個 `go.mod`；它建立隔離的模組，replac
 - `/discover <元件>|tool=名稱` —— 將某個元件的工具（或指定的單一工具）曝光給
   本對話，讓模型可以直接呼叫它們
 - `/profile [名稱|default]` —— 套用於新對話的工具設定；`default` 清除它，
-  不帶參數的 `/profile` 列出可用設定與目前選擇
+  不帶參數的 `/profile` 開啟選擇器，列出已儲存的設定，標出目前選擇與每個
+  設定解析出的工具數。選擇器中的 `＋ New profile…` 開啟表單，在儲存前
+  對照即時目錄校驗每個選擇器：裸選擇器命名元件，單一工具寫作
+  `component.tool`（如 `edit.read`，而非 `read`），`-tool` 表示排除。
+  這裡沒有安全邊界——設定只為在其被選取期間新建的對話裁剪或新增工具。
 - `/new [id]` —— 開始一個新對話
 - `/session` —— 對話瀏覽器；切換或復原對話，或開始新對話
 - `/locale [en|zh|zh-TW]` —— 切換介面語言（持久化到使用者狀態目錄）
@@ -143,7 +148,9 @@ Niffler 的 builder 不使用這個 `go.mod`；它建立隔離的模組，replac
 - `/cards [on|off]` —— 用主題的卡片底色渲染工具執行區塊，使其讀作一個
   整體（僅本次執行的顯示開關）
 - `/restart` —— 以保留的結束代碼結束，讓已安裝的 `niffler-tui` 包裝腳本重新執行
-  二進位，從而在更新後載入新組建的安裝；不透過包裝腳本執行時則直接結束
+  二進位，從而在更新後載入新組建的安裝；不透過包裝腳本執行時則直接結束。
+  你所在的對話和此客戶端的身份（其 `Niffler N` 標籤）會移交到繼任程序，
+  即使舊程序從未釋放該對話，繼任者也會復原它
 - `/alias <名稱> <提示…>` —— 定義提示快捷鍵：輸入 `/名稱`（其後可附加文字，會
   接到已儲存的提示之後）會將該提示以普通回合送出。不帶參數的 `/alias` 或
   `/alias list` 列出已定義別名，`/alias rm <名稱>` 刪除；定義持久化到使用者狀態
@@ -162,8 +169,7 @@ Tab 補全適用於指令名，以及指令宣告的參數值（內聯候選，�
 標頭顯示對話 id、`think:`/`tool:`/`effort:` 狀態區塊，以及有效的供應商
 與模型，外加內容占用條。內容佔用在可用時使用模型上報的總 token 數，
 經 Niffler 的對話元資料跨對話復原存續，並在與 core 相同的 75% 警告 /
-90% 裁剪閾值處變色。供應商選擇改變 Niffler 的全域預設；模型選擇僅限
-目前對話。同一行還會顯示對話累計 token 用量（`↑ 輸入 ↓ 輸出`）與
+90% 裁剪閾值處變色。同一行還會顯示對話累計 token 用量（`↑ 輸入 ↓ 輸出`）與
 prompt 快取命中率（復原對話時從對話標頭資訊載入）。供應商選擇改變
 Niffler 的全域預設；模型選擇僅限目前對話。
 

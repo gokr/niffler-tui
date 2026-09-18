@@ -45,6 +45,9 @@ Configuration:
 - `NIF_NATS_URL` selects the bus. When unset, the client checks
   `$NIF_ROOT/var/nats-url`, then `./var/nats-url`, then
   `nats://127.0.0.1:4222`.
+- The UI language resolves from a choice persisted by `/locale`, then
+  `NIF_TUI_LOCALE` (`en`/`zh`/`zh-TW`), then `LANG`/`LC_ALL` (zh_TW/zh_HK →
+  Traditional, other zh → Simplified), then English.
 
 Keys:
 
