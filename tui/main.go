@@ -3199,14 +3199,23 @@ func main() {
 	gate := newSessionEventGate(*session)
 	var program *tea.Program
 	comp.On("ev.session.>", func(_ *sdk.Component, subject string, payload json.RawMessage) {
+		// Subjects are per-conversation (ev.session.<sessionId>.<kind>); the
+		// gate filters on the subject's session token before the payload is
+		// parsed. A two-token subject (legacy ev.session.<kind>) falls back
+		// to the payload's sessionId.
+		parts := strings.Split(subject, ".")
+		haveSubjectSession := len(parts) >= 3
+		if haveSubjectSession && !gate.interested(parts[2]) {
+			return
+		}
 		var event sessionEvent
 		if err := json.Unmarshal(payload, &event); err != nil || program == nil {
 			return
 		}
-		kind := strings.TrimPrefix(subject, "ev.session.")
-		if !gate.interested(event.SessionID) {
+		if !haveSubjectSession && !gate.interested(event.SessionID) {
 			return
 		}
+		kind := parts[len(parts)-1]
 		if kind == "token" {
 			gate.addToken(event)
 			return
