@@ -272,6 +272,7 @@ func (m model) runAlias(name, extra string) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	if m.controlPending {
+		m.contextNote = t(m.loc, "note.controlPending")
 		return m, nil
 	}
 	if m.busy {
@@ -291,6 +292,7 @@ func (m model) runAlias(name, extra string) (tea.Model, tea.Cmd) {
 	m.thinkingIdx = -1
 	m.setStreaming(false)
 	m.roundClosed = false
+	m.turnEndRendered = false
 	m.addBlock(blockUser, prompt)
 	m.layout()
 	m.syncViewport(true)

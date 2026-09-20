@@ -8,6 +8,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -251,6 +252,70 @@ type turnDoneMsg struct {
 	session string
 	reply   string
 	err     error
+}
+
+// turnBusyMsg reports that the runner refused a sent turn because the
+// conversation is already mid-turn (another client, a background wake, or a
+// resumed turn this process did not know about yet). The message is steered
+// into the live turn instead — busy stays true until its done event lands.
+type turnBusyMsg struct {
+	session string
+	content string
+}
+
+// sessionProbeMsg carries the attach-time mid-turn probe result: a direct
+// readback to the session runner that answers {busy} even while a turn runs.
+type sessionProbeMsg struct {
+	session string
+	busy    bool
+}
+
+// sessionProbeTimeout bounds the attach-time probe. The runner answers an
+// idle readback and a mid-turn refusal instantly (pumpBusyCall); a timeout
+// means no runner is alive or it is wedged — both read as "not busy" here,
+// and live events take over either way.
+const sessionProbeTimeout = 5 * time.Second
+
+// turnActivityKinds are the ev.session event kinds that only ever appear
+// while a turn is live (published from runTurn). A frame of one of these for
+// the current session while not busy means a turn this client did not start
+// is running: adopt busy so the spinner, ESC-stop and steer-Enter behave
+// like an own turn. "done" clears busy (finishTurn) and "status" is excluded
+// because the idle readback also emits it.
+var turnActivityKinds = map[string]bool{
+	"token":    true,
+	"assistant": true,
+	"toolcall": true,
+	"retry":    true,
+	"notice":   true,
+	"context":  true,
+	"steer":    true,
+	"map":      true,
+	"diag":     true,
+}
+
+// adoptBusy marks the current conversation busy for a turn this process did
+// not send: a resume after /restart, a wake turn, another client's
+// continuation. busySince starts now — the true start is unknown — so the
+// elapsed clock in the busy label is honest about what it measures.
+func (m *model) adoptBusy() {
+	if m.busy {
+		return
+	}
+	m.busy = true
+	m.busySince = time.Now()
+	m.lastTokenAt = m.busySince
+	m.turnEndRendered = false
+	m.steered = 0
+}
+
+// cancelledError reports a turn-ending error that is a cancellation rather
+// than a failure: the wording the runner uses when a stop (__cancel) or the
+// llm side-channel ends a turn. Used to render "stopped" instead of a red
+// error row when the user asked for the stop.
+func cancelledError(text string) bool {
+	return strings.Contains(text, "cancelled by request") ||
+		strings.Contains(text, "cancelled by user")
 }
 
 // renderSettleMsg fires after markdownSettleDelay of quiet streaming output;
@@ -541,9 +606,17 @@ type model struct {
 
 	// Two-stage stop (Opencode/Pi-style): while busy, the first ESC arms a
 	// "Stop?" prompt in the status bar and the second ESC force-cancels the
-	// running LLM stream via llm.cancel.<sessionId>, ending the turn.
+	// running turn via llm.cancel.<sessionId> plus a __cancel control on the
+	// runner's steer channel, ending the turn.
 	stopArmed bool
 	stopping  bool
+
+	// turnEndRendered marks the current turn's end state (reply, error or
+	// stopped note) as already rendered: a turn's completion arrives twice —
+	// once as the "done" event, once as the session request's reply — and
+	// the second must not render a second row (or a conflicting one). Reset
+	// when a new turn starts or a busy turn is adopted.
+	turnEndRendered bool
 
 	// restart marks a /restart request: the client quits with
 	// restartExitCode so a wrapper script can re-run it. Plain tea.Quit
@@ -890,37 +963,122 @@ func (m model) sendTurn(content string) tea.Cmd {
 		if m.sessionNeedsCreate {
 			args["cwd"] = m.cwd
 		}
-		result, err := m.comp.Request("core", "session", args, turnTimeout)
+		result, err := m.sessionRequest(args)
 		if err != nil && m.sessionNeedsCreate {
 			delete(args, "cwd")
-			result, err = m.comp.Request("core", "session", args, turnTimeout)
+			result, err = m.sessionRequest(args)
 		}
 		if err != nil {
+			if errors.Is(err, errMidTurn) {
+				// The runner refused: the conversation is already mid-turn
+				// (another client, a wake turn, a resume this process did
+				// not know about). Steer instead — busy stays true and the
+				// live turn's done event clears it.
+				return turnBusyMsg{session: m.session, content: content}
+			}
 			return turnDoneMsg{session: m.session, err: fmt.Errorf("session turn: %w", err)}
 		}
 		var response struct {
-			Reply string `json:"reply"`
+			Reply     string `json:"reply"`
+			TurnError string `json:"turnError"`
 		}
 		if err := json.Unmarshal(result, &response); err != nil {
 			return turnDoneMsg{session: m.session, err: fmt.Errorf("decode session result: %w", err)}
+		}
+		if response.TurnError != "" {
+			// The runner completed the call but the turn itself failed (or
+			// was cancelled): surface it exactly like the "done" event does,
+			// so a stopped turn reads "stopped" whichever completion arrives
+			// first (done event vs request reply — NATS orders per subject,
+			// not across them).
+			return turnDoneMsg{session: m.session, err: errors.New(response.TurnError)}
 		}
 		return turnDoneMsg{session: m.session, reply: response.Reply}
 	}
 }
 
-// cancelTurnCmd force-cancels the running turn by publishing
-// llm.cancel.<sessionId>, which aborts the in-flight streaming chat call
-// in the llm component. The session runner sees the cancelled chat error,
-// ends the turn with "done", and the pending core/session request returns,
-// so finishTurn runs and busy clears. Fire-and-forget (errors surface as
-// nothing here; the request will time out on its own if the cancel fails).
+// errMidTurn marks a session request refused because the conversation is
+// mid-turn (the runner's pumpBusyCall code, the same contract agent_run
+// uses). The Go SDK's Request collapses the error envelope to its message;
+// sessionRequest keeps the code so the caller can distinguish it.
+var errMidTurn = errors.New("mid-turn")
+
+// sessionRequest performs one session call over svc.core.call and returns
+// the raw result args. A mid-turn refusal surfaces as errMidTurn (matched
+// with errors.Is) so the caller can steer instead of failing the turn.
+func (m model) sessionRequest(args map[string]any) (json.RawMessage, error) {
+	raw, err := json.Marshal(args)
+	if err != nil {
+		return nil, err
+	}
+	env := sdk.Envelope{V: 1, ID: sdk.NewID(), Kind: sdk.KindCall,
+		Tool: "session", Args: raw, Caller: m.comp.Name}
+	reply, err := m.comp.RequestEnvelope("svc.core.call", env, turnTimeout)
+	if err != nil {
+		return nil, err
+	}
+	if reply.Kind == sdk.KindError {
+		if reply.Error != nil && reply.Error.Code == "busy" {
+			return nil, errMidTurn
+		}
+		if reply.Error != nil {
+			return nil, errors.New(reply.Error.Message)
+		}
+		return nil, errors.New("component error")
+	}
+	if reply.Kind != sdk.KindResult {
+		return nil, fmt.Errorf("expected result envelope, got %s", reply.Kind)
+	}
+	return reply.Args, nil
+}
+
+// sessionProbeCmd asks the session runner directly whether a turn is live:
+// an idle runner answers the read-only status readback, a mid-turn runner
+// refuses with code "busy" (pumpBusyCall — instant, unlike a forwarded
+// session call which would wait for the turn). Used at attach and on every
+// session switch so a restarted TUI resumes a running conversation in busy
+// state instead of looking idle while the runner keeps working.
+func sessionProbeCmd(comp *sdk.Component, session string) tea.Cmd {
+	return func() tea.Msg {
+		raw, err := json.Marshal(map[string]any{"sessionId": session})
+		if err != nil {
+			return sessionProbeMsg{session: session}
+		}
+		env := sdk.Envelope{V: 1, ID: sdk.NewID(), Kind: sdk.KindCall,
+			Tool: "session", Args: raw, Caller: comp.Name}
+		reply, err := comp.RequestEnvelope(
+			"svc.session."+sanitizeSessionID(session)+".call", env, sessionProbeTimeout)
+		if err != nil {
+			// No runner (ErrNoResponders) or a wedged one (timeout): both
+			// read as not busy; live events take over either way.
+			return sessionProbeMsg{session: session}
+		}
+		busy := reply.Kind == sdk.KindError && reply.Error != nil &&
+			reply.Error.Code == "busy"
+		return sessionProbeMsg{session: session, busy: busy}
+	}
+}
+
+// cancelTurnCmd force-cancels the running turn with the same two-channel
+// protocol core's agent_stop uses (components/agent publishCancel):
+// llm.cancel.<sessionId> aborts an in-flight streaming chat call (the llm
+// component owns that subscription for the duration of the call), and a
+// __cancel control on the runner's steer channel raises the cancel flag
+// runTurn checks — it ends the turn between rounds and aborts an in-flight
+// tool dispatch, which is what actually lands the stop when the turn is not
+// streaming (a long tool call, a retry backoff, an approval wait). The
+// llm.cancel publish alone was unreliable: outside a streaming chat call
+// nothing is subscribed to it, so NATS dropped the message and the turn ran
+// on — "Stopping…" forever. Fire-and-forget (errors surface as nothing
+// here; the pending core/session request returns when the turn ends).
 // Pointer receiver: arming the stopping state must survive on the model.
 func (m *model) cancelTurnCmd() tea.Cmd {
 	m.stopping = true
 	m.stopArmed = false
 	return func() tea.Msg {
-		subject := "llm.cancel." + sanitizeSessionID(m.session)
-		_ = m.comp.Emit(subject, map[string]any{"sessionId": m.session})
+		id := sanitizeSessionID(m.session)
+		_ = m.comp.Emit("llm.cancel."+id, map[string]any{"sessionId": m.session})
+		_ = m.comp.Emit("svc.session."+id+".steer", map[string]any{"__cancel": true})
 		return nil
 	}
 }
@@ -991,9 +1149,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.syncViewport(true)
 			cmds = append(cmds, histCmd)
 		}
-		// Bootstrap + transcript replay for whichever session we ended on.
+		// Bootstrap + transcript replay for whichever session we ended on,
+		// plus the mid-turn probe: a restarted TUI must resume a running
+		// conversation in busy state (spinner, ESC-stop, steer-Enter), not
+		// sit idle while its runner keeps working.
 		cmds = append(cmds, bootstrapBackendCmd(m.comp, m.session))
 		cmds = append(cmds, m.startHistoryLoad())
+		cmds = append(cmds, sessionProbeCmd(m.comp, m.session))
 		return m, tea.Batch(cmds...)
 
 	case uiRenewMsg:
@@ -1172,6 +1334,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// them with read; no content is ever attached here.
 			content = m.resolveFileRefs(content)
 			if !m.connected {
+				// Typing a prompt while disconnected must not silently eat it:
+				// the status bar shows the connecting state, but the keystroke
+				// itself deserves a visible acknowledgment too.
+				m.contextNote = t(m.loc, "note.notConnected")
 				return m, nil
 			}
 			if m.busy {
@@ -1188,6 +1354,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, m.sendSteer(content)
 			}
 			if m.controlPending {
+				// A settings save is still in flight; the prompt is kept in the
+				// input box and a note says why it did not send.
+				m.contextNote = t(m.loc, "note.controlPending")
 				return m, nil
 			}
 			if m.addHistory(content) {
@@ -1206,6 +1375,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.thinkingIdx = -1
 			m.setStreaming(false)
 			m.roundClosed = false
+			m.turnEndRendered = false
 			m.addBlock(blockUser, content)
 			m.layout()
 			m.syncViewport(true)
@@ -1988,12 +2158,49 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case sessionEventMsg:
 		if msg.event.SessionID == m.session {
 			cmds = append(cmds, m.applySessionEvent(msg))
+			// A live turn this client did not start (a resume after
+			// /restart, a wake turn, another client's continuation) emits
+			// frames for the current session while busy is false: adopt
+			// busy so the spinner, ESC-stop and steer-Enter all work. The
+			// token guard mirrors applySessionEvent's roundClosed check — a
+			// late token after "done" must not re-open busy.
+			if !m.busy && turnActivityKinds[msg.kind] &&
+				(msg.kind != "token" || !m.roundClosed) {
+				m.adoptBusy()
+				m.syncViewport(false)
+			}
 		} else {
 			// Another session's frames are this conversation's subagents (and
 			// other clients' children): fold the known ones into the activity
 			// map the worker badge and cycle read.
 			m.noteChildActivity(msg.kind, msg.event)
 		}
+
+	case sessionProbeMsg:
+		// The attach-time probe belongs to the session it was sent for; a
+		// switch that happened while it was in flight must not adopt busy
+		// into the new conversation.
+		if msg.session != m.session || m.busy {
+			break
+		}
+		if msg.busy {
+			m.adoptBusy()
+			m.addBlock(blockMeta, t(m.loc, "note.turnResumed"))
+			m.syncViewport(true)
+		}
+
+	case turnBusyMsg:
+		// The runner refused a sent turn: the conversation is already
+		// mid-turn. Keep busy (the live turn's done event clears it) and
+		// steer the message into the running turn — the user's intent was
+		// to say something, and mid-turn that is exactly a steer.
+		if msg.session != m.session {
+			break
+		}
+		m.sessionNeedsCreate = false
+		m.addBlock(blockMeta, t(m.loc, "note.midTurnSteered"))
+		m.syncViewport(true)
+		cmds = append(cmds, m.sendSteer(msg.content))
 
 	case turnDoneMsg:
 		// A turn completion belongs to the session it was sent for; after a
@@ -2360,6 +2567,9 @@ func (m *model) restoreUsage(u usageTotals) {
 }
 
 func (m *model) finishTurn(reply, errorText string) {
+	// Capture before clearing: the stopped-note rendering below needs to
+	// know whether THIS completion is the end of a user-requested stop.
+	stopping := m.stopping
 	m.stopArmed = false
 	m.stopping = false
 	m.busy = false
@@ -2373,12 +2583,23 @@ func (m *model) finishTurn(reply, errorText string) {
 	// unfinalized thinking block would pull the next turn's reasoning into
 	// this one (see the assistant-event finalization in applySessionEvent).
 	m.finalizeThinking()
-	if errorText != "" {
-		m.addUniqueBlock(blockError, errorText)
-	} else if reply != "" && !m.hadAssistant {
-		m.addBlock(blockAssistant, reply)
-		m.hadAssistant = true
+	if !m.turnEndRendered {
+		if errorText != "" {
+			if stopping && cancelledError(errorText) {
+				// The user asked for this stop: render it as a neutral note,
+				// not a red failure row.
+				m.addUniqueBlock(blockMeta, t(m.loc, "chat.stopped"))
+			} else {
+				m.addUniqueBlock(blockError, errorText)
+			}
+		} else if reply != "" && !m.hadAssistant {
+			m.addBlock(blockAssistant, reply)
+			m.hadAssistant = true
+		}
 	}
+	// A turn's completion arrives twice (done event + request reply); the
+	// second must not render a second row.
+	m.turnEndRendered = true
 	m.assistantIdx = -1
 	m.thinkingIdx = -1
 }

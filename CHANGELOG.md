@@ -8,6 +8,29 @@ project aims for [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **A restarted TUI resumes a running conversation in busy state.** A
+  `/restart` successor used to sit idle while its session runner kept working:
+  busy was only ever set by this process's own send, so the successor showed
+  no spinner, ESC did not stop, and Enter sent a fresh turn that the runner
+  refused with "busy". On attach — and on every `/session` switch — the TUI
+  now asks the runner directly whether a turn is live (an idle runner answers
+  the status readback, a mid-turn one refuses with code "busy"), and live
+  `ev.session` frames for the current conversation also adopt busy when this
+  process did not start the turn (wake turns, another client's continuation).
+  A note says so ("conversation is mid-turn — resumed live"), the spinner and
+  ESC-stop work, and a send refused mid-turn is steered into the live turn
+  instead of failing.
+- **The two-ESC stop is now a real two-channel cancel.** The second ESC used
+  to publish only `llm.cancel.<sessionId>`, which aborts a streaming LLM call
+  and nothing else: outside one (a long tool call, a retry backoff, an
+  approval wait) the message had no subscriber and was dropped, and the TUI
+  sat at "Stopping…" while the turn ran on. The stop now also publishes the
+  `__cancel` control on the runner's steer channel — the same pair core's
+  `agent_stop` uses — which ends the turn between rounds and aborts in-flight
+  tool dispatches. A stopped turn renders a neutral "turn stopped." note
+  instead of a red error row, and the turn's two completions (done event +
+  request reply) render one row, not two.
+
 - **ctrl+o is a split view: the worker roster on top, a real output pane
   below.** The worker cycle used to render one card per worker — a status line
   plus, for a subagent, a single "last output" row — so the answer to "what is
@@ -90,6 +113,11 @@ project aims for [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   unchanged.
 
 ### Fixed
+
+- **A prompt typed while disconnected or mid-settings-save was silently
+  eaten.** Enter with the bus down returned without a word; now the prompt
+  stays in the input and a note says why it did not send. Same for a prompt
+  typed while a settings save is still in flight.
 
 - **A long conversation's replay window was one message, not the last
   thousand.** The store's `idPrefix` is a literal prefix scan — `idPrefix

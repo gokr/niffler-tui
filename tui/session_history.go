@@ -259,8 +259,10 @@ func (m model) switchSessionWithHistory(id string) (model, tea.Cmd) {
 		}
 	}
 	m = m.switchSession(id)
-	cmd := m.startHistoryLoad()
-	return m, cmd
+	// Probe the target for a live turn the same way the attach path does:
+	// switching onto a conversation another client is driving must resume
+	// busy, not idle.
+	return m, tea.Batch(m.startHistoryLoad(), sessionProbeCmd(m.comp, id))
 }
 
 // replayConversation converts stored messages into transcript blocks in

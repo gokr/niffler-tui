@@ -499,6 +499,142 @@ func TestSteerClearedByDone(t *testing.T) {
 	}
 }
 
+func TestLiveEventAdoptsBusy(t *testing.T) {
+	m := newTestModel()
+	m.session = "game"
+	m.roundClosed = false
+
+	// A token frame for the current session while idle: a turn this client
+	// did not start is live (resume, wake, another client) — adopt busy.
+	updated, _ := m.Update(sessionEventMsg{kind: "token",
+		event: sessionEvent{SessionID: "game", Content: "hi"}})
+	m = updated.(model)
+	if !m.busy {
+		t.Fatal("live token did not adopt busy")
+	}
+	if m.busySince.IsZero() {
+		t.Fatal("adopted busy has no busySince")
+	}
+
+	// A status event must NOT adopt busy: the idle status readback emits it.
+	m = newTestModel()
+	m.session = "game"
+	updated, _ = m.Update(sessionEventMsg{kind: "status",
+		event: sessionEvent{SessionID: "game"}})
+	m = updated.(model)
+	if m.busy {
+		t.Fatal("status event adopted busy; the idle readback emits status")
+	}
+
+	// A late token after done (roundClosed) must not re-open busy.
+	m = newTestModel()
+	m.session = "game"
+	m.roundClosed = true
+	updated, _ = m.Update(sessionEventMsg{kind: "token",
+		event: sessionEvent{SessionID: "game", Content: "late"}})
+	m = updated.(model)
+	if m.busy {
+		t.Fatal("late token after done re-opened busy")
+	}
+
+	// Another session's frames never adopt busy here.
+	m = newTestModel()
+	m.session = "game"
+	updated, _ = m.Update(sessionEventMsg{kind: "token",
+		event: sessionEvent{SessionID: "other", Content: "child"}})
+	m = updated.(model)
+	if m.busy {
+		t.Fatal("another session's token adopted busy")
+	}
+}
+
+func TestProbeAdoptsBusyOnlyForCurrentSession(t *testing.T) {
+	m := newTestModel()
+	m.session = "game"
+
+	updated, _ := m.Update(sessionProbeMsg{session: "game", busy: true})
+	m = updated.(model)
+	if !m.busy {
+		t.Fatal("probe did not adopt busy")
+	}
+	if len(m.blocks) != 1 || m.blocks[0].kind != blockMeta ||
+		!strings.Contains(m.blocks[0].text, "mid-turn") {
+		t.Fatalf("probe note blocks = %#v", m.blocks)
+	}
+
+	// A probe for a session we switched away from is dropped.
+	m = newTestModel()
+	m.session = "game"
+	updated, _ = m.Update(sessionProbeMsg{session: "old", busy: true})
+	m = updated.(model)
+	if m.busy {
+		t.Fatal("stale probe adopted busy into the new session")
+	}
+}
+
+func TestTurnBusyRefusalSteers(t *testing.T) {
+	m := newTestModel()
+	m.session = "game"
+	m.busy = true // the send path set busy before the refusal came back
+	m.addBlock(blockUser, "send me")
+
+	updated, cmd := m.Update(turnBusyMsg{session: "game", content: "send me"})
+	m = updated.(model)
+	if !m.busy {
+		t.Fatal("busy refusal cleared busy; the foreign turn is still running")
+	}
+	if cmd == nil {
+		t.Fatal("busy refusal did not steer the message into the live turn")
+	}
+	if m.sessionNeedsCreate {
+		t.Fatal("busy refusal kept sessionNeedsCreate; the header exists")
+	}
+	var found bool
+	for _, b := range m.blocks {
+		if b.kind == blockMeta && strings.Contains(b.text, "steered") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("no steered note in blocks: %#v", m.blocks)
+	}
+}
+
+func TestFinishTurnStoppedRendersNoteOnce(t *testing.T) {
+	m := newTestModel()
+	m.stopping = true
+	m.busy = true
+	m.finishTurn("", "cancelled by request")
+	if m.busy || m.stopping {
+		t.Fatal("finishTurn did not clear busy/stopping")
+	}
+	if len(m.blocks) != 1 || m.blocks[0].kind != blockMeta {
+		t.Fatalf("stopped turn rendered %#v, want one meta note", m.blocks)
+	}
+
+	// The second completion (request reply after the done event) must not
+	// render a second row.
+	m.finishTurn("", "cancelled by request")
+	if len(m.blocks) != 1 {
+		t.Fatalf("second completion rendered again: %#v", m.blocks)
+	}
+
+	// A real failure is still a red error row, not a stopped note.
+	m = newTestModel()
+	m.stopping = true
+	m.finishTurn("", "llm error: quota exhausted")
+	if len(m.blocks) != 1 || m.blocks[0].kind != blockError {
+		t.Fatalf("failure rendered %#v, want one error row", m.blocks)
+	}
+
+	// A cancelled foreign turn (no stop armed here) stays an error row.
+	m = newTestModel()
+	m.finishTurn("", "cancelled by request")
+	if len(m.blocks) != 1 || m.blocks[0].kind != blockError {
+		t.Fatalf("foreign cancel rendered %#v, want one error row", m.blocks)
+	}
+}
+
 func TestWrappedInputEdges(t *testing.T) {
 	m := newTestModel()
 	m.width = 14 // 12 columns after the prompt allowance in layout.

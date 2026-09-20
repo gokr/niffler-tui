@@ -51,6 +51,7 @@ func (m model) switchSession(id string) model {
 	m.busy = false
 	m.stopArmed = false
 	m.stopping = false
+	m.turnEndRendered = false
 	m.setStreaming(false)
 	m.roundClosed = false
 	m.renderTimerActive = false
