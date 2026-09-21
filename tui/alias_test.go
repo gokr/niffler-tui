@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -15,7 +16,7 @@ func aliasTestModel(t *testing.T) model {
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
 	m := newTestModel()
 	m.connected = true
-	m.aliases = map[string]string{}
+	m.aliases = map[string]aliasEntry{}
 	return m
 }
 
@@ -36,7 +37,7 @@ func TestAliasCreatePersistReload(t *testing.T) {
 	m := aliasTestModel(t)
 
 	updated, text := runAliasCommand(t, m, "/alias commit Please commit all changes properly")
-	if got := updated.aliases["commit"]; got != "Please commit all changes properly" {
+	if got := updated.aliases["commit"].Prompt; got != "Please commit all changes properly" {
 		t.Fatalf("alias not stored: %#v", updated.aliases)
 	}
 	if !strings.Contains(text, "/commit") || !strings.Contains(text, "Please commit all changes properly") {
@@ -59,13 +60,13 @@ func TestAliasCreatePersistReload(t *testing.T) {
 	}
 
 	// A reload (fresh process) sees the alias.
-	if got := loadAliases()["commit"]; got != "Please commit all changes properly" {
+	if got := loadAliases()["commit"].Prompt; got != "Please commit all changes properly" {
 		t.Fatalf("reload = %q, want the stored prompt", got)
 	}
 
 	// `add` is explicit sugar for the same thing.
 	updated, _ = runAliasCommand(t, updated, "/alias add push push everything now")
-	if got := updated.aliases["push"]; got != "push everything now" {
+	if got := updated.aliases["push"].Prompt; got != "push everything now" {
 		t.Fatalf("add did not store: %#v", updated.aliases)
 	}
 
@@ -82,9 +83,9 @@ func TestAliasCreatePersistReload(t *testing.T) {
 
 func TestAliasListAndHelp(t *testing.T) {
 	m := aliasTestModel(t)
-	m.aliases = map[string]string{
-		"commit": "Please commit all changes properly",
-		"lint":   "Run the linters and fix what they report",
+	m.aliases = map[string]aliasEntry{
+		"commit": {Prompt: "Please commit all changes properly"},
+		"lint":   {Prompt: "Run the linters and fix what they report"},
 	}
 
 	updated, text := runAliasCommand(t, m, "/alias")
@@ -126,7 +127,7 @@ func TestAliasListAndHelp(t *testing.T) {
 
 func TestAliasRemove(t *testing.T) {
 	m := aliasTestModel(t)
-	m.aliases = map[string]string{"commit": "commit please", "lint": "lint please"}
+	m.aliases = map[string]aliasEntry{"commit": {Prompt: "commit please"}, "lint": {Prompt: "lint please"}}
 
 	updated, text := runAliasCommand(t, m, "/alias rm commit")
 	if _, ok := updated.aliases["commit"]; ok {
@@ -135,7 +136,7 @@ func TestAliasRemove(t *testing.T) {
 	if !strings.Contains(text, "removed") {
 		t.Fatalf("rm confirmation = %q", text)
 	}
-	if got := loadAliases(); len(got) != 1 || got["lint"] != "lint please" {
+	if got := loadAliases(); len(got) != 1 || got["lint"].Prompt != "lint please" {
 		t.Fatalf("reload after rm = %#v", got)
 	}
 
@@ -191,14 +192,14 @@ func TestAliasValidation(t *testing.T) {
 	// The normalized (lowercase) name is the stored key.
 	m := aliasTestModel(t)
 	updated, _ := runAliasCommand(t, m, "/alias Commit please commit")
-	if got := updated.aliases["commit"]; got != "please commit" {
+	if got := updated.aliases["commit"].Prompt; got != "please commit" {
 		t.Fatalf("normalized alias = %#v, want commit→please commit", updated.aliases)
 	}
 }
 
 func TestAliasInvokeSendsPromptTurn(t *testing.T) {
 	m := aliasTestModel(t)
-	m.aliases["commit"] = "Please commit all changes properly"
+	m.aliases["commit"] = aliasEntry{Prompt: "Please commit all changes properly"}
 
 	// No extra text: the stored prompt verbatim, as a user turn.
 	updated, cmd := m.executeLocalCommand("/commit")
@@ -233,7 +234,7 @@ func TestAliasInvokeSendsPromptTurn(t *testing.T) {
 
 func TestAliasCompletion(t *testing.T) {
 	m := aliasTestModel(t)
-	m.aliases = map[string]string{"commit": "commit please"}
+	m.aliases = map[string]aliasEntry{"commit": {Prompt: "commit please"}}
 
 	names := m.completionNames()
 	if !containsStr(names, "commit") {
@@ -286,7 +287,7 @@ func TestAliasFileTolerance(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := loadAliases()
-	if len(got) != 1 || got["ok"] != "keep me" {
+	if len(got) != 1 || got["ok"].Prompt != "keep me" {
 		t.Fatalf("sanitized load = %#v, want only ok→keep me", got)
 	}
 }
@@ -303,12 +304,209 @@ func TestAliasSaveFailureIsNonFatal(t *testing.T) {
 
 	m := newTestModel()
 	m.connected = true
-	m.aliases = map[string]string{}
+	m.aliases = map[string]aliasEntry{}
 	updated, text := runAliasCommand(t, m, "/alias commit please commit")
-	if got := updated.aliases["commit"]; got != "please commit" {
+	if got := updated.aliases["commit"].Prompt; got != "please commit" {
 		t.Fatalf("alias lost on save failure: %#v", updated.aliases)
 	}
 	if !strings.Contains(text, "could not save aliases") {
 		t.Fatalf("save failure was not surfaced: %q", text)
+	}
+}
+
+// ---- call aliases (cli call …) ---------------------------------------------
+
+func TestAliasCallParse(t *testing.T) {
+	tool, args, err := parseCallAlias(`cli call git '{"op":"pr","title":"$1"}'`)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if tool != "git" || string(args) != `{"op":"pr","title":"$1"}` {
+		t.Fatalf("parse = %q %s", tool, args)
+	}
+
+	// Dotted tool, no arguments (defaults to {}), unquoted object.
+	tool, args, err = parseCallAlias(`cli call provider.provider_status`)
+	if err != nil || tool != "provider.provider_status" || string(args) != "{}" {
+		t.Fatalf("defaults = %q %s (%v)", tool, args, err)
+	}
+	if _, args, err = parseCallAlias(`cli call provider.provider_status {"op":"list"}`); err != nil || string(args) != `{"op":"list"}` {
+		t.Fatalf("unquoted = %s (%v)", args, err)
+	}
+
+	// Malformed bodies: not a call, missing tool, bad JSON, non-object.
+	for _, body := range []string{
+		`please commit`,
+		`cli call`,
+		`cli call git not json`,
+		`cli call git '[1,2]'`,
+	} {
+		if _, _, err := parseCallAlias(body); err == nil {
+			t.Fatalf("%q parsed but should have been rejected", body)
+		}
+	}
+}
+
+func TestAliasCallInterpolation(t *testing.T) {
+	raw := json.RawMessage(`{"title":"$1","body":"$2","all":"$*","lit":"$$","keep":"$HOME","zero":"$0"}`)
+	got, err := substituteAliasArgs(raw, []string{"Fix it", "details"}, "pr")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var obj map[string]string
+	if err := json.Unmarshal(got, &obj); err != nil {
+		t.Fatalf("result is not an object: %v (%s)", err, got)
+	}
+	if obj["title"] != "Fix it" || obj["body"] != "details" || obj["all"] != "Fix it details" {
+		t.Fatalf("positional substitution = %#v", obj)
+	}
+	if obj["lit"] != "$" || obj["keep"] != "$HOME" || obj["zero"] != "pr" {
+		t.Fatalf("literal/unknown substitution = %#v", obj)
+	}
+
+	// A missing positional fails instead of substituting empty.
+	if _, err := substituteAliasArgs(json.RawMessage(`{"t":"$2"}`), []string{"one"}, "pr"); err == nil {
+		t.Fatal("missing $2 did not error")
+	}
+
+	// Quotes and backslashes in an argument are inserted safely.
+	tricky := `he said "hi" \ bye`
+	got, err = substituteAliasArgs(json.RawMessage(`{"t":"$1"}`), []string{tricky}, "x")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var one map[string]string
+	if err := json.Unmarshal(got, &one); err != nil || one["t"] != tricky {
+		t.Fatalf("tricky argument = %s (%v)", got, err)
+	}
+
+	// Numbers survive substitution (UseNumber, no float drift).
+	got, err = substituteAliasArgs(json.RawMessage(`{"n":1234567890123,"f":1.5,"a":["$1"]}`), []string{"x"}, "n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s := string(got); !strings.Contains(s, "1234567890123") || !strings.Contains(s, "1.5") || !strings.Contains(s, "\"x\"") {
+		t.Fatalf("numeric/array substitution = %s", s)
+	}
+}
+
+func TestAliasCallDefinePersist(t *testing.T) {
+	m := aliasTestModel(t)
+	updated, text := runAliasCommand(t, m, `/alias add pr cli call git '{"op":"pr","title":"$1"}'`)
+	if got := updated.aliases["pr"]; got.Call == "" || got.Prompt != "" {
+		t.Fatalf("call not stored: %#v", updated.aliases)
+	}
+	if !strings.Contains(text, "call") {
+		t.Fatalf("create confirmation = %q", text)
+	}
+
+	// The listing names the call kind.
+	if _, listing := runAliasCommand(t, updated, "/alias"); !strings.Contains(listing, "call: cli call git") {
+		t.Fatalf("/alias listing = %q", listing)
+	}
+
+	// A reload (fresh process) reads the object form back.
+	if got := loadAliases()["pr"].Call; got != `cli call git '{"op":"pr","title":"$1"}'` {
+		t.Fatalf("reload = %q", got)
+	}
+
+	// A malformed call body is rejected at define time and stores nothing.
+	m2 := aliasTestModel(t)
+	if _, bad := runAliasCommand(t, m2, `/alias add bad cli call git nope`); !strings.Contains(bad, "invalid cli call command") {
+		t.Fatalf("malformed call = %q", bad)
+	}
+	if _, ok := m2.aliases["bad"]; ok {
+		t.Fatalf("malformed call was stored: %#v", m2.aliases)
+	}
+}
+
+func TestAliasCallExplicitSubcommands(t *testing.T) {
+	m := aliasTestModel(t)
+
+	// /alias prompt keeps a body that merely looks like a call as a prompt.
+	updated, _ := runAliasCommand(t, m, "/alias prompt p cli call git '{}'")
+	if got := updated.aliases["p"]; got.Prompt == "" || got.Call != "" {
+		t.Fatalf("/alias prompt stored %#v", got)
+	}
+
+	// /alias call refuses a non-call body.
+	if _, errText := runAliasCommand(t, updated, "/alias call c just a prompt"); !strings.Contains(errText, "cli call command is required") {
+		t.Fatalf("/alias call error = %q", errText)
+	}
+
+	// /alias call defines a call alias.
+	withCall, _ := runAliasCommand(t, updated, `/alias call c cli call git '{}'`)
+	if withCall.aliases["c"].Call == "" {
+		t.Fatalf("/alias call stored %#v", withCall.aliases["c"])
+	}
+}
+
+func TestAliasCallInvoke(t *testing.T) {
+	m := aliasTestModel(t)
+	m.aliases["pr"] = aliasEntry{Call: `cli call git '{"op":"pr","title":"$1"}'`}
+
+	// Missing positional argument: an error block, no dispatch, no turn.
+	updated, cmd := m.executeLocalCommand("/pr")
+	out := updated.(model)
+	if cmd != nil {
+		t.Fatal("/pr with no argument still dispatched")
+	}
+	if out.busy {
+		t.Fatal("/pr with no argument started a turn")
+	}
+	if last := out.blocks[len(out.blocks)-1]; !strings.Contains(last.text, "needs argument $1") {
+		t.Fatalf("missing-argument block = %q", last.text)
+	}
+
+	// Provided arguments: a dispatch command and the exec meta line.
+	updated, cmd = m.executeLocalCommand(`/pr "Fix the parser"`)
+	out = updated.(model)
+	if cmd == nil {
+		t.Fatal("/pr with an argument issued no command")
+	}
+	if out.busy {
+		t.Fatal("a call alias started a turn")
+	}
+	if last := out.blocks[len(out.blocks)-1]; last.text != `→ /pr "Fix the parser"` {
+		t.Fatalf("exec meta line = %q", last.text)
+	}
+}
+
+func TestAliasToolRegistered(t *testing.T) {
+	comps := map[string][]string{
+		"git":      {"git_status", "git"},
+		"provider": {"provider_status"},
+	}
+	if !aliasToolRegistered(comps, "git") {
+		t.Fatal("plain tool not found")
+	}
+	// invoke tolerates the dotted spelling.
+	if !aliasToolRegistered(comps, "provider.provider_status") {
+		t.Fatal("dotted tool not resolved to its flat name")
+	}
+	if aliasToolRegistered(comps, "nope") {
+		t.Fatal("unknown tool reported as registered")
+	}
+}
+
+func TestAliasFileObjectForms(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	path := aliasFilePath()
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	body := `{"pr":{"call":"cli call git '{}'"},"o":"a prompt","bad":{"call":"cli call git nope"},"emptyobj":{}}`
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got := loadAliases()
+	if len(got) != 2 {
+		t.Fatalf("object-form load = %#v, want pr and o only", got)
+	}
+	if got["pr"].Call != `cli call git '{}'` {
+		t.Fatalf("call entry = %#v", got["pr"])
+	}
+	if got["o"].Prompt != "a prompt" {
+		t.Fatalf("prompt entry = %#v", got["o"])
 	}
 }

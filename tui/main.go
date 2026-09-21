@@ -587,10 +587,11 @@ type model struct {
 
 	// slash is the merged slash-command registry (built-ins + component
 	// registrations); slashComp is the live Tab-completion state. aliases
-	// holds the user-defined prompt shortcuts from /alias (alias.go).
+	// holds the user-defined shortcuts from /alias (alias.go): prompt
+	// shortcuts and cli call tool invocations.
 	slash     slashRegistry
 	slashComp slashCompleteState
-	aliases   map[string]string
+	aliases   map[string]aliasEntry
 
 	// fileComp is the live @file-reference completion state; fileList
 	// caches per-workspace listings for it (filecomp.go).
@@ -1645,6 +1646,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case slashResultMsg:
 		cmds = append(cmds, m.applySlashResult(msg))
+
+	case aliasCheckMsg:
+		// Best-effort warning for a freshly defined call alias whose target
+		// tool is not registered yet; a catalog read failure is silent.
+		if msg.Err == nil && !msg.Found {
+			m.contextNote = t(m.loc, "alias.unknownTool", msg.Name, msg.Tool)
+		}
 
 	case catalogProvidersMsg:
 		if msg.Err == nil {

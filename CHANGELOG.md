@@ -8,6 +8,19 @@ project aims for [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **`/alias` can bind a `cli call …` tool invocation, with `$1`…`$9`
+  argument interpolation.** A body that starts with `cli call` (or an explicit
+  `/alias call <name> …`; `/alias prompt` forces the old prompt form) is
+  stored as a call alias: invoking `/name arg…` runs the target tool through
+  core's `invoke` gateway, substituting the invocation's positional arguments
+  into the JSON argument strings (`$1`…`$9`, `$0` the alias name, `$*` all
+  arguments, `$$` a literal `$`; any other `$…` is left alone so shell snippets
+  survive). Prompt aliases and the on-disk format are unchanged — a bare string
+  is still a prompt, a call alias serializes as `{"call": "…"}`. The call
+  rides core's normal dispatch, so approval-gated tools (`bash`, `git`) still
+  prompt the human; defining one whose tool is not registered yet warns without
+  blocking.
+
 - **A restarted TUI resumes a running conversation in busy state.** A
   `/restart` successor used to sit idle while its session runner kept working:
   busy was only ever set by this process's own send, so the successor showed

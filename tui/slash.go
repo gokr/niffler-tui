@@ -190,13 +190,14 @@ func builtinSlashCommands() []slashCommand {
 			{Name: "lang", Kind: "enum", Values: []string{"en", "zh", "zh-TW"}},
 		}},
 		{Name: "restart", Description: "restart the client (picks up a rebuilt binary)", builtin: true, run: localRestart},
-		// User-defined prompt shortcuts: /alias <name> <prompt> (see alias.go).
-		// The declared subcommands drive dispatch, Tab completion and the
-		// `subcommand` enum; a bare /alias name is the add sugar.
-		{Name: "alias", Description: "define prompt shortcuts that send a fixed prompt", builtin: true, run: localAlias, subcommands: aliasSubcommands(), Params: []slashParam{
+		// User-defined aliases: /alias <name> <prompt> defines a prompt
+		// shortcut, /alias add <name> cli call … a tool invocation (see
+		// alias.go). The declared subcommands drive dispatch, Tab completion
+		// and the `subcommand` enum; a bare /alias name is the add sugar.
+		{Name: "alias", Description: "define prompt shortcuts or cli call tool aliases", builtin: true, run: localAlias, subcommands: aliasSubcommands(), Params: []slashParam{
 			{Name: "subcommand", Kind: "enum", Values: subcommandNames(aliasSubcommands())},
 			{Name: "name", Kind: "string", Description: "alias name"},
-			{Name: "prompt", Kind: "string", Description: "prompt sent as a turn when the alias is invoked"},
+			{Name: "prompt", Kind: "string", Description: "prompt sent as a turn, or a cli call <tool> '<json>' command"},
 		}},
 		{Name: "help", Description: "show this help", builtin: true, run: localHelp},
 		{Name: "?", Description: "show this help", builtin: true, aliasOf: "help", run: localHelp},

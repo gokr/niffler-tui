@@ -119,8 +119,11 @@ func (m model) executeLocalCommand(command string) (tea.Model, tea.Cmd) {
 	// is checked after built-ins, so an alias can never shadow one, and
 	// before the registered plugin commands, so a user's own shortcut wins
 	// over a same-named registration.
-	if _, ok := m.aliases[name]; ok {
-		return m.runAlias(name, argument)
+	if entry, ok := m.aliases[name]; ok {
+		// Preserve the raw argument remainder (quotes, spacing) for a call
+		// alias's $1… interpolation; the Fields-joined `argument` collapses
+		// runs of whitespace.
+		return m.runAlias(name, entry, remainderAfterFirst(strings.TrimSpace(command)))
 	}
 	if cmd, ok := m.slash.lookup(name); ok && !cmd.builtin {
 		return m.executeSlashCommand(cmd, argument)

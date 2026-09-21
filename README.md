@@ -191,9 +191,12 @@ Local commands are handled by the TUI and are never sent to the model:
   which resumes it even if the old process never released it
 - `/alias <name> <prompt…>` — define a prompt shortcut: typing `/name` (with
   any extra words appended to the stored prompt) sends it as an ordinary turn.
-  A bare `/alias` or `/alias list` lists the definitions and `/alias rm <name>`
-  deletes one; definitions persist in the per-user state dir, complete on Tab,
-  and appear in `/help`. Built-in names cannot be shadowed
+  `/alias add <name> cli call <tool> '<json>'` instead defines a call alias
+  that invokes a harness tool directly, with `$1`…`$9` interpolating the
+  invocation's arguments. A bare `/alias` or `/alias list` lists the
+  definitions and `/alias rm <name>` deletes one; definitions persist in the
+  per-user state dir, complete on Tab, and appear in `/help`. Built-in names
+  cannot be shadowed
 - `/help` — command summary, generated from the registered command table so
   it always lists every built-in (and every plugin command)
 
