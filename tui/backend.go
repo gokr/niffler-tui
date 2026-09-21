@@ -182,16 +182,17 @@ type modelsResponse struct {
 }
 
 type conversationState struct {
-	ModelOverride  string
-	ThinkingEffort string
-	Provider       string
-	Model          string
-	Context        int
-	ContextUsed    int
-	PromptTokens   int
-	Cwd            string
-	CachePrompt    int
-	CacheRead      int
+	ProviderOverride string
+	ModelOverride    string
+	ThinkingEffort   string
+	Provider         string
+	Model            string
+	Context          int
+	ContextUsed      int
+	PromptTokens     int
+	Cwd              string
+	CachePrompt      int
+	CacheRead        int
 }
 
 type bootstrapMsg struct {
@@ -352,8 +353,11 @@ func loadServedModelsCmd(comp *sdk.Component, nickname, baseURL, apiKey string) 
 	}
 }
 
-func resolveRuntime(comp *sdk.Component, modelOverride string) (runtimeResolution, error) {
+func resolveRuntime(comp *sdk.Component, providerOverride, modelOverride string) (runtimeResolution, error) {
 	args := map[string]any{}
+	if strings.TrimSpace(providerOverride) != "" {
+		args["provider"] = strings.TrimSpace(providerOverride)
+	}
 	if strings.TrimSpace(modelOverride) != "" {
 		args["model"] = strings.TrimSpace(modelOverride)
 	}
@@ -374,16 +378,17 @@ func loadConversationState(comp *sdk.Component, session string) (conversationSta
 	var response struct {
 		OK    bool `json:"ok"`
 		Value struct {
-			ModelOverride  string `json:"modelOverride"`
-			ThinkingEffort string `json:"thinkingEffort"`
-			Provider       string `json:"provider"`
-			Model          string `json:"model"`
-			Context        int    `json:"context"`
-			ContextUsed    int    `json:"contextUsed"`
-			PromptTokens   int    `json:"promptTokens"`
-			Cwd            string `json:"cwd"`
-			CachePrompt    int    `json:"cachePrompt"`
-			CacheRead      int    `json:"cacheRead"`
+			ProviderOverride string `json:"providerOverride"`
+			ModelOverride    string `json:"modelOverride"`
+			ThinkingEffort   string `json:"thinkingEffort"`
+			Provider         string `json:"provider"`
+			Model            string `json:"model"`
+			Context          int    `json:"context"`
+			ContextUsed      int    `json:"contextUsed"`
+			PromptTokens     int    `json:"promptTokens"`
+			Cwd              string `json:"cwd"`
+			CachePrompt      int    `json:"cachePrompt"`
+			CacheRead        int    `json:"cacheRead"`
 		} `json:"value"`
 		Code string `json:"code"`
 	}
@@ -396,9 +401,10 @@ func loadConversationState(comp *sdk.Component, session string) (conversationSta
 		return conversationState{}, false, nil
 	}
 	return conversationState{
-		ModelOverride:  response.Value.ModelOverride,
-		ThinkingEffort: response.Value.ThinkingEffort,
-		Provider:       response.Value.Provider, Model: response.Value.Model,
+		ProviderOverride: response.Value.ProviderOverride,
+		ModelOverride:    response.Value.ModelOverride,
+		ThinkingEffort:   response.Value.ThinkingEffort,
+		Provider:         response.Value.Provider, Model: response.Value.Model,
 		Context: response.Value.Context, ContextUsed: response.Value.ContextUsed,
 		PromptTokens: response.Value.PromptTokens,
 		Cwd:          response.Value.Cwd,
@@ -619,7 +625,7 @@ func bootstrapBackendCmd(comp *sdk.Component, session string) tea.Cmd {
 			msg.Conversation = conversation
 			msg.ConversationExists = exists
 		}
-		resolved, err := resolveRuntime(comp, conversation.ModelOverride)
+		resolved, err := resolveRuntime(comp, conversation.ProviderOverride, conversation.ModelOverride)
 		if err != nil {
 			msg.Warnings = append(msg.Warnings, err.Error())
 		} else {
@@ -630,11 +636,11 @@ func bootstrapBackendCmd(comp *sdk.Component, session string) tea.Cmd {
 	}
 }
 
-func refreshRuntimeCmd(comp *sdk.Component, session, modelOverride string) tea.Cmd {
+func refreshRuntimeCmd(comp *sdk.Component, session, providerOverride, modelOverride string) tea.Cmd {
 	return func() tea.Msg {
 		providers, listErr := loadProviderList(comp)
 		status, statusErr := loadProviderStatus(comp)
-		resolved, resolveErr := resolveRuntime(comp, modelOverride)
+		resolved, resolveErr := resolveRuntime(comp, providerOverride, modelOverride)
 		return runtimeRefreshedMsg{
 			Session:   session,
 			Providers: providers, Status: status, Runtime: resolved,
@@ -757,14 +763,18 @@ func compactConversationCmd(comp *sdk.Component, session string) tea.Cmd {
 	}
 }
 
-func switchProviderCmd(comp *sdk.Component, nickname string) tea.Cmd {
+func setConversationProviderCmd(comp *sdk.Component, session, provider string) tea.Cmd {
 	return func() tea.Msg {
-		var response okResponse
-		err := requestInto(comp, "provider", "provider_switch", map[string]any{"nickname": nickname}, &response)
-		if err == nil && !response.OK {
-			err = fmt.Errorf("provider switch failed")
+		var response struct {
+			OK bool `json:"ok"`
 		}
-		return providerActionMsg{Action: "switch", Nickname: nickname, Err: err}
+		err := requestInto(comp, "core", "session", map[string]any{
+			"sessionId": session, "provider": provider,
+		}, &response)
+		if err == nil && !response.OK {
+			err = fmt.Errorf("provider selection failed")
+		}
+		return providerActionMsg{Action: "switch", Nickname: provider, Err: err}
 	}
 }
 
@@ -787,12 +797,17 @@ func setProviderStripCmd(comp *sdk.Component, nickname string, strip bool) tea.C
 	}
 }
 
-func useEnvironmentProviderCmd(comp *sdk.Component) tea.Cmd {
+func useEnvironmentProviderCmd(comp *sdk.Component, session string) tea.Cmd {
 	return func() tea.Msg {
-		var response providerStatusResponse
-		err := requestInto(comp, "provider", "provider_use_environment", map[string]any{}, &response)
-		// ok=false is valid when the environment has no credential; clearing
-		// the stored marker still succeeded.
+		var response struct {
+			OK bool `json:"ok"`
+		}
+		err := requestInto(comp, "core", "session", map[string]any{
+			"sessionId": session, "provider": "",
+		}, &response)
+		if err == nil && !response.OK {
+			err = fmt.Errorf("environment provider selection failed")
+		}
 		return providerActionMsg{Action: "environment", Nickname: "default", Err: err}
 	}
 }

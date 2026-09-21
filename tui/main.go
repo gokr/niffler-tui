@@ -283,15 +283,15 @@ const sessionProbeTimeout = 5 * time.Second
 // like an own turn. "done" clears busy (finishTurn) and "status" is excluded
 // because the idle readback also emits it.
 var turnActivityKinds = map[string]bool{
-	"token":    true,
+	"token":     true,
 	"assistant": true,
-	"toolcall": true,
-	"retry":    true,
-	"notice":   true,
-	"context":  true,
-	"steer":    true,
-	"map":      true,
-	"diag":     true,
+	"toolcall":  true,
+	"retry":     true,
+	"notice":    true,
+	"context":   true,
+	"steer":     true,
+	"map":       true,
+	"diag":      true,
 }
 
 // adoptBusy marks the current conversation busy for a turn this process did
@@ -393,9 +393,8 @@ type model struct {
 	searchQuery  string
 	searchIdx    int
 
-	// Provider/model control plane. Provider selection is the registry's
-	// global default; modelOverride is conversation-scoped and sent with
-	// every turn. Runtime/context values are authoritative llm/session data.
+	// Provider/model control plane. Provider and model selections are
+	// conversation-scoped; the harness-wide provider remains only the default.
 	mode                  uiMode
 	selector              selectorState
 	providerForm          providerForm
@@ -430,11 +429,11 @@ type model struct {
 	bgTicking            bool
 	// Subagent roster (agent_list's read-only UI affordance) + the ctrl+o
 	// output cycle: the worker roster and the selected worker's output pane.
-	agents       []agentSummary
+	agents []agentSummary
 	// gate drops and coalesces ev.session.* frames before the UI queue; it
 	// mirrors this model's session + roster so the wire flood of other
 	// conversations never reaches Update (see sessionEventGate).
-	gate *sessionEventGate
+	gate         *sessionEventGate
 	bgPeekRoster []bgTarget
 	// childAct is the live activity of this conversation's subagents, fed by
 	// the ev.session.* frames of every session on the bus (agents.go).
@@ -464,12 +463,13 @@ type model struct {
 	// The /session browser: the loaded conversations (with their subagent
 	// lineage) and whether the child sessions are shown. A view preference for
 	// this run, not persisted state.
-	sessionList   []sessionSummary
-	showSubagents bool
-	runtime       runtimeResolution
-	modelOverride string
-	promptTokens  int
-	contextUsed   int
+	sessionList      []sessionSummary
+	showSubagents    bool
+	runtime          runtimeResolution
+	providerOverride string
+	modelOverride    string
+	promptTokens     int
+	contextUsed      int
 	// inputTokens/outputTokens accumulate the session's billed tokens (the
 	// header's ↑/↓ chip); cacheHits/cachePrompt accumulate the prompt-cache
 	// economics (header and /status).
@@ -952,7 +952,8 @@ func (m model) sendTurn(content string) tea.Cmd {
 			"content":   content,
 			// Always include the key: empty explicitly clears a previously
 			// persisted conversation override after a provider/default change.
-			"model": m.modelOverride,
+			"provider": m.providerOverride,
+			"model":    m.modelOverride,
 		}
 		// A conversation with no header yet gets this TUI's launch directory
 		// pinned as its (immutable) workspace: starting niffler-tui inside a
@@ -1537,6 +1538,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.catalogProviders = msg.CatalogProviders
 		m.harnessIdentity = msg.Identity
 		m.selfIdentity = msg.Self
+		m.providerOverride = msg.Conversation.ProviderOverride
 		m.modelOverride = msg.Conversation.ModelOverride
 		m.thinkingEffort = msg.Conversation.ThinkingEffort
 		m.runtime = msg.Runtime
@@ -1715,7 +1717,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.layout()
 			m.addBlock(blockMeta, t(m.loc, "oauth.signedIn", msg.provider.Nickname))
 			m.syncViewport(true)
-			cmds = append(cmds, refreshRuntimeCmd(m.comp, m.session, m.modelOverride))
+			cmds = append(cmds, refreshRuntimeCmd(m.comp, m.session, m.providerOverride, m.modelOverride))
 			break
 		}
 		if state.manualPending != "" || state.status != m.oauthLogin.status {
@@ -1759,6 +1761,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.providerDeleteErr = ""
 		m.addBlock(blockMeta, label)
 		m.syncViewport(true)
+		if msg.Action == "switch" {
+			m.providerOverride = msg.Nickname
+		} else if msg.Action == "environment" {
+			m.providerOverride = ""
+		}
 		// A provider action that moved the active backend invalidates the
 		// conversation's model pin: the pinned id was chosen for the provider
 		// it was set under, and carrying it over is how a stale model — one
@@ -1772,7 +1779,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.modelOverride = ""
 			cmds = append(cmds, setConversationModelCmd(m.comp, m.session, "", previous))
 		}
-		cmds = append(cmds, refreshRuntimeCmd(m.comp, m.session, m.modelOverride))
+		cmds = append(cmds, refreshRuntimeCmd(m.comp, m.session, m.providerOverride, m.modelOverride))
 
 	case mcpServersMsg:
 		if msg.Err == nil {
@@ -2079,7 +2086,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else {
 			m.addBlock(blockMeta, fmt.Sprintf("Compacted: ~%d → ~%d tokens (generation %d)",
 				msg.Before, msg.After, msg.Generation))
-			cmds = append(cmds, refreshRuntimeCmd(m.comp, m.session, m.modelOverride))
+			cmds = append(cmds, refreshRuntimeCmd(m.comp, m.session, m.providerOverride, m.modelOverride))
 		}
 		m.syncViewport(true)
 
@@ -2095,7 +2102,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.contextNote = msg.Err.Error()
 			m.addBlock(blockError, msg.Err.Error())
 			m.syncViewport(true)
-			cmds = append(cmds, refreshRuntimeCmd(m.comp, m.session, m.modelOverride))
+			cmds = append(cmds, refreshRuntimeCmd(m.comp, m.session, m.providerOverride, m.modelOverride))
 			break
 		}
 		m.modelOverride = msg.Selected
@@ -2138,7 +2145,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.modelOverride = ""
 			cmds = append(cmds, setConversationModelCmd(m.comp, m.session, "", previous))
 		}
-		cmds = append(cmds, refreshRuntimeCmd(m.comp, m.session, m.modelOverride))
+		cmds = append(cmds, refreshRuntimeCmd(m.comp, m.session, m.providerOverride, m.modelOverride))
 
 	case modelsCatalogUpdatedMsg:
 		cmds = append(cmds, loadCatalogProvidersCmd(m.comp))

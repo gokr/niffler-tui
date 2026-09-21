@@ -506,13 +506,13 @@ func localProvider(m model, cmd slashCommand, argument string) (tea.Model, tea.C
 		}
 	}
 	m.controlPending = true
-	return m, switchProviderCmd(m.comp, argument)
+	return m, setConversationProviderCmd(m.comp, m.session, argument)
 }
 
 // providerEnvironment selects the environment (NIF_OPENAI_*) provider.
 func providerEnvironment(m model, cmd slashCommand, argument string) (tea.Model, tea.Cmd) {
 	m.controlPending = true
-	return m, useEnvironmentProviderCmd(m.comp)
+	return m, useEnvironmentProviderCmd(m.comp, m.session)
 }
 
 // providerStrip toggles model-id prefix stripping for the active provider
@@ -1438,10 +1438,10 @@ func (m model) handleControlKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			return m, startOAuthCmd(m.comp, m.loc, oauthProtocolAnthropic, oauthMethodBrowser)
 		case selectorEnvironment:
 			m.controlPending = true
-			return m, useEnvironmentProviderCmd(m.comp)
+			return m, useEnvironmentProviderCmd(m.comp, m.session)
 		case selectorProvider:
 			m.controlPending = true
-			return m, switchProviderCmd(m.comp, selected.id)
+			return m, setConversationProviderCmd(m.comp, m.session, selected.id)
 		default:
 			return m, nil
 		}
