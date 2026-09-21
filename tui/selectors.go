@@ -33,6 +33,20 @@ const (
 	modeBgPeek
 )
 
+// isSelectorMode reports whether a mode renders the shared selector list
+// (selector.list). In these modes handleControlKey forwards keys to the list;
+// its asynchronous messages (the fuzzy filter's FilterMatchesMsg, spinner
+// ticks, status timeouts) must reach it too, or filtering accepts input but
+// never narrows the list.
+func isSelectorMode(mode uiMode) bool {
+	switch mode {
+	case modeProviders, modeCatalogProviders, modeModels, modeSessions,
+		modeMcp, modeMcpSearch, modeThemes, modeProfiles, modeLsp, modeProcesses:
+		return true
+	}
+	return false
+}
+
 type selectorItemKind int
 
 const (

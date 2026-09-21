@@ -2260,6 +2260,14 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 
 	var cmd tea.Cmd
+	// In a selector mode the list owns its asynchronous messages: the fuzzy
+	// filter's FilterMatchesMsg arrives as a plain message (not a key press),
+	// so without forwarding it here the filter box accepts text while the
+	// list never narrows (keys alone reach the list via handleControlKey).
+	if isSelectorMode(m.mode) {
+		m.selector.list, cmd = m.selector.list.Update(msg)
+		cmds = append(cmds, cmd)
+	}
 	// Mouse wheel always belongs to the transcript. Sending it to both
 	// viewport models would also scroll an overflowing multiline editor.
 	if _, isWheel := msg.(tea.MouseWheelMsg); !isWheel {

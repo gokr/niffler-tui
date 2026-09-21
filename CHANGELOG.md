@@ -114,6 +114,15 @@ project aims for [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **Every selector's filter box accepted text but never narrowed the list.**
+  The bubbles list filters asynchronously: a keystroke returns a
+  `FilterMatchesMsg` command and only forwarding that result back rebuilds the
+  visible set. Selector modes handed key presses to the list but the model's
+  `Update` tail never delivered the resulting message, so `/provider` — and
+  every other browser (`/model`, `/session`, `/mcp`, `/lsp`, `/processes`,
+  `/theme`, `/profile`) — kept showing the full list with a filter prompt on
+  top. Non-key messages now reach the selector list in every selector mode.
+
 - **A prompt typed while disconnected or mid-settings-save was silently
   eaten.** Enter with the bus down returned without a word; now the prompt
   stays in the input and a note says why it did not send. Same for a prompt
