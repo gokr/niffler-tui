@@ -31,6 +31,9 @@ const (
 	toolPreviewLines = 5
 	toolReadLines    = 3
 	toolDiffLines    = 12
+	// toolSubjectLen caps the subject a brief tool card shows for the tools
+	// whose own name says little (discover, invoke).
+	toolSubjectLen = 48
 )
 
 // toolTitleStyle styles a preview call line (command, path, tool name).
@@ -81,6 +84,48 @@ func argInt(args map[string]any, key string) int {
 func argBool(args map[string]any, key string) bool {
 	value, ok := args[key].(bool)
 	return ok && value
+}
+
+func argStrings(args map[string]any, key string) []string {
+	raw, ok := args[key].([]any)
+	if !ok {
+		return nil
+	}
+	out := make([]string, 0, len(raw))
+	for _, item := range raw {
+		if s, ok := item.(string); ok && s != "" {
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
+// toolSubject is the short "what was it aimed at" descriptor for the tools
+// whose name alone tells a reader nothing. discover and invoke are the two the
+// model reaches for constantly, and a one-line card reading "✓ discover" or
+// "✓ invoke" is uninformative; "discover(mcp)" or
+// "invoke(chetter_list_tasks)" says what actually happened.
+//
+// Empty when the call carries no usable subject: callers then render the bare
+// name, which is the right answer for everything self-describing (bash shows
+// its command, read/edit their path, and so on).
+func toolSubject(c *toolCall) string {
+	args := toolArgs(c)
+	switch c.name {
+	case "discover":
+		if query := argString(args, "query"); query != "" {
+			return truncate(query, toolSubjectLen)
+		}
+		if component := argString(args, "component"); component != "" {
+			return truncate(component, toolSubjectLen)
+		}
+		if names := argStrings(args, "tools"); len(names) > 0 {
+			return truncate(strings.Join(names, ","), toolSubjectLen)
+		}
+	case "invoke":
+		return truncate(argString(args, "tool"), toolSubjectLen)
+	}
+	return ""
 }
 
 // toolResultText is the human-facing result text: the result object's "text"

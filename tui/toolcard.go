@@ -277,7 +277,7 @@ func (m model) renderToolRunLines(run *toolRun, detail toolDetail) string {
 		if detail != detailBrief {
 			head += previews[0].head
 		} else {
-			head += run.calls[0].name
+			head += callLabel(&run.calls[0])
 			if run.calls[0].pending {
 				head += "…"
 			}
@@ -313,7 +313,7 @@ func runSummary(run *toolRun) string {
 			head += fmt.Sprintf("  +%d", len(run.calls)-i)
 			break
 		}
-		head += "  " + run.calls[i].name
+		head += "  " + callLabel(&run.calls[i])
 		if run.calls[i].pending {
 			head += "…"
 		}
@@ -329,6 +329,17 @@ func writePreviewBody(b *strings.Builder, body []string) {
 		b.WriteString("    ")
 		b.WriteString(line)
 	}
+}
+
+// callLabel is a call's name with its subject appended when the name alone is
+// uninformative: "discover(mcp)", "invoke(chetter_list_tasks)". Everywhere
+// else it is just the tool name. Used by the collapsed card's summary line
+// and its per-call chips, where the brief level shows nothing else.
+func callLabel(c *toolCall) string {
+	if subject := toolSubject(c); subject != "" {
+		return c.name + "(" + subject + ")"
+	}
+	return c.name
 }
 
 // callGlyph is the per-call status marker (pending / error / ok).
