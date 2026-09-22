@@ -178,6 +178,43 @@ func localCompact(m model, cmd slashCommand, argument string) (tea.Model, tea.Cm
 	return m, compactConversationCmd(m.comp, m.session)
 }
 
+// localApprovals shows or sets this conversation's approval gate: the
+// discoverable, reversible counterpart to the gate modal's "A" (approve all).
+// The modal turns the mode on in the middle of a gate; this is how a human
+// reads back what the conversation does now and returns it to asking, without
+// needing another gate to appear first. Core keeps the mode in the
+// conversation header, so it survives a resume or a TUI restart.
+func localApprovals(m model, cmd slashCommand, argument string) (tea.Model, tea.Cmd) {
+	if !m.connected {
+		m.contextNote = t(m.loc, "note.notConnected")
+		return m, nil
+	}
+	mode := strings.ToLower(strings.TrimSpace(argument))
+	switch mode {
+	case "", "status":
+		session := m.session
+		m.addBlock(blockMeta, "\u2192 /approvals")
+		m.syncViewport(true)
+		return m, func() tea.Msg {
+			var response struct {
+				Approvals string `json:"approvals"`
+			}
+			if err := requestInto(m.comp, "core", "session",
+				map[string]any{"sessionId": session}, &response); err != nil {
+				return slashResultMsg{Name: "approvals", Session: session, Err: err}
+			}
+			return approvalsModeMsg{Session: session, Mode: response.Approvals}
+		}
+	case "ask", "auto":
+		m.setAutoApproveAllLocal(m.session, mode == "auto")
+		return m, setConversationApprovalsCmd(m.comp, m.session, mode)
+	default:
+		m.addBlock(blockError, "/approvals: expected ask, auto or status")
+		m.syncViewport(true)
+		return m, nil
+	}
+}
+
 func localProfile(m model, cmd slashCommand, argument string) (tea.Model, tea.Cmd) {
 	// A bare /profile opens the picker (the help text and README promise a
 	// listing with the current choice marked); an argument still applies

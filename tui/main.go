@@ -539,6 +539,7 @@ type model struct {
 	// queue is the modal on screen) and per-session auto-approve memory.
 	approvals    []approvalRequest
 	autoApproved map[string][]string // sessionId -> tool names
+	autoAll      map[string]bool     // sessionId -> "A": every gated tool granted
 
 	// mouse toggles terminal mouse tracking (default on). When on, the wheel
 	// scrolls the transcript, clicks expand tool cards, and plain left-button
@@ -1123,6 +1124,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case approvalResolvedMsg:
 		m.applyApprovalResolved(msg.id)
 		return m, nil
+
+	case approvalsModeMsg:
+		return m, m.applyApprovalsMode(msg)
 
 	case connectedMsg:
 		m.connected = true

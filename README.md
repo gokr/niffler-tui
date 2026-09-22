@@ -152,6 +152,14 @@ Local commands are handled by the TUI and are never sent to the model:
   is replaced with a verified checkpoint, so a long conversation can be
   compacted before it hits the automatic pressure ladder; a compactor decline
   is reported, never silently degraded to a lossy trim
+- `/approvals [ask|auto]` — this conversation's approval gate. `auto` grants
+  every `x-harness.approval` tool without asking any client (each grant is
+  logged loudly, since a silent grant is what the gate exists to prevent);
+  `ask` restores the gate, and no argument reports the current mode. The gate
+  modal's `A` key sets the same mode while a request is on screen, so a run
+  that keeps asking for tools you have not seen yet can be approved in one
+  keystroke; `a` keeps its narrower meaning (always allow *this* tool for this
+  session)
 - `/components [all|direct|discovered|undiscovered]` — what this conversation
   can actually call, per component, with each tool's exposure state
 - `/discover <component>|tool=NAME` — expose a component's tools (or one named

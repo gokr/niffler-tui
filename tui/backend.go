@@ -697,6 +697,26 @@ func setConversationThinkingCmd(comp *sdk.Component, session, effort string) tea
 	}
 }
 
+// setConversationApprovalsCmd persists this conversation's approval gate mode
+// through the session runner (core's /approvals control: "auto" grants every
+// x-harness.approval tool without asking any client, "ask" restores the gate,
+// and an empty mode also clears to ask). Control call, no inference.
+func setConversationApprovalsCmd(comp *sdk.Component, session, mode string) tea.Cmd {
+	return func() tea.Msg {
+		var response struct {
+			OK        bool   `json:"ok"`
+			Approvals string `json:"approvals"`
+		}
+		err := requestInto(comp, "core", "session", map[string]any{
+			"sessionId": session, "approvals": mode,
+		}, &response)
+		if err == nil && !response.OK {
+			err = fmt.Errorf("approval mode change failed")
+		}
+		return approvalsModeMsg{Session: session, Mode: mode, Err: err}
+	}
+}
+
 func setConversationModelCmd(comp *sdk.Component, session, selected, previous string) tea.Cmd {
 	return func() tea.Msg {
 		var response struct {

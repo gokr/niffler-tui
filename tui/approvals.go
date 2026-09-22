@@ -106,6 +106,98 @@ func (m *model) answerApproval(ok, auto bool) tea.Cmd {
 	return persist
 }
 
+// approvalsModeMsg reports the outcome of a gate-mode change ("A" on the
+// modal, or /approvals): the mode the conversation now carries, or the error
+// that kept it from being persisted.
+type approvalsModeMsg struct {
+	Session string
+	Mode    string // "auto", or "" for ask
+	Err     error
+}
+
+// answerApprovalAll approves the front queued request and turns the whole
+// conversation's gate off: every gated tool is granted without asking, for
+// the rest of the conversation. Where "a" remembers one tool name, this needs
+// to know nothing in advance — which is what a human wants once they have
+// decided to trust a whole run instead of a list of tools.
+//
+// It has two effects, because core's gate mode applies from the NEXT turn on:
+//
+//   - the in-memory flag answers everything still queued, and everything
+//     raised later in the current turn, by replying from this client, and
+//   - the persisted conversation control (approvals: "auto") stops core from
+//     asking any client at all on later turns, and survives a TUI restart or
+//     a resumed conversation.
+//
+// Program-shaped gates (fabric, agent_run) are covered by the mode as well:
+// this is a blanket opt-out of the human gate for one conversation, which is
+// why the command that does the same thing is spelled out in the prompt.
+func (m *model) answerApprovalAll() tea.Cmd {
+	if len(m.approvals) == 0 {
+		return nil
+	}
+	req := m.approvals[0]
+	persist := m.rememberAutoApproveAll(req.sessionID)
+	m.replyApproval(req.id, false, true)
+	m.approvals = m.approvals[1:]
+	return persist
+}
+
+// rememberAutoApproveAll marks the conversation as granting every gated tool
+// and returns the command that persists it as core's own gate mode, so every
+// client and every later turn honors it. Best effort: the in-memory flag
+// still covers this conversation for the rest of the current turn when the
+// control call fails. Idempotent; nil session ids are ignored.
+func (m *model) rememberAutoApproveAll(sessionID string) tea.Cmd {
+	if sessionID == "" {
+		return nil
+	}
+	if m.autoAll == nil {
+		m.autoAll = map[string]bool{}
+	}
+	m.autoAll[sessionID] = true
+	if m.comp == nil {
+		return nil
+	}
+	return setConversationApprovalsCmd(m.comp, sessionID, "auto")
+}
+
+// setAutoApproveAllLocal records (or clears) the conversation's all-tools
+// flag without a bus call, keeping the TUI's own answering in step with the
+// mode core reports — including one set by another client.
+func (m *model) setAutoApproveAllLocal(sessionID string, on bool) {
+	if sessionID == "" {
+		return
+	}
+	if m.autoAll == nil {
+		m.autoAll = map[string]bool{}
+	}
+	if on {
+		m.autoAll[sessionID] = true
+		return
+	}
+	delete(m.autoAll, sessionID)
+}
+
+// applyApprovalsMode lands a gate-mode change: it reports what the
+// conversation now does and re-syncs the local all-tools flag with it, so a
+// bare /approvals readback also reflects a mode set from another client.
+func (m *model) applyApprovalsMode(msg approvalsModeMsg) tea.Cmd {
+	if msg.Err != nil {
+		m.addBlock(blockError, t(m.loc, "note.approvalsFailed", msg.Err.Error()))
+		m.syncViewport(true)
+		return nil
+	}
+	m.setAutoApproveAllLocal(msg.Session, msg.Mode == "auto")
+	if msg.Mode == "auto" {
+		m.addBlock(blockMeta, t(m.loc, "note.approvalsAuto"))
+	} else {
+		m.addBlock(blockMeta, t(m.loc, "note.approvalsAsk"))
+	}
+	m.syncViewport(true)
+	return nil
+}
+
 // replyApproval publishes one frame of the reply protocol on
 // ev.approval.reply: {id, ack: true} or {id, ok}. The bus component may be
 // absent in tests; replies are then simply dropped.
@@ -123,6 +215,11 @@ func (m *model) replyApproval(id string, ack, ok bool) {
 }
 
 func (m *model) isAutoApproved(sessionID, tool string) bool {
+	// "A" (approve all) turns the whole conversation's gate off, so no tool
+	// name has to be known in advance — see answerApprovalAll.
+	if sessionID != "" && m.autoAll[sessionID] {
+		return true
+	}
 	return slices.Contains(m.autoApproved[sessionID], tool)
 }
 
@@ -199,7 +296,9 @@ func (m *model) approvalBox() string {
 	if len(m.approvals) > 1 {
 		fmt.Fprintf(&b, "\n\n+ %d more waiting", len(m.approvals)-1)
 	}
-	if tools := m.autoApproved[req.sessionID]; len(tools) > 0 {
+	if m.autoAll[req.sessionID] {
+		b.WriteString("\n\n" + t(m.loc, "approval.allOn"))
+	} else if tools := m.autoApproved[req.sessionID]; len(tools) > 0 {
 		b.WriteString("\n\nauto-approving this session: " + strings.Join(tools, ", "))
 	}
 	width := 72
@@ -211,8 +310,11 @@ func (m *model) approvalBox() string {
 		metaStyle.Render(hint)
 }
 
-// approvalKey takes Enter/Esc/"a" while a gate prompt is pending. Returns
-// the key's follow-up command (if any) and whether the key was consumed.
+// approvalKey takes Enter/Esc/"a"/"A" while a gate prompt is pending.
+// Returns the key's follow-up command (if any) and whether the key was
+// consumed. "a" remembers one tool for this session; "A" turns the whole
+// conversation's gate off — the answer to a run that keeps asking for tools
+// the human has not seen before.
 func (m *model) approvalKey(msg tea.KeyPressMsg) (tea.Cmd, bool) {
 	if len(m.approvals) == 0 {
 		return nil, false
@@ -225,6 +327,11 @@ func (m *model) approvalKey(msg tea.KeyPressMsg) (tea.Cmd, bool) {
 	case "a":
 		if m.approvals[0].sessionID != "" {
 			return m.answerApproval(true, true), true
+		}
+		return nil, true
+	case "A", "shift+a":
+		if m.approvals[0].sessionID != "" {
+			return m.answerApprovalAll(), true
 		}
 		return nil, true
 	}

@@ -8,6 +8,25 @@ project aims for [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **The approval gate can be granted for a whole conversation.** The gate
+  modal's new `A` key («approve all») grants the request on screen and then
+  every gated tool in that conversation — one keystroke instead of a decision
+  per tool, and unlike `a` nothing has to be known in advance. It writes
+  core's own gate mode (`/approvals auto`, which grants loudly and covers
+  program-shaped calls too), so the grant survives a restart or a resumed
+  conversation and applies to every attached client; the in-memory flag also
+  answers the rest of the *current* turn, which the persisted mode alone
+  cannot (it applies from the next turn on). `/approvals [ask|auto]` reports
+  the current mode and is how a conversation goes back to asking. `a` keeps
+  its narrower meaning (always allow that one tool for this session).
+
+- **Brief tool cards name what `discover` and `invoke` were aimed at.** A
+  collapsed one-line card used to read just `discover` or `invoke`, which
+  said nothing about what happened; it now reads `discover(mcp)` or
+  `invoke(chetter_list_tasks)` — in the single-call head and in the
+  multi-call name chips. Self-describing tools are unchanged (bash shows its
+  command, read and edit their path).
+
 - **`/alias` can bind a `cli call …` tool invocation, with `$1`…`$9`
   argument interpolation.** A body that starts with `cli call` (or an explicit
   `/alias call <name> …`; `/alias prompt` forces the old prompt form) is
