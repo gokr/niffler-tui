@@ -249,11 +249,24 @@ func localModel(m model, cmd slashCommand, argument string) (tea.Model, tea.Cmd)
 		return m, setConversationModelCmd(m.comp, m.session, m.modelOverride, previous)
 	}
 	m.openModelSelector()
-	if m.runtime.Catalog != "" && (m.modelsCatalog != m.runtime.Catalog || len(m.models) == 0) {
-		spinCmd := m.selector.list.StartSpinner()
-		return m, tea.Batch(spinCmd, loadModelsCmd(m.comp, m.runtime.Catalog))
+	// Warm both sources the picker reads: the active provider's catalog (the
+	// fallback list and the connect form's cache) and the cross-provider list
+	// the picker prefers. One spinner covers whichever loads are needed.
+	needCatalog := m.runtime.Catalog != "" &&
+		(m.modelsCatalog != m.runtime.Catalog || len(m.models) == 0)
+	needAll := !m.allModelsUsable() && !m.allModelsLoading
+	if !needCatalog && !needAll {
+		return m, nil
 	}
-	return m, nil
+	cmds := []tea.Cmd{m.selector.list.StartSpinner()}
+	if needCatalog {
+		cmds = append(cmds, loadModelsCmd(m.comp, m.runtime.Catalog))
+	}
+	if needAll {
+		m.allModelsLoading = true
+		cmds = append(cmds, loadAllModelsCmd(m.comp, m.providers, m.providerStatus))
+	}
+	return m, tea.Batch(cmds...)
 }
 
 func localStatus(m model, cmd slashCommand, argument string) (tea.Model, tea.Cmd) {
@@ -949,8 +962,42 @@ func (m model) configuredCatalogProviders() []catalogProvider {
 	return result
 }
 
+// allModelsUsable reports whether the cached cross-provider list matches the
+// current provider set and has something to show. A stale key (a provider was
+// added or removed since) is as unusable as no cache: refetch on demand.
+func (m model) allModelsUsable() bool {
+	return m.allModelsKey != "" &&
+		m.allModelsKey == allModelsKey(m.providers, m.providerStatus) &&
+		len(m.allModels) > 0
+}
+
+// isStoredProviderNickname reports whether nick names a configured stored
+// provider — the only kind a conversation pin can resolve. The environment
+// fallback's synthetic name is not stored; pinning it would fall through to
+// the global active provider on the next turn.
+func (m model) isStoredProviderNickname(nick string) bool {
+	for _, p := range m.providers {
+		if p.Nickname == nick {
+			return true
+		}
+	}
+	return false
+}
+
 func (m *model) openModelSelector() {
 	title := t(m.loc, "selector.models")
+	// Prefer the cross-provider view once its list for the CURRENT provider
+	// set has landed; otherwise fall back to the active provider's catalog
+	// (still loading, or the single-provider list).
+	if m.allModelsUsable() {
+		title += fmt.Sprintf(" (%d)", len(m.allModels))
+		m.selector = newSelector(title, allModelSelectorItems(m.loc, m.allModels,
+			m.runtime, m.modelOverride, m.providerOverride, m.providerDefaultModel()),
+			m.width, m.height-3)
+		m.mode = modeModels
+		m.layout()
+		return
+	}
 	if m.runtime.Provider != "" {
 		title += " — " + m.runtime.Provider
 	}
@@ -1002,6 +1049,28 @@ func (m model) providerActionChangedProvider(msg providerActionMsg) bool {
 		}
 	}
 	return false
+}
+
+// filterStartMsg is the synthetic keypress that puts the shared list into
+// filtering state — the same key a user would press to filter manually.
+func filterStartMsg() tea.KeyPressMsg {
+	return tea.KeyPressMsg{Code: '/', Text: "/"}
+}
+
+// autoFilterRune reports whether a keypress should silently start filtering.
+// bubbletea v2 puts printable input in Text (empty for navigation and ctrl
+// combinations), so a single printable ASCII rune — other than "/", the
+// list's own filter key, which keeps its normal path — starts the filter.
+func autoFilterRune(msg tea.KeyPressMsg) bool {
+	if msg.Text == "" {
+		return false
+	}
+	runes := []rune(msg.Text)
+	if len(runes) != 1 {
+		return false
+	}
+	r := runes[0]
+	return r >= '!' && r <= '~' && r != '/'
 }
 
 func (m model) handleControlKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
@@ -1447,6 +1516,17 @@ func (m model) handleControlKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.layout()
 		return m, nil
 	}
+	// Type-to-filter in the model picker: a printable keystroke starts the
+	// fuzzy filter instead of requiring "/" first — the filter then owns the
+	// rest of the typing, narrowing on provider nickname or model id (see
+	// allModelSelectorItems). Scoped to modeModels so every other selector
+	// keeps its command keys (e/d/x in /provider, a in /session).
+	if m.mode == modeModels && !m.selector.list.SettingFilter() && autoFilterRune(msg) {
+		var startCmd, typeCmd tea.Cmd
+		m.selector.list, startCmd = m.selector.list.Update(filterStartMsg())
+		m.selector.list, typeCmd = m.selector.list.Update(msg)
+		return m, tea.Batch(startCmd, typeCmd)
+	}
 	if msg.String() != "enter" {
 		var cmd tea.Cmd
 		m.selector.list, cmd = m.selector.list.Update(msg)
@@ -1506,6 +1586,8 @@ func (m model) handleControlKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 
 	case modeModels:
 		previous := m.modelOverride
+		previousProvider := m.providerOverride
+		var pinProvider string
 		if selected.kind == selectorProviderDefaultModel {
 			m.modelOverride = ""
 		} else if selected.kind == selectorModel {
@@ -1515,6 +1597,15 @@ func (m model) handleControlKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 				m.runtime.Context = candidate.Limit.Context
 				m.runtime.ContextSource = "catalog"
 			}
+			// A cross-provider row pins provider AND model in one call, so no
+			// window pairs the new model with the old provider. Only stored
+			// nicknames are pinnable: the environment fallback keeps following
+			// the environment instead of being frozen to a synthetic name.
+			if candidate, ok := selected.payload.(modelCandidate); ok &&
+				candidate.Provider != "" && m.isStoredProviderNickname(candidate.Provider) {
+				pinProvider = candidate.Provider
+				m.providerOverride = candidate.Provider
+			}
 		} else {
 			return m, nil
 		}
@@ -1522,6 +1613,10 @@ func (m model) handleControlKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.controlPending = true
 		m.contextNote = t(m.loc, "note.savingModel")
 		m.layout()
+		if pinProvider != "" {
+			return m, setConversationProviderModelCmd(m.comp, m.session,
+				pinProvider, m.modelOverride, previousProvider, previous)
+		}
 		return m, setConversationModelCmd(m.comp, m.session, m.modelOverride, previous)
 	case modeThemes:
 		name := selected.id

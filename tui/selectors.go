@@ -349,6 +349,77 @@ func modelSelectorItems(loc Locale, models []modelSummary, runtime runtimeResolu
 	return items
 }
 
+// allModelSelectorItems builds the cross-provider /model list: every
+// configured provider's models together, each row tagged with its provider so
+// the shared filter (title + id + description) narrows on either the provider
+// nickname or the model id. The payload is a modelCandidate, so selecting a
+// row can pin provider AND model together.
+func allModelSelectorItems(loc Locale, candidates []modelCandidate, runtime runtimeResolution,
+	modelOverride, providerOverride, providerDefault string) []list.Item {
+	items := make([]list.Item, 0, len(candidates)+1)
+	defaultModel := providerDefault
+	if defaultModel == "" && modelOverride == "" {
+		defaultModel = runtime.Model
+	}
+	if defaultModel == "" {
+		defaultModel = t(loc, "selector.providerDefault")
+	}
+	defaultDescription := defaultModel
+	if runtime.Provider != "" {
+		defaultDescription = runtime.Provider + " · " + defaultDescription
+	}
+	items = append(items, selectorItem{
+		kind:        selectorProviderDefaultModel,
+		id:          "__default__",
+		title:       t(loc, "selector.useProviderDefault"),
+		description: defaultDescription,
+	})
+	for _, candidate := range candidates {
+		title := candidate.Name
+		if title == "" {
+			title = candidate.ID
+		}
+		// Mark the current choice: an explicit model pin wins, else the
+		// resolved runtime model — and only under the provider it belongs to,
+		// so the same id offered by another provider is not marked current.
+		current := candidate.ID == modelOverride &&
+			(providerOverride == "" || candidate.Provider == providerOverride)
+		if modelOverride == "" && candidate.ID == runtime.Model &&
+			candidate.Provider == runtime.Provider {
+			current = true
+		}
+		if current {
+			title = "● " + title
+		}
+		flags := make([]string, 0, 3)
+		if candidate.Reasoning {
+			flags = append(flags, t(loc, "selector.reasoning"))
+		}
+		if candidate.ToolCall {
+			flags = append(flags, t(loc, "selector.tools"))
+		}
+		if candidate.Limit.Context > 0 {
+			flags = append(flags, t(loc, "selector.ctx", formatTokens(candidate.Limit.Context)))
+		}
+		// Provider first in the description: rows are sorted by provider, and
+		// the list's FilterValue scans title+id+description, so typing either
+		// a nickname or a model id narrows the list.
+		description := candidate.Provider
+		if description != "" {
+			description += " · "
+		}
+		description += candidate.ID
+		if len(flags) > 0 {
+			description += " · " + strings.Join(flags, " · ")
+		}
+		items = append(items, selectorItem{
+			kind: selectorModel,
+			id:   candidate.ID, title: title, description: description, payload: candidate,
+		})
+	}
+	return items
+}
+
 func openAICompatibleProvider(provider catalogProvider) bool {
 	switch provider.ID {
 	case "deepseek", "openai", "openrouter":

@@ -460,6 +460,12 @@ type model struct {
 	bgPeekPendingAgent bool
 	models             []modelSummary
 	modelsCatalog      string
+	// Cross-provider model list for /model: the cache plus the provider-set
+	// key it was built from (a stale key means a provider changed while the
+	// fetch was in flight, so the list is dropped and refetched on demand).
+	allModels        []modelCandidate
+	allModelsKey     string
+	allModelsLoading bool
 	// The /session browser: the loaded conversations (with their subagent
 	// lineage) and whether the child sessions are shown. A view preference for
 	// this run, not persisted state.
@@ -1695,6 +1701,23 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 
+	case allModelsMsg:
+		m.allModelsLoading = false // always clear, or a stale key wedges future loads
+		if m.mode == modeModels {
+			m.selector.list.StopSpinner()
+		}
+		if msg.Key != allModelsKey(m.providers, m.providerStatus) {
+			break // provider set changed while in flight: stale list
+		}
+		m.allModels = msg.Items
+		m.allModelsKey = msg.Key
+		if len(msg.Errs) > 0 {
+			m.contextNote = strings.Join(msg.Errs, "; ")
+		}
+		if m.mode == modeModels {
+			m.openModelSelector()
+		}
+
 	case servedModelsMsg:
 		// Edit form: live ids from the stored provider's endpoint.
 		if m.mode == modeConnectForm && m.providerForm.edit && msg.editFor == m.providerForm.template {
@@ -2121,6 +2144,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.controlPending = false
 		if msg.Err != nil {
 			m.modelOverride = msg.Previous
+			if msg.ProviderChanged {
+				m.providerOverride = msg.PreviousProvider
+			}
 			m.contextNote = msg.Err.Error()
 			m.addBlock(blockError, msg.Err.Error())
 			m.syncViewport(true)
@@ -2128,6 +2154,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			break
 		}
 		m.modelOverride = msg.Selected
+		if msg.ProviderChanged {
+			m.providerOverride = msg.SelectedProvider
+		}
 		if msg.Runtime.Provider != "" {
 			m.runtime.Provider = msg.Runtime.Provider
 		}
@@ -2152,6 +2181,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.runtime.OK = msg.Runtime.OK
 		m.contextNote = msg.Warning
 		label := msg.Selected
+		if msg.ProviderChanged && msg.SelectedProvider != "" && msg.Selected != "" {
+			label = msg.SelectedProvider + "/" + msg.Selected
+		}
 		if label == "" {
 			label = t(m.loc, "selector.providerDefault")
 		}
@@ -2161,8 +2193,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case providerBusEventMsg:
 		// A switch from another client (or a plugin) also moves the backend
 		// out from under the conversation's model pin, so reconcile it here
-		// too. Events that only changed provider metadata just refresh.
-		if msg.Changed && m.modelOverride != "" {
+		// too — but only when this conversation has NO provider pin: a pinned
+		// conversation keeps its own provider, so the global switch does not
+		// touch it and its model choice must survive. Events that only changed
+		// provider metadata just refresh.
+		if msg.Changed && m.modelOverride != "" && m.providerOverride == "" {
 			previous := m.modelOverride
 			m.modelOverride = ""
 			cmds = append(cmds, setConversationModelCmd(m.comp, m.session, "", previous))

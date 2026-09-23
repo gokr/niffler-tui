@@ -247,6 +247,24 @@ type modelsLoadedMsg struct {
 	Err     error
 }
 
+// modelCandidate is one model belonging to one configured provider. The
+// provider tag is what lets the /model picker group, label and filter a
+// cross-provider list — a bare modelSummary is scoped to a single catalog.
+type modelCandidate struct {
+	modelSummary
+	Provider string // stored nickname, or the environment fallback's name
+	Served   bool   // came from the provider's live /models probe (no catalog)
+}
+
+// allModelsMsg is the cross-provider model list for the /model picker. Key
+// identifies the provider set it was built from, so a reply that lands after
+// a provider add/remove is dropped instead of mislabeled.
+type allModelsMsg struct {
+	Key   string
+	Items []modelCandidate
+	Errs  []string
+}
+
 type providerActionMsg struct {
 	Action   string
 	Nickname string
@@ -263,9 +281,16 @@ type modelActionMsg struct {
 	Session  string
 	Selected string
 	Previous string
-	Runtime  runtimeResolution
-	Warning  string
-	Err      error
+	// A cross-provider pick saves provider AND model in one session call;
+	// ProviderChanged marks that the call carried a provider key, so an error
+	// rolls the old pin back instead of clearing it, and a model-only save
+	// leaves the provider pin alone.
+	SelectedProvider string
+	PreviousProvider string
+	ProviderChanged  bool
+	Runtime          runtimeResolution
+	Warning          string
+	Err              error
 }
 
 // providerBusEventMsg signals a change on ev.provider.>; the client refreshes
@@ -673,6 +698,153 @@ func loadModelsCmd(comp *sdk.Component, catalog string) tea.Cmd {
 			"toolCall": true, "limit": 500,
 		}, &response)
 		return modelsLoadedMsg{Catalog: catalog, Models: response.Models, Err: err}
+	}
+}
+
+// allModelsKey identifies the provider set a cross-provider model list was
+// built from: every configured nickname with its catalog id, plus the
+// environment fallback when active. A reply whose key no longer matches is
+// stale (a provider was added/removed while it was in flight).
+func allModelsKey(providers []providerSummary, status providerStatusResponse) string {
+	var b strings.Builder
+	seen := map[string]bool{}
+	add := func(nick, catalog string) {
+		if nick == "" || seen[nick] {
+			return
+		}
+		seen[nick] = true
+		b.WriteString(nick)
+		b.WriteByte(0)
+		b.WriteString(catalog)
+		b.WriteByte(1)
+	}
+	for _, p := range providers {
+		add(p.Nickname, p.Catalog)
+	}
+	if status.Source == "environment" {
+		add(status.Provider.Nickname, status.Provider.Catalog)
+	}
+	return b.String()
+}
+
+// loadAllModelsCmd fetches every configured provider's models in ONE command
+// so the /model picker can list them together: catalog-backed providers
+// through models_list (capabilities and limits included), and providers with
+// no catalog entry through their own /models endpoint (ids only). Sequential
+// on purpose — providers are few and each round trip is short, and one msg
+// keeps the picker's spinner and ordering honest.
+func loadAllModelsCmd(comp *sdk.Component, providers []providerSummary, status providerStatusResponse) tea.Cmd {
+	type target struct{ nick, catalog string }
+	var targets []target
+	seen := map[string]bool{}
+	for _, p := range providers {
+		if p.Nickname == "" || seen[p.Nickname] {
+			continue
+		}
+		seen[p.Nickname] = true
+		targets = append(targets, target{p.Nickname, p.Catalog})
+	}
+	if status.Source == "environment" && status.Provider.Nickname != "" &&
+		!seen[status.Provider.Nickname] {
+		targets = append(targets, target{status.Provider.Nickname, status.Provider.Catalog})
+	}
+	key := allModelsKey(providers, status)
+	return func() tea.Msg {
+		var items []modelCandidate
+		var errs []string
+		added := map[string]bool{}
+		appendOne := func(provider string, summary modelSummary, served bool) {
+			if summary.ID == "" {
+				return
+			}
+			k := provider + "\x00" + summary.ID
+			if added[k] {
+				return
+			}
+			added[k] = true
+			items = append(items, modelCandidate{
+				modelSummary: summary, Provider: provider, Served: served,
+			})
+		}
+		for _, t := range targets {
+			if t.catalog != "" {
+				var response modelsResponse
+				if err := requestInto(comp, "models", "models_list", map[string]any{
+					"provider": t.catalog, "status": "active", "input": "text",
+					"toolCall": true, "limit": 500,
+				}, &response); err != nil {
+					errs = append(errs, t.nick+": "+err.Error())
+					continue
+				}
+				for _, summary := range response.Models {
+					appendOne(t.nick, summary, false)
+				}
+				continue
+			}
+			// No catalog id (a custom endpoint such as a self-hosted model):
+			// ask the provider itself which ids it serves.
+			var response struct {
+				Models []struct {
+					ID string `json:"id"`
+				} `json:"models"`
+			}
+			if err := requestInto(comp, "provider", "provider_models", map[string]any{
+				"nickname": t.nick, "refresh": true,
+			}, &response); err != nil {
+				errs = append(errs, t.nick+": "+err.Error())
+				continue
+			}
+			for _, served := range response.Models {
+				appendOne(t.nick, modelSummary{ID: served.ID}, true)
+			}
+		}
+		sort.SliceStable(items, func(i, j int) bool {
+			if items[i].Provider != items[j].Provider {
+				return items[i].Provider < items[j].Provider
+			}
+			return items[i].ID < items[j].ID
+		})
+		return allModelsMsg{Key: key, Items: items, Errs: errs}
+	}
+}
+
+// setConversationProviderModelCmd pins provider AND model in one session
+// call. Core treats the presence of each key as set/clear, so a cross-provider
+// model pick has to land atomically — two calls would leave a window where the
+// new model pairs with the old provider (and a crash between them strands a
+// half-changed conversation).
+func setConversationProviderModelCmd(comp *sdk.Component, session, provider, selected,
+	prevProvider, prevModel string) tea.Cmd {
+	return func() tea.Msg {
+		var response struct {
+			OK             bool   `json:"ok"`
+			Provider       string `json:"provider"`
+			ProviderSource string `json:"providerSource"`
+			Model          string `json:"model"`
+			Catalog        string `json:"catalog"`
+			Context        int    `json:"context"`
+			ContextSource  string `json:"contextSource"`
+			Warning        string `json:"warning"`
+		}
+		err := requestInto(comp, "core", "session", map[string]any{
+			"sessionId": session, "provider": provider, "model": selected,
+		}, &response)
+		if err == nil && !response.OK {
+			err = fmt.Errorf("provider/model selection failed")
+		}
+		return modelActionMsg{
+			Session: session, Selected: selected, Previous: prevModel,
+			SelectedProvider: provider, PreviousProvider: prevProvider,
+			ProviderChanged: true,
+			Runtime: runtimeResolution{
+				OK: response.OK, Provider: response.Provider,
+				ProviderSource: response.ProviderSource, Model: response.Model,
+				Catalog: response.Catalog, Context: response.Context,
+				ContextSource: response.ContextSource,
+			},
+			Warning: response.Warning,
+			Err:     err,
+		}
 	}
 }
 

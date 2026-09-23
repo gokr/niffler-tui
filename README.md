@@ -128,8 +128,10 @@ Local commands are handled by the TUI and are never sent to the model:
   browser). OAuth flows open the authorization URL, poll until Niffler's
   provider component stores the tokens, and accept a pasted code/redirect
   URL when the local callback port is unavailable; esc cancels
-- `/model` — searchable active-provider model catalog; selection is persisted
-  immediately as this conversation's override (without an inference call)
+- `/model` — searchable model catalog across every configured provider;
+  typing filters on provider nickname or model id (no need to press `/` first),
+  and picking a model from another provider pins provider AND model for this
+  conversation in one persisted override (without an inference call)
 - `/connect` — masked provider connection form using models.dev templates or a
   custom OpenAI-compatible endpoint
 - `/mcp [add|edit|on|off|refresh|search]` — manage external MCP servers; a bare
