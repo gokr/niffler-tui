@@ -540,6 +540,10 @@ type model struct {
 	approvals    []approvalRequest
 	autoApproved map[string][]string // sessionId -> tool names
 	autoAll      map[string]bool     // sessionId -> "A": every gated tool granted
+	// approveAllArmed is the first stage of the two-stage "approve all" (A,
+	// then A again to confirm). Cleared by any other key, a new request or a
+	// verdict, so an arm never outlives the prompt it was raised for.
+	approveAllArmed bool
 
 	// mouse toggles terminal mouse tracking (default on). When on, the wheel
 	// scrolls the transcript, clicks expand tool cards, and plain left-button
@@ -1546,6 +1550,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.providerOverride = msg.Conversation.ProviderOverride
 		m.modelOverride = msg.Conversation.ModelOverride
 		m.thinkingEffort = msg.Conversation.ThinkingEffort
+		// Reconcile the gate mode with the conversation header. Another
+		// client may have put this conversation back to ask since this TUI
+		// last saw it, and a stale local flag would then silently grant the
+		// gates core is raising again — the silent grant the gate exists to
+		// prevent.
+		m.setAutoApproveAllLocal(msg.Session, msg.Conversation.Approvals == "auto")
 		m.runtime = msg.Runtime
 		// Conversation/provider metadata keeps the header useful during a
 		// partial or rolling backend upgrade where llm_resolve is unavailable.

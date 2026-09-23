@@ -68,6 +68,9 @@ func parseApprovalPayload(payload json.RawMessage) (approvalRequest, bool) {
 // are queued without an ack.
 func (m *model) applyApprovalEvent(msg approvalEventMsg) tea.Cmd {
 	req := msg.req
+	// A fresh request invalidates a pending "approve all" arm: the arm was
+	// raised for a different prompt on screen and must never carry over.
+	m.approveAllArmed = false
 	if m.isAutoApproved(req.sessionID, req.tool) {
 		// A decision alone resolves the gate; no ack needed.
 		m.replyApproval(req.id, false, true)
@@ -83,6 +86,7 @@ func (m *model) applyApprovalEvent(msg approvalEventMsg) tea.Cmd {
 
 // applyApprovalResolved removes a request whose gate reached a verdict.
 func (m *model) applyApprovalResolved(id string) {
+	m.approveAllArmed = false
 	m.approvals = slices.DeleteFunc(m.approvals, func(req approvalRequest) bool {
 		return req.id == id
 	})
@@ -97,6 +101,7 @@ func (m *model) answerApproval(ok, auto bool) tea.Cmd {
 		return nil
 	}
 	req := m.approvals[0]
+	m.approveAllArmed = false
 	var persist tea.Cmd
 	if auto {
 		persist = m.rememberAutoApprove(req.sessionID, req.tool)
@@ -115,31 +120,44 @@ type approvalsModeMsg struct {
 	Err     error
 }
 
-// answerApprovalAll approves the front queued request and turns the whole
-// conversation's gate off: every gated tool is granted without asking, for
-// the rest of the conversation. Where "a" remembers one tool name, this needs
-// to know nothing in advance — which is what a human wants once they have
-// decided to trust a whole run instead of a list of tools.
+// answerApprovalAll grants the request on screen and every other request
+// already queued for the same conversation, then turns that conversation's
+// gate off: every gated tool is granted without asking from here on. Where
+// "a" remembers one tool name, this needs to know nothing in advance — which
+// is what a human wants once they have decided to trust a whole run instead
+// of a list of tools.
+//
+// Draining the backlog matters: the flag below is consulted when a request
+// ARRIVES, so it does not by itself answer requests already sitting in the
+// queue — those would keep raising modals after a plain approve-all.
 //
 // It has two effects, because core's gate mode applies from the NEXT turn on:
 //
-//   - the in-memory flag answers everything still queued, and everything
-//     raised later in the current turn, by replying from this client, and
+//   - the in-memory flag answers everything raised later in the current
+//     turn, by replying from this client, and
 //   - the persisted conversation control (approvals: "auto") stops core from
 //     asking any client at all on later turns, and survives a TUI restart or
 //     a resumed conversation.
 //
 // Program-shaped gates (fabric, agent_run) are covered by the mode as well:
 // this is a blanket opt-out of the human gate for one conversation, which is
-// why the command that does the same thing is spelled out in the prompt.
+// why approvalKey arms it before it runs.
 func (m *model) answerApprovalAll() tea.Cmd {
 	if len(m.approvals) == 0 {
 		return nil
 	}
 	req := m.approvals[0]
+	m.approveAllArmed = false
 	persist := m.rememberAutoApproveAll(req.sessionID)
-	m.replyApproval(req.id, false, true)
-	m.approvals = m.approvals[1:]
+	kept := make([]approvalRequest, 0, len(m.approvals))
+	for _, pending := range m.approvals {
+		if pending.id == req.id || (req.sessionID != "" && pending.sessionID == req.sessionID) {
+			m.replyApproval(pending.id, false, true)
+			continue
+		}
+		kept = append(kept, pending)
+	}
+	m.approvals = kept
 	return persist
 }
 
@@ -182,8 +200,13 @@ func (m *model) setAutoApproveAllLocal(sessionID string, on bool) {
 // applyApprovalsMode lands a gate-mode change: it reports what the
 // conversation now does and re-syncs the local all-tools flag with it, so a
 // bare /approvals readback also reflects a mode set from another client.
+//
+// A failed change CANCELS the grant rather than keeping a half of it: the
+// flag was set optimistically before the control call, and leaving it set
+// would silently approve gates for a mode core never recorded.
 func (m *model) applyApprovalsMode(msg approvalsModeMsg) tea.Cmd {
 	if msg.Err != nil {
+		m.setAutoApproveAllLocal(msg.Session, false)
 		m.addBlock(blockError, t(m.loc, "note.approvalsFailed", msg.Err.Error()))
 		m.syncViewport(true)
 		return nil
@@ -306,20 +329,41 @@ func (m *model) approvalBox() string {
 		width = max(24, min(72, m.width-4))
 	}
 	hint := t(m.loc, "approval.hint")
+	if m.approveAllArmed {
+		hint = t(m.loc, "approval.armed")
+	}
 	return approvalBoxStyle.Width(width).Render(b.String()) + "\n" +
 		metaStyle.Render(hint)
 }
 
 // approvalKey takes Enter/Esc/"a"/"A" while a gate prompt is pending.
 // Returns the key's follow-up command (if any) and whether the key was
-// consumed. "a" remembers one tool for this session; "A" turns the whole
-// conversation's gate off — the answer to a run that keeps asking for tools
-// the human has not seen before.
+// consumed. "a" remembers one tool for this session.
+//
+// "A" (approve all) is two-stage, like the stop and kill confirmations: the
+// first press arms it and swaps the hint, the second runs it. Granting a
+// whole conversation — program-shaped gates included — is the widest grant
+// this modal can issue, so it must not be one careless keystroke away.
 func (m *model) approvalKey(msg tea.KeyPressMsg) (tea.Cmd, bool) {
 	if len(m.approvals) == 0 {
 		return nil, false
 	}
-	switch msg.String() {
+	key := msg.String()
+	if key == "A" || key == "shift+a" {
+		if !m.approveAllArmed {
+			m.approveAllArmed = true
+			return nil, true
+		}
+		if m.approvals[0].sessionID != "" {
+			return m.answerApprovalAll(), true
+		}
+		m.approveAllArmed = false
+		return nil, true
+	}
+	// Any other key disarms a pending arm, so it can never outlive the
+	// prompt it was raised for.
+	m.approveAllArmed = false
+	switch key {
 	case "enter":
 		return m.answerApproval(true, false), true
 	case "esc":
@@ -327,11 +371,6 @@ func (m *model) approvalKey(msg tea.KeyPressMsg) (tea.Cmd, bool) {
 	case "a":
 		if m.approvals[0].sessionID != "" {
 			return m.answerApproval(true, true), true
-		}
-		return nil, true
-	case "A", "shift+a":
-		if m.approvals[0].sessionID != "" {
-			return m.answerApprovalAll(), true
 		}
 		return nil, true
 	}

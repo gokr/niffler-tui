@@ -171,7 +171,7 @@ func builtinSlashCommands() []slashCommand {
 		}},
 		{Name: "compact", Description: "compact this conversation now: replace older history with a checkpoint", builtin: true, run: localCompact},
 		{Name: "approvals", Description: "show or set this conversation's approval gate (ask/auto); auto grants every gated tool without asking", builtin: true, run: localApprovals, Params: []slashParam{
-			{Name: "mode", Kind: "enum", Values: []string{"ask", "auto", "status"}},
+			{Name: "mode", Kind: "enum", Values: []string{"ask", "auto"}, Description: "empty = show the current mode"},
 		}},
 		{Name: "components", Description: "show what this conversation can call", builtin: true, run: localComponents, Params: []slashParam{
 			{Name: "filter", Kind: "enum", Values: []string{"all", "direct", "discovered", "undiscovered", "unknown"}},

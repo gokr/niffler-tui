@@ -185,14 +185,18 @@ type conversationState struct {
 	ProviderOverride string
 	ModelOverride    string
 	ThinkingEffort   string
-	Provider         string
-	Model            string
-	Context          int
-	ContextUsed      int
-	PromptTokens     int
-	Cwd              string
-	CachePrompt      int
-	CacheRead        int
+	// Approvals is the conversation's gate mode from its header ("auto", or
+	// "" for ask). Read at attach so this TUI's answering matches core's mode
+	// even when another client changed it since the last visit.
+	Approvals    string
+	Provider     string
+	Model        string
+	Context      int
+	ContextUsed  int
+	PromptTokens int
+	Cwd          string
+	CachePrompt  int
+	CacheRead    int
 }
 
 type bootstrapMsg struct {
@@ -381,6 +385,7 @@ func loadConversationState(comp *sdk.Component, session string) (conversationSta
 			ProviderOverride string `json:"providerOverride"`
 			ModelOverride    string `json:"modelOverride"`
 			ThinkingEffort   string `json:"thinkingEffort"`
+			Approvals        string `json:"approvals"`
 			Provider         string `json:"provider"`
 			Model            string `json:"model"`
 			Context          int    `json:"context"`
@@ -404,6 +409,7 @@ func loadConversationState(comp *sdk.Component, session string) (conversationSta
 		ProviderOverride: response.Value.ProviderOverride,
 		ModelOverride:    response.Value.ModelOverride,
 		ThinkingEffort:   response.Value.ThinkingEffort,
+		Approvals:        response.Value.Approvals,
 		Provider:         response.Value.Provider, Model: response.Value.Model,
 		Context: response.Value.Context, ContextUsed: response.Value.ContextUsed,
 		PromptTokens: response.Value.PromptTokens,
@@ -713,7 +719,12 @@ func setConversationApprovalsCmd(comp *sdk.Component, session, mode string) tea.
 		if err == nil && !response.OK {
 			err = fmt.Errorf("approval mode change failed")
 		}
-		return approvalsModeMsg{Session: session, Mode: mode, Err: err}
+		if err != nil {
+			return approvalsModeMsg{Session: session, Mode: mode, Err: err}
+		}
+		// Report what core stored, not what was asked for — "ask" persists as
+		// "" (the same faithfulness the web UI's handler keeps).
+		return approvalsModeMsg{Session: session, Mode: response.Approvals}
 	}
 }
 

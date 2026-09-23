@@ -9,16 +9,25 @@ project aims for [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Added
 
 - **The approval gate can be granted for a whole conversation.** The gate
-  modal's new `A` key («approve all») grants the request on screen and then
-  every gated tool in that conversation — one keystroke instead of a decision
-  per tool, and unlike `a` nothing has to be known in advance. It writes
-  core's own gate mode (`/approvals auto`, which grants loudly and covers
-  program-shaped calls too), so the grant survives a restart or a resumed
-  conversation and applies to every attached client; the in-memory flag also
-  answers the rest of the *current* turn, which the persisted mode alone
-  cannot (it applies from the next turn on). `/approvals [ask|auto]` reports
-  the current mode and is how a conversation goes back to asking. `a` keeps
-  its narrower meaning (always allow that one tool for this session).
+  modal's new `A` key («approve all») grants the request on screen, the
+  requests already queued for that conversation, and then every gated tool it
+  raises from here on — no decision per tool, and unlike `a` nothing has to be
+  known in advance. It is two-stage, like the stop and kill confirmations
+  (`A`, then `A` again to confirm), because it is the widest grant this modal
+  can issue: it covers program-shaped calls, which the per-tool path
+  deliberately keeps out of reach of a blanket tool name by keying those on a
+  manifest digest. It writes core's own gate mode (`/approvals auto`, which
+  grants loudly), so the grant survives a restart or a resumed conversation
+  and applies to every attached client; the in-memory flag answers the rest
+  of the *current* turn, which the persisted mode alone cannot (it applies
+  from the next turn on). `/approvals [ask|auto]` reports the mode and is how
+  a conversation goes back to asking. `a` keeps its narrower meaning (always
+  allow that one tool for this session).
+
+  The flag is reconciled with the conversation header on attach, so a mode
+  another client changed back to `ask` is not silently granted here, and a
+  mode change that fails to persist cancels the grant rather than leaving
+  half of it behind.
 
 - **Brief tool cards name what `discover` and `invoke` were aimed at.** A
   collapsed one-line card used to read just `discover` or `invoke`, which

@@ -68,6 +68,7 @@ func (m model) switchSession(id string) model {
 	m.models = nil
 	m.modelsCatalog = ""
 	m.approvals = nil
+	m.approveAllArmed = false
 	m.searchActive = false
 	m.searchQuery = ""
 	m.mode = modeChat
@@ -191,7 +192,7 @@ func localApprovals(m model, cmd slashCommand, argument string) (tea.Model, tea.
 	}
 	mode := strings.ToLower(strings.TrimSpace(argument))
 	switch mode {
-	case "", "status":
+	case "":
 		session := m.session
 		m.addBlock(blockMeta, "\u2192 /approvals")
 		m.syncViewport(true)
@@ -209,7 +210,7 @@ func localApprovals(m model, cmd slashCommand, argument string) (tea.Model, tea.
 		m.setAutoApproveAllLocal(m.session, mode == "auto")
 		return m, setConversationApprovalsCmd(m.comp, m.session, mode)
 	default:
-		m.addBlock(blockError, "/approvals: expected ask, auto or status")
+		m.addBlock(blockError, "/approvals: expected ask or auto")
 		m.syncViewport(true)
 		return m, nil
 	}

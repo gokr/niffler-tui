@@ -156,10 +156,12 @@ Local commands are handled by the TUI and are never sent to the model:
   every `x-harness.approval` tool without asking any client (each grant is
   logged loudly, since a silent grant is what the gate exists to prevent);
   `ask` restores the gate, and no argument reports the current mode. The gate
-  modal's `A` key sets the same mode while a request is on screen, so a run
-  that keeps asking for tools you have not seen yet can be approved in one
-  keystroke; `a` keeps its narrower meaning (always allow *this* tool for this
-  session)
+  modal's `A` key sets the same mode while a request is on screen: two-stage
+  (`A`, then `A` again to confirm, like the stop and kill confirmations), and
+  it also grants the requests already queued for that conversation. It covers
+  program-shaped calls too, which the per-tool `a` deliberately does not — so
+  the widest grant needs the extra keypress. `a` keeps its narrower meaning
+  (always allow *this* tool for this session).
 - `/components [all|direct|discovered|undiscovered]` — what this conversation
   can actually call, per component, with each tool's exposure state
 - `/discover <component>|tool=NAME` — expose a component's tools (or one named
