@@ -78,6 +78,10 @@ func (m model) switchSession(id string) model {
 	m.histIdx = -1
 	m.draft = ""
 	m.input.SetValue("")
+	// Dropped images belong to the conversation being left; the new session
+	// starts with an empty composer (and the old paths may not even be
+	// meaningful in its workspace).
+	m.attachments = nil
 	m.mcpConfirmDelete = ""
 	m.profileConfirmDelete = ""
 	// Completion state is per-input, not per-session: the cleared input
@@ -284,7 +288,7 @@ func localStatus(m model, cmd slashCommand, argument string) (tea.Model, tea.Cmd
 		m.addBlock(blockUser, prompt)
 		m.layout()
 		m.syncViewport(true)
-		return m, tea.Batch(m.sendTurn(prompt), m.armSpinner())
+		return m, tea.Batch(m.sendTurn(prompt, nil), m.armSpinner())
 	}
 	m.addBlock(blockMeta, report)
 	m.syncViewport(true)

@@ -10,6 +10,7 @@ require (
 	github.com/alecthomas/chroma/v2 v2.14.0
 	github.com/charmbracelet/x/ansi v0.11.7
 	github.com/sahilm/fuzzy v0.1.3
+	golang.org/x/image v0.40.0
 	golang.org/x/term v0.40.0
 	niffler.dev/sdk v0.0.0
 )
@@ -44,7 +45,7 @@ require (
 	golang.org/x/net v0.39.0 // indirect
 	golang.org/x/sync v0.21.0 // indirect
 	golang.org/x/sys v0.46.0 // indirect
-	golang.org/x/text v0.24.0 // indirect
+	golang.org/x/text v0.37.0 // indirect
 )
 
 // Local development assumes this repository is next to niffler. Niffler's

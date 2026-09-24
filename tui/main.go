@@ -625,6 +625,10 @@ type model struct {
 	fileComp fileCompState
 	fileList map[string]fileListEntry
 
+	// attachments are images dropped onto the terminal, queued for the next
+	// turn (attach.go). Cleared on send and on session switch.
+	attachments []attachment
+
 	// roundClosed marks the current LLM round as finalized: the assistant
 	// event carried the complete content, or the turn ended (done). Late
 	// token frames can arrive after that (NATS ordering across subjects
@@ -985,7 +989,10 @@ func uiStartupDecision(msg uiAttachMsg, newID string) (switchTo, note string) {
 	return newID, "This conversation is open in another UI — started a new conversation."
 }
 
-func (m model) sendTurn(content string) tea.Cmd {
+func (m model) sendTurn(content string, atts []attachment) tea.Cmd {
+	// Copy the queue: the model's attachments are cleared as soon as the
+	// command is returned, while this closure may run later.
+	atts = append([]attachment(nil), atts...)
 	return func() tea.Msg {
 		args := map[string]any{
 			"sessionId": m.session,
@@ -995,6 +1002,16 @@ func (m model) sendTurn(content string) tea.Cmd {
 			// persisted conversation override after a provider/default change.
 			"provider": m.providerOverride,
 			"model":    m.modelOverride,
+		}
+		if len(atts) > 0 {
+			// Read, resize and encode here (off the UI thread): a dropped
+			// screenshot must not stall rendering, and a preparation failure
+			// surfaces as a turn error instead of a half-sent message.
+			prepared, err := prepareAttachments(atts)
+			if err != nil {
+				return turnDoneMsg{session: m.session, err: err}
+			}
+			args["attachments"] = prepared
 		}
 		// A conversation with no header yet gets this TUI's launch directory
 		// pinned as its (immutable) workspace: starting niffler-tui inside a
@@ -1385,10 +1402,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, cmd
 		case "enter":
 			content := strings.TrimSpace(m.input.Value())
-			if content == "" {
+			atts := m.attachments
+			if content == "" && len(atts) == 0 {
 				return m, nil
 			}
-			if strings.HasPrefix(content, "/") {
+			if strings.HasPrefix(content, "/") && len(atts) == 0 {
 				m.input.SetValue("")
 				// Slash commands are kept in the input history (Pi-style):
 				// up-arrow and ctrl+r recall the last commands as well as
@@ -1416,10 +1434,18 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				// live conversation and may keep working; we render it locally so it
 				// is visible in the flow even though busy stays true until "done".
 				// Busy-Enter is not a fresh send, so it stays out of the input
-				// history (see TestSteerWhileBusy).
+				// history (see TestSteerWhileBusy). Attachments have no steer
+				// channel and stay queued for the next message.
+				if content == "" {
+					m.contextNote = t(m.loc, "attach.busy")
+					return m, nil
+				}
 				m.input.SetValue("")
 				m.histIdx = -1
 				m.addBlock(blockUser, "Steer: "+content)
+				if len(atts) > 0 {
+					m.contextNote = t(m.loc, "attach.busy")
+				}
 				m.layout()
 				m.syncViewport(true)
 				return m, m.sendSteer(content)
@@ -1430,7 +1456,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.contextNote = t(m.loc, "note.controlPending")
 				return m, nil
 			}
-			if m.addHistory(content) {
+			if content != "" && m.addHistory(content) {
 				appendHistoryEntry(m.historyFile, content)
 			}
 			m.histIdx = -1
@@ -1447,10 +1473,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.setStreaming(false)
 			m.roundClosed = false
 			m.turnEndRendered = false
-			m.addBlock(blockUser, content)
+			m.addBlock(blockUser, userMessageText(content, atts))
+			m.attachments = nil
 			m.layout()
 			m.syncViewport(true)
-			return m, tea.Batch(m.sendTurn(content), m.armSpinner())
+			return m, tea.Batch(m.sendTurn(content, atts), m.armSpinner())
 		case "up":
 			// History previous only at the visual top of the textarea;
 			// otherwise Up moves within logical or soft-wrapped lines.
@@ -1518,6 +1545,16 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.layout()
 			return m, tea.Batch(m.loadBgPeekBody(), m.armBgPeekTick(), processesListCmd(m.comp),
 				agentsListCmd(m.comp, m.session))
+		case "backspace":
+			// An empty input's backspace drops the last queued attachment
+			// (the chip line is the visual queue); with text present the
+			// textarea keeps its normal editing behavior.
+			if m.input.Value() == "" && len(m.attachments) > 0 {
+				m.attachments = m.attachments[:len(m.attachments)-1]
+				m.contextNote = ""
+				m.layout()
+				return m, nil
+			}
 		case "esc":
 			// Two-stage stop: first ESC arms the Stop? prompt, second ESC
 			// force-cancels the running turn. Outside a busy turn ESC is left
@@ -1593,6 +1630,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if m.mode != modeChat {
 			return m, nil
+		}
+		// A file dropped onto the terminal arrives as a bracketed paste of
+		// its path(s) (attach.go). Recognize it before the textarea swallows
+		// the paste: images queue as attachments, other paths are inserted
+		// as text for the agent to open itself.
+		if paths := droppedPaths(msg.Content, m.compCwd()); len(paths) > 0 {
+			return m.attachDroppedPaths(paths)
 		}
 		// chat mode: fall through to normal input handling below
 
@@ -3112,11 +3156,13 @@ func (m model) View() tea.View {
 
 	// Pi-style input zone: the transient activity state (spinner + working,
 	// stopping, connecting, …) is embedded in the divider above the input,
-	// which keeps the bottom row free for the workspace and notes.
-	parts := []string{
-		headerLine, m.viewport.View(), "",
-		m.inputRule(m.activityLabel()), m.input.View(), m.inputRule(""),
+	// which keeps the bottom row free for the workspace and notes. Queued
+	// attachments render on their own line above the divider.
+	parts := []string{headerLine, m.viewport.View(), ""}
+	if chips := attachmentChips(m.attachments, max(1, m.width-2)); chips != "" {
+		parts = append(parts, chips)
 	}
+	parts = append(parts, m.inputRule(m.activityLabel()), m.input.View(), m.inputRule(""))
 	if m.searchActive {
 		parts = append(parts, m.searchView())
 	}

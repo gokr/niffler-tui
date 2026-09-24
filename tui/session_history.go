@@ -11,6 +11,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -19,19 +20,74 @@ import (
 	sdk "niffler.dev/sdk"
 )
 
-// storedMessage is one persisted conversation message. Content is null on
-// pure tool-call assistant rounds (decodes to ""); reasoning and tool_calls
-// are optional. Unknown telemetry fields (turnId, durationMs, ...) are
-// ignored.
+// storedMessage is one persisted conversation message. Content decodes both
+// shapes the runner stores: a plain string, or the multimodal array a turn
+// with image attachments carries. Unknown telemetry fields (turnId,
+// durationMs, ...) are ignored.
 type storedMessage struct {
 	Role       string           `json:"role"`
-	Content    string           `json:"content"`
+	Content    messageContent   `json:"content"`
 	Reasoning  string           `json:"reasoning"`
 	ToolCallID string           `json:"tool_call_id"`
 	Name       string           `json:"name"`
 	ToolCalls  []storedToolCall `json:"tool_calls"`
 	DurationMs int              `json:"durationMs"`
 	Notice     json.RawMessage  `json:"notice"`
+}
+
+// messageContent is a persisted message's content. A multimodal array — the
+// shape a user turn with dropped images has — flattens to its text parts
+// plus one "[image]" marker per image part, so history replay shows a
+// readable placeholder instead of the base64 payload.
+type messageContent string
+
+func (c *messageContent) UnmarshalJSON(data []byte) error {
+	trimmed := bytes.TrimSpace(data)
+	if len(trimmed) == 0 || bytes.Equal(trimmed, []byte("null")) {
+		*c = ""
+		return nil
+	}
+	if trimmed[0] == '"' {
+		var s string
+		if err := json.Unmarshal(trimmed, &s); err != nil {
+			return err
+		}
+		*c = messageContent(s)
+		return nil
+	}
+	var parts []struct {
+		Type     string `json:"type"`
+		Text     string `json:"text"`
+		ImageURL *struct {
+			URL string `json:"url"`
+		} `json:"image_url"`
+	}
+	if err := json.Unmarshal(trimmed, &parts); err != nil {
+		// Unknown shape: keep the message with no rendered text rather than
+		// failing the whole history page.
+		*c = ""
+		return nil
+	}
+	var b strings.Builder
+	for _, p := range parts {
+		switch p.Type {
+		case "text":
+			if p.Text == "" {
+				continue
+			}
+			if b.Len() > 0 {
+				b.WriteString("\n")
+			}
+			b.WriteString(p.Text)
+		case "image_url":
+			if b.Len() > 0 {
+				b.WriteString("\n")
+			}
+			b.WriteString("[image]")
+		}
+	}
+	*c = messageContent(b.String())
+	return nil
 }
 
 // storedToolFunction is a stored tool call's function object (the normalized
@@ -285,10 +341,10 @@ func replayConversation(messages []storedMessage) []transcriptBlock {
 				// process-exited, or a wake turn's prompt): render dim and
 				// attributed, never as a plain user bubble (docs/WIRE.md
 				// "Settlement notices").
-				scratch.addBlock(blockNotice, msg.Content)
+				scratch.addBlock(blockNotice, string(msg.Content))
 				continue
 			}
-			scratch.addBlock(blockUser, msg.Content)
+			scratch.addBlock(blockUser, string(msg.Content))
 
 		case "assistant":
 			if strings.TrimSpace(msg.Reasoning) != "" {
@@ -298,7 +354,7 @@ func replayConversation(messages []storedMessage) []transcriptBlock {
 			}
 			if msg.Content != "" {
 				scratch.blocks = append(scratch.blocks, transcriptBlock{
-					kind: blockAssistant, text: msg.Content, finalized: true,
+					kind: blockAssistant, text: string(msg.Content), finalized: true,
 				})
 			}
 			for _, call := range msg.ToolCalls {
@@ -311,7 +367,7 @@ func replayConversation(messages []storedMessage) []transcriptBlock {
 			}
 
 		case "tool":
-			result, errText := storedToolOutcome(msg.Content)
+			result, errText := storedToolOutcome(string(msg.Content))
 			if !scratch.completeToolCall(msg.ToolCallID, msg.Name, nil, result, errText, msg.DurationMs) {
 				// No pending call matched (legacy entry, or the list was
 				// capped before the requesting assistant message): keep the
@@ -326,7 +382,7 @@ func replayConversation(messages []storedMessage) []transcriptBlock {
 			// Turn errors are audit records, not provider messages; the
 			// live transcript renders them as error blocks.
 			if msg.Content != "" {
-				scratch.addBlock(blockError, msg.Content)
+				scratch.addBlock(blockError, string(msg.Content))
 			}
 		}
 	}
@@ -467,12 +523,12 @@ func workerTailLines(messages []storedMessage) []string {
 		switch msg.Role {
 		case "user":
 			if msg.Notice != nil {
-				add("▸ ", msg.Content, 3)
+				add("▸ ", string(msg.Content), 3)
 				continue
 			}
-			add("» ", msg.Content, 4)
+			add("» ", string(msg.Content), 4)
 		case "assistant":
-			add("", msg.Content, 12)
+			add("", string(msg.Content), 12)
 			for _, call := range msg.ToolCalls {
 				line := "→ " + call.Function.Name
 				if snippet := activitySnippet(call.Function.Name,
@@ -482,14 +538,14 @@ func workerTailLines(messages []storedMessage) []string {
 				lines = append(lines, line)
 			}
 		case "tool":
-			outcome, errText := storedToolOutcome(msg.Content)
+			outcome, errText := storedToolOutcome(string(msg.Content))
 			if errText != "" {
 				add("! "+msg.Name+" ", errText, 3)
 				continue
 			}
 			add("← "+msg.Name+" ", storedToolText(outcome), 3)
 		case "error":
-			add("! ", msg.Content, 3)
+			add("! ", string(msg.Content), 3)
 		}
 	}
 	return lines

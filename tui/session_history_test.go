@@ -11,7 +11,7 @@ import (
 // storedAssistant builds one persisted assistant message with optional
 // reasoning/content and tool calls in the normalized OpenAI shape.
 func storedAssistant(content, reasoning string, calls ...storedToolCall) storedMessage {
-	return storedMessage{Role: "assistant", Content: content, Reasoning: reasoning, ToolCalls: calls}
+	return storedMessage{Role: "assistant", Content: messageContent(content), Reasoning: reasoning, ToolCalls: calls}
 }
 
 func storedCall(id, name, arguments string) storedToolCall {
@@ -23,7 +23,7 @@ func storedCall(id, name, arguments string) storedToolCall {
 }
 
 func storedTool(id, name, content string) storedMessage {
-	return storedMessage{Role: "tool", ToolCallID: id, Name: name, Content: content}
+	return storedMessage{Role: "tool", ToolCallID: id, Name: name, Content: messageContent(content)}
 }
 
 func TestReplayConversationPreservesOrderAndKinds(t *testing.T) {

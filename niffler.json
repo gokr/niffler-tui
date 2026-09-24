@@ -12,6 +12,7 @@
         "tui/approvals.go",
         "tui/agents.go",
         "tui/alias.go",
+        "tui/attach.go",
         "tui/backend.go",
         "tui/context_status.go",
         "tui/controls.go",

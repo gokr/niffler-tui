@@ -8,6 +8,20 @@ project aims for [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Dropped images now reach the model.** Files dragged onto the terminal
+  arrive as a bracketed paste of their paths; the TUI recognizes the drop,
+  checks each path is a real image (extension or magic bytes), resizes it to
+  at most 2000 px and re-encodes it as the smaller of PNG/JPEG, then queues it
+  as a chip above the input rule. Enter sends the chips with the turn as the
+  session call's `attachments` (base64, MIME, dimensions), so the model
+  actually sees the image; non-image paths are inserted as text instead, which
+  is what makes dragging a source file still useful. A caption-less drop is a
+  valid turn, backspace removes the last chip while the input is empty, and a
+  drop made mid-turn stays queued with a note rather than being silently
+  dropped. History replay decodes the stored multimodal shape as its text plus
+  an `[image]` marker, so a reloaded conversation shows where images were
+  without re-fetching the pixels.
+
 - **`/session` filters through the store, not through a download.** The
   browser now asks the harness's store to do the matching (`search`, the
   server-side full-text query gokr/niffler#77 added): typing in the filter

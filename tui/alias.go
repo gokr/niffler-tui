@@ -606,7 +606,7 @@ func (m model) runAlias(name string, entry aliasEntry, extra string) (tea.Model,
 	m.addBlock(blockUser, prompt)
 	m.layout()
 	m.syncViewport(true)
-	return m, tea.Batch(m.sendTurn(prompt), m.armSpinner())
+	return m, tea.Batch(m.sendTurn(prompt, nil), m.armSpinner())
 }
 
 // runAliasCall runs a call alias: parse its stored `cli call …` line,
