@@ -155,6 +155,13 @@ project aims for [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **A failed runtime resolution no longer masquerades as current state.**
+  When `llm_resolve` timed out — most visibly while the `llm` component was
+  busy behind a streaming turn — the header kept showing the last-known-good
+  provider/model with nothing to say they were not the effective selection,
+  and nothing retried. The header now marks the selection stale (`!`) and
+  re-resolves once shortly after; a successful resolution clears the mark.
+
 - **Every selector's filter box accepted text but never narrowed the list.**
   The bubbles list filters asynchronously: a keystroke returns a
   `FilterMatchesMsg` command and only forwarding that result back rebuilds the

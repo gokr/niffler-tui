@@ -1194,6 +1194,49 @@ func TestRuntimeRefreshKeepsSuccessfulResolutionOnOptionalFailure(t *testing.T) 
 	}
 }
 
+func TestRuntimeRefreshMarksStaleAndRetries(t *testing.T) {
+	m := newTestModel()
+	m.connected = true
+	m.session = "console"
+	m.width, m.height = 120, 30
+	m.layout()
+	m.runtime = runtimeResolution{OK: true, Provider: "xiaomi", Model: "mimo-v2.6-flash"}
+	updated, cmd := m.Update(runtimeRefreshedMsg{
+		Session:    "console",
+		ResolveErr: errors.New("llm_resolve: context deadline exceeded"),
+	})
+	got := updated.(model)
+	if !got.runtimeStale {
+		t.Fatalf("failed resolve did not mark the header stale: %#v", got.runtime)
+	}
+	if got.runtime.Provider != "xiaomi" {
+		t.Fatalf("last-known-good runtime was discarded: %#v", got.runtime)
+	}
+	if !strings.Contains(got.View().Content, "xiaomi") {
+		t.Fatal("stale header no longer shows the last-known-good provider")
+	}
+	if cmd == nil {
+		t.Fatal("failed resolve did not schedule a retry")
+	}
+	if !got.runtimeRetryPending {
+		t.Fatal("retry was not recorded as pending")
+	}
+	// The retry re-resolves once, then clears the mark on success.
+	updated, cmd = got.Update(runtimeRetryMsg{})
+	got = updated.(model)
+	if got.runtimeRetryPending || cmd == nil {
+		t.Fatalf("retry did not fire once: pending=%v cmd=%v", got.runtimeRetryPending, cmd != nil)
+	}
+	updated, _ = got.Update(runtimeRefreshedMsg{
+		Session: "console",
+		Runtime: runtimeResolution{OK: true, Provider: "deepseek", Model: "deepseek-chat"},
+	})
+	got = updated.(model)
+	if got.runtimeStale || got.runtime.Provider != "deepseek" {
+		t.Fatalf("successful retry did not clear the stale state: stale=%v %#v", got.runtimeStale, got.runtime)
+	}
+}
+
 func TestProviderSwitchDropsStaleConversationModel(t *testing.T) {
 	m := newTestModel()
 	m.modelOverride = "conversation-model"

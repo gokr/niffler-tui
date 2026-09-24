@@ -469,13 +469,20 @@ type model struct {
 	// The /session browser: the loaded conversations (with their subagent
 	// lineage) and whether the child sessions are shown. A view preference for
 	// this run, not persisted state.
-	sessionList      []sessionSummary
-	showSubagents    bool
-	runtime          runtimeResolution
-	providerOverride string
-	modelOverride    string
-	promptTokens     int
-	contextUsed      int
+	sessionList   []sessionSummary
+	showSubagents bool
+	runtime       runtimeResolution
+	// runtimeStale marks a header whose last resolution failed (llm_resolve
+	// timed out or the pin no longer resolves). The shown provider/model are
+	// then the last-known-good values, not the effective ones, so the header
+	// must say so and keep retrying instead of presenting stale state as truth.
+	runtimeStale        bool
+	runtimeStaleMsg     string
+	runtimeRetryPending bool
+	providerOverride    string
+	modelOverride       string
+	promptTokens        int
+	contextUsed         int
 	// inputTokens/outputTokens accumulate the session's billed tokens (the
 	// header's ↑/↓ chip); cacheHits/cachePrompt accumulate the prompt-cache
 	// economics (header and /status).
@@ -836,12 +843,25 @@ func (m model) connectCmd() tea.Cmd {
 }
 
 // applyRuntimeRefresh applies a runtime resolution to the model and reports
-// whether it was applied (a failed resolve keeps the current runtime). The
-// caller has already checked that the refresh belongs to the current session.
+// whether it was applied (a failed resolve keeps the current runtime, marked
+// stale so the header says the shown provider/model are last-known-good, not
+// effective). A successful refresh clears the stale mark.
+// runtimeRetryMsg asks for one delayed re-resolution after a failed refresh;
+// runtimeRetryPending bounds it to one in-flight retry per failure.
+type runtimeRetryMsg struct{}
+
+func runtimeRetryCmd() tea.Cmd {
+	return tea.Tick(2*time.Second, func(time.Time) tea.Msg { return runtimeRetryMsg{} })
+}
+
 func (m *model) applyRuntimeRefresh(msg runtimeRefreshedMsg) bool {
 	if msg.ResolveErr != nil {
+		m.runtimeStale = true
+		m.runtimeStaleMsg = msg.ResolveErr.Error()
 		return false
 	}
+	m.runtimeStale = false
+	m.runtimeStaleMsg = ""
 	m.runtime = msg.Runtime
 	return true
 }
@@ -1645,6 +1665,20 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.contextNote = refreshErr.Error()
 				break
 			}
+		}
+		// A failed resolution is not a dead end: llm_resolve can time out
+		// while the llm component is busy, and the header must not stay
+		// wrong forever. Retry once soon; a second failure is left to the
+		// user's next action to avoid a hot loop.
+		if msg.ResolveErr != nil && msg.Session == m.session && !m.runtimeRetryPending {
+			m.runtimeRetryPending = true
+			cmds = append(cmds, runtimeRetryCmd())
+		}
+
+	case runtimeRetryMsg:
+		m.runtimeRetryPending = false
+		if m.connected && m.runtimeStale {
+			cmds = append(cmds, refreshRuntimeCmd(m.comp, m.session, m.providerOverride, m.modelOverride))
 		}
 
 	case catalogUpdatedMsg:
@@ -2932,6 +2966,11 @@ func (m model) View() tea.View {
 	effortChip := effortStyle.Render(t(m.loc, "chip.effort", t(m.loc, "level."+m.effortLabel())))
 	runtimeLine := runtimeStatusLine(m.loc, m.runtime, m.modelOverride,
 		max(0, m.width-1-ansi.StringWidth(header)-ansi.StringWidth(thinkChip)-ansi.StringWidth(toolChip)-ansi.StringWidth(effortChip)-3*ansi.StringWidth(headerSep)))
+	if m.runtimeStale {
+		// The shown provider/model are last-known-good, not effective: a
+		// failed llm_resolve must not present stale state as current.
+		runtimeLine += errorStyle.Render(" !")
+	}
 	headerLine := header + headerSep + thinkChip + headerSep + toolChip + headerSep + effortChip + headerSep + runtimeLine
 	makeView := func(content string) tea.View {
 		view := tea.NewView(m.applyMouseSelection(content))
