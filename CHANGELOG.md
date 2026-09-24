@@ -8,6 +8,24 @@ project aims for [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **`/session` filters through the store, not through a download.** The
+  browser now asks the harness's store to do the matching (`search`, the
+  server-side full-text query gokr/niffler#77 added): typing in the filter
+  box is debounced (250 ms) into a store call over `kind: conversation`,
+  and the server's answer — conversations matched by id and title — replaces
+  the list, so the whole `conversation` kind is no longer paged down just to
+  be filtered locally. While results are up the local fuzzy pass stops
+  hiding anything (a server match in a different word order, `prs check`, is
+  no subsequence of its title and would vanish); replies are tied to the
+  keystroke that asked by generation, so a slower answer for a query you
+  already left behind is dropped instead of pasted over newer results;
+  clearing the box restores the full loaded list; `a` subagent hiding and
+  the `↳` lineage marks apply to results as they do to the full list. A
+  store that has no `search` (an older harness) or a hiccup falls back to
+  the previous behavior for that browser — loaded list + the list's own
+  local filtering — instead of blanking it. (`sessionfilter_test.go` pins
+  the schedule/stale/swap/fallback paths.)
+
 - **The approval gate can be granted for a whole conversation.** The gate
   modal's new `A` key («approve all») grants the request on screen, the
   requests already queued for that conversation, and then every gated tool it

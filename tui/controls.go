@@ -13,6 +13,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"charm.land/bubbles/v2/list"
 	"charm.land/bubbles/v2/textinput"
 	tea "charm.land/bubbletea/v2"
 )
@@ -873,6 +874,7 @@ func (m *model) openProcessesPeek(p processSummary) {
 // placeholder; the selector is rebuilt with the loaded list in the
 // sessionListMsg handler.
 func (m *model) sessionListSelecting() {
+	m.resetSessionSearch()
 	m.selector = newSelector(t(m.loc, "selector.sessionsLoading"), nil, m.width, m.height-3)
 	m.mode = modeSessions
 	m.layout()
@@ -880,17 +882,89 @@ func (m *model) sessionListSelecting() {
 
 // openSessionSelector rebuilds the /session list with the fetched sessions.
 func (m *model) openSessionSelector(sessions []sessionSummary) {
+	m.resetSessionSearch()
 	m.sessionList = sessions
 	m.mode = modeSessions
 	m.rebuildSessionSelector()
 }
 
-// rebuildSessionSelector renders the browser from the loaded sessions and the
-// current subagent-filter state: the `a` toggle rebuilds it in place, and the
-// title reports how many child sessions the filter is holding back.
+// visibleSessionList is what the browser shows: the store's search answer
+// while a query is up, the loaded list otherwise.
+func (m *model) visibleSessionList() []sessionSummary {
+	if m.sessionSearchResults != nil {
+		return m.sessionSearchResults
+	}
+	return m.sessionList
+}
+
+// resetSessionSearch drops any in-flight store search when the browser
+// opens (or its baseline lands): generation-bump makes replies for the
+// previous browser stale, and the box starts empty over the full list.
+func (m *model) resetSessionSearch() {
+	m.sessionSearchResults = nil
+	m.sessionSearchQuery = ""
+	m.sessionSearchGen++
+	m.sessionSearchOff = false
+}
+
+// sessionSearchSync runs after a keystroke reached the filter box (or the
+// list reset it): when the text changed it schedules the debounced store
+// search — or, when the box emptied, drops the server's answer so the full
+// list shows again. No-op in other modes, and once the store proved it has
+// no `search` (sessionSearchOff) the local filter owns filtering.
+func (m *model) sessionSearchSync() tea.Cmd {
+	if m.mode != modeSessions || m.sessionSearchOff {
+		return nil
+	}
+	query := strings.TrimSpace(m.selector.list.FilterValue())
+	if query == m.sessionSearchQuery {
+		return nil
+	}
+	m.sessionSearchQuery = query
+	m.sessionSearchGen++
+	if query == "" {
+		if m.sessionSearchResults != nil {
+			m.sessionSearchResults = nil
+			m.selector.list.SetItems(sessionSelectorItems(m.loc, m.session,
+				m.visibleSessionList(), m.showSubagents))
+		}
+		return nil
+	}
+	return sessionSearchDebounceCmd(m.sessionSearchGen, query)
+}
+
+// applySessionSearchResults swaps the browser to the store's matches. The
+// rebuild restores the typed query into the fresh list's filter box with the
+// local pass disabled — the store already filtered, and a server match in a
+// different word order ("prs check") is no subsequence of the title, so the
+// fuzzy pass would hide it.
+func (m *model) applySessionSearchResults(sessions []sessionSummary, query string) {
+	m.sessionSearchResults = sessions
+	m.sessionSearchQuery = query
+	m.rebuildSessionSelector()
+}
+
+// sessionSearchFallback reverts the browser to the loaded list plus the
+// list's own fuzzy filter: an older harness's store has no `search`, and a
+// store hiccup must not blank the browser. The flag stops further store
+// attempts for this browser — the typed query is re-applied locally instead.
+func (m *model) sessionSearchFallback(query string) {
+	m.sessionSearchOff = true
+	m.sessionSearchResults = nil
+	m.sessionSearchQuery = query
+	m.rebuildSessionSelector()
+}
+
+// rebuildSessionSelector renders the browser from the sessions the browser
+// is currently showing and the current subagent-filter state: the `a`
+// toggle rebuilds it in place, and the title reports how many child sessions
+// the filter is holding back. A fresh list starts unfiltered, so any live
+// search state is re-applied: server results run with the local pass off
+// (serverSessionFilter) and the typed query is put back in the box.
 func (m *model) rebuildSessionSelector() {
+	visible := m.visibleSessionList()
 	hidden, total := 0, 0
-	for _, s := range m.sessionList {
+	for _, s := range visible {
 		if !s.subagent() {
 			continue
 		}
@@ -906,11 +980,18 @@ func (m *model) rebuildSessionSelector() {
 		title = t(m.loc, "selector.sessionsShown", strconv.Itoa(total))
 	default:
 		title = t(m.loc, "selector.sessionsHidden",
-			strconv.Itoa(len(m.sessionList)-hidden), strconv.Itoa(hidden))
+			strconv.Itoa(len(visible)-hidden), strconv.Itoa(hidden))
 	}
 	m.selector = newSelector(title,
-		sessionSelectorItems(m.loc, m.session, m.sessionList, m.showSubagents),
+		sessionSelectorItems(m.loc, m.session, visible, m.showSubagents),
 		m.width, m.height-3)
+	if m.sessionSearchResults != nil {
+		m.selector.list.Filter = serverSessionFilter
+	}
+	if query := m.sessionSearchQuery; query != "" {
+		m.selector.list.SetFilterText(query)
+		m.selector.list.SetFilterState(list.Filtering)
+	}
 	m.layout()
 }
 
@@ -1449,6 +1530,11 @@ func (m model) handleControlKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	if m.selector.list.SettingFilter() {
 		var cmd tea.Cmd
 		m.selector.list, cmd = m.selector.list.Update(msg)
+		// A keystroke may have changed the box: in the conversation browser
+		// that schedules the debounced store-side search (issue #77).
+		if search := m.sessionSearchSync(); search != nil {
+			cmd = tea.Batch(cmd, search)
+		}
 		return m, cmd
 	}
 	// The conversation browser (modeSessions): `a` shows or hides the subagent
@@ -1530,6 +1616,11 @@ func (m model) handleControlKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	if msg.String() != "enter" {
 		var cmd tea.Cmd
 		m.selector.list, cmd = m.selector.list.Update(msg)
+		// Same hook as the filter-editing branch for keys that reach the list
+		// here ("/" starting the filter, arrows): observe the box afterwards.
+		if search := m.sessionSearchSync(); search != nil {
+			cmd = tea.Batch(cmd, search)
+		}
 		return m, cmd
 	}
 

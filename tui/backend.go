@@ -519,6 +519,18 @@ type sessionRow struct {
 	Value conversationHeader `json:"value"`
 }
 
+// toSessionRows decodes raw store items into conversation headers.
+func toSessionRows(rows []json.RawMessage) []sessionRow {
+	conversations := make([]sessionRow, 0, len(rows))
+	for _, raw := range rows {
+		var row sessionRow
+		if json.Unmarshal(raw, &row) == nil {
+			conversations = append(conversations, row)
+		}
+	}
+	return conversations
+}
+
 // sessionMeta is the agent component's lineage record for a child session.
 type sessionMeta struct {
 	Parent string `json:"parent"`
@@ -532,32 +544,107 @@ type metaRow struct {
 	Value sessionMeta `json:"value"`
 }
 
+// loadSessionLineage reads the agent component's child-session lineage
+// records. Best-effort: on failure the browser still lists conversations,
+// only without the subagent filter — degrading to the previous behavior
+// instead of an empty browser.
+func loadSessionLineage(comp *sdk.Component) []metaRow {
+	raws, err := pageStoreList(comp, "sessionmeta")
+	if err != nil {
+		return nil
+	}
+	var metas []metaRow
+	for _, raw := range raws {
+		var meta metaRow
+		if json.Unmarshal(raw, &meta) == nil {
+			metas = append(metas, meta)
+		}
+	}
+	return metas
+}
+
 // loadSessionList lists the store's conversations, newest first, each marked
-// with its subagent lineage. The lineage read is best-effort: when it fails
-// (an older core, a store hiccup) the conversations still list, only without
-// the filter — degrading to the previous behavior instead of an empty browser.
+// with its subagent lineage.
 func loadSessionList(comp *sdk.Component) ([]sessionSummary, error) {
 	rows, err := pageStoreList(comp, "conversation")
 	if err != nil {
 		return nil, err
 	}
-	conversations := make([]sessionRow, 0, len(rows))
-	for _, raw := range rows {
-		var row sessionRow
-		if json.Unmarshal(raw, &row) == nil {
-			conversations = append(conversations, row)
+	return buildSessionSummaries(toSessionRows(rows), loadSessionLineage(comp)), nil
+}
+
+// pageStoreSearch reads one kind through the store's `search` tool
+// (docs/WIRE.md "Store contract"), following nextAfter up to storeMaxPages —
+// the same bounded paging pageStoreList does, just server-filtered.
+func pageStoreSearch(comp *sdk.Component, kind, query string) ([]json.RawMessage, error) {
+	var all []json.RawMessage
+	after := ""
+	for page := 0; page < storeMaxPages; page++ {
+		var response struct {
+			Items     []json.RawMessage `json:"items"`
+			HasMore   bool              `json:"hasMore"`
+			NextAfter string            `json:"nextAfter"`
 		}
-	}
-	var metas []metaRow
-	if raws, err := pageStoreList(comp, "sessionmeta"); err == nil {
-		for _, raw := range raws {
-			var meta metaRow
-			if json.Unmarshal(raw, &meta) == nil {
-				metas = append(metas, meta)
-			}
+		args := map[string]any{"kind": kind, "query": query, "limit": storePageLimit}
+		if after != "" {
+			args["after"] = after
 		}
+		if err := requestInto(comp, "store", "search", args, &response); err != nil {
+			return nil, err
+		}
+		all = append(all, response.Items...)
+		if !response.HasMore || response.NextAfter == "" {
+			break
+		}
+		after = response.NextAfter
 	}
-	return buildSessionSummaries(conversations, metas), nil
+	return all, nil
+}
+
+// searchSessionList asks the STORE to filter conversations by text (id +
+// title per the contract), newest first — the server-side half of the
+// /session browser (issue #77), so the browser stops downloading the whole
+// `conversation` kind to filter it locally. An error propagates: an older
+// harness's store has no `search`, and the caller falls back to the loaded
+// list plus the list's own fuzzy filter.
+func searchSessionList(comp *sdk.Component, query string) ([]sessionSummary, error) {
+	rows, err := pageStoreSearch(comp, "conversation", query)
+	if err != nil {
+		return nil, err
+	}
+	return buildSessionSummaries(toSessionRows(rows), loadSessionLineage(comp)), nil
+}
+
+// sessionSearchDebounce bounds keystroke chatter to one store call: a
+// search fires only after the filter box has been quiet this long.
+const sessionSearchDebounce = 250 * time.Millisecond
+
+// sessionSearchTickMsg is the debounce firing; sessionSearchMsg carries the
+// store's answer. Gen ties both to the keystroke that asked, so a reply for
+// a query the user has already left behind is dropped instead of shown.
+type sessionSearchTickMsg struct {
+	Gen   int
+	Query string
+}
+
+type sessionSearchMsg struct {
+	Gen      int
+	Query    string
+	Sessions []sessionSummary
+	Err      error
+}
+
+func sessionSearchDebounceCmd(gen int, query string) tea.Cmd {
+	return tea.Tick(sessionSearchDebounce, func(time.Time) tea.Msg {
+		return sessionSearchTickMsg{Gen: gen, Query: query}
+	})
+}
+
+func sessionSearchCmd(comp *sdk.Component, gen int, query string) tea.Cmd {
+	return func() tea.Msg {
+		sessions, err := searchSessionList(comp, query)
+		return sessionSearchMsg{Gen: gen, Query: query, Sessions: sessions, Err: err}
+	}
 }
 
 // buildSessionSummaries joins conversation headers with their lineage records

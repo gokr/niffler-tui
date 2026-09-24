@@ -500,6 +500,19 @@ func profileSelectorItems(loc Locale, current string, profiles []toolProfileSumm
 	return items
 }
 
+// serverSessionFilter is the selector's filter func while the store's
+// `search` answers (issue #77): the STORE already narrowed the items, so
+// the local fuzzy pass must hide nothing — a server match in a different
+// word order ("prs check") is no subsequence of the title and would vanish
+// under DefaultFilter. Ranks keep the server's order (ascending id).
+func serverSessionFilter(term string, targets []string) []list.Rank {
+	ranks := make([]list.Rank, len(targets))
+	for i := range targets {
+		ranks[i] = list.Rank{Index: i}
+	}
+	return ranks
+}
+
 // sessionSelectorItems builds the /session list: the current session first,
 // then every stored conversation (newest first), plus a "new session" entry.
 // Subagent sessions — the conversations the agent component spawned for

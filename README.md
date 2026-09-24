@@ -182,7 +182,12 @@ Local commands are handled by the TUI and are never sent to the model:
   new one. **Subagent sessions are hidden by default** — a conversation that
   delegates work spawns a session per child, and those would otherwise crowd
   out your own conversations. `a` toggles them in (each marked `↳` and naming
-  the parent it belongs to); the title shows how many are being held back
+  the parent it belongs to); the title shows how many are being held back.
+  Typing in the filter box runs a **server-side search** over the harness's
+  store (`search`, gokr/niffler#77) — conversations are matched by id and
+  title where they live instead of the browser downloading every one of them;
+  a store without the tool (an older harness) falls back to filtering the
+  loaded list locally
 - `/locale [en|zh|zh-TW]` — switch the UI language (persisted)
 - `/theme [name]` — switch the UI color theme (persisted); a bare `/theme`
   opens a picker with a live preview, and every theme pairs the chrome

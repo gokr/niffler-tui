@@ -471,7 +471,16 @@ type model struct {
 	// this run, not persisted state.
 	sessionList   []sessionSummary
 	showSubagents bool
-	runtime       runtimeResolution
+	// Store-side search (issue #77): the store's `search` answer while the
+	// filter box holds a query (nil = show the loaded list), the debounce
+	// generation that drops stale replies, the last observed box text, and
+	// whether the store lacked `search` — then the browser falls back to the
+	// loaded list plus the list's own local filtering for this session.
+	sessionSearchResults []sessionSummary
+	sessionSearchQuery   string
+	sessionSearchGen     int
+	sessionSearchOff     bool
+	runtime              runtimeResolution
 	// runtimeStale marks a header whose last resolution failed (llm_resolve
 	// timed out or the pin no longer resolves). The shown provider/model are
 	// then the last-known-good values, not the effective ones, so the header
@@ -1237,6 +1246,32 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.openSessionSelector(msg.Sessions)
+		return m, nil
+
+	case sessionSearchTickMsg:
+		// The debounce fired: run the store search unless the box moved on
+		// (a newer keystroke owns the generation) or the browser closed.
+		if m.mode != modeSessions || msg.Gen != m.sessionSearchGen ||
+			msg.Query == "" || msg.Query != m.sessionSearchQuery {
+			return m, nil
+		}
+		return m, sessionSearchCmd(m.comp, msg.Gen, msg.Query)
+
+	case sessionSearchMsg:
+		// Stale answers (user kept typing, browser reopened) are dropped, not
+		// shown — the generation ties every reply to the keystroke that asked.
+		if m.mode != modeSessions || msg.Gen != m.sessionSearchGen ||
+			msg.Query != m.sessionSearchQuery {
+			return m, nil
+		}
+		if msg.Err != nil {
+			// The store has no `search` (an older harness) or hiccuped: fall
+			// back to the loaded list + the list's own fuzzy filter for this
+			// browser instead of blanking it (issue #77's fallback).
+			m.sessionSearchFallback(msg.Query)
+			return m, nil
+		}
+		m.applySessionSearchResults(msg.Sessions, msg.Query)
 		return m, nil
 
 	case conversationHistoryMsg:
