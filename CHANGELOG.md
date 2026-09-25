@@ -11,8 +11,14 @@ project aims for [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - **Dropped images now reach the model.** Files dragged onto the terminal
   arrive as a bracketed paste of their paths; the TUI recognizes the drop,
   checks each path is a real image (extension or magic bytes), resizes it to
-  at most 2000 px and re-encodes it as the smaller of PNG/JPEG, then queues it
-  as a chip above the input rule. Enter sends the chips with the turn as the
+  at most 2000 px and re-encodes it *as the measured smaller of PNG/JPEG*
+  (they are both encoded and the smaller wins — a 4K screenshot lands at
+  ~229 KB as PNG, where assuming JPEG produced ~1143 KB and loss), then
+  queues it as a chip above the input rule. An image with transparency always
+  stays PNG: JPEG has no alpha, and flattening onto white would silently
+  change what the model sees. If the result would still be over the inline
+  cap the image is re-scaled down in steps, so size is paid in resolution
+  rather than in content. Enter sends the chips with the turn as the
   session call's `attachments` (base64, MIME, dimensions), so the model
   actually sees the image; non-image paths are inserted as text instead, which
   is what makes dragging a source file still useful. A caption-less drop is a

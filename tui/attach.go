@@ -401,9 +401,21 @@ func scaleToEdge(img image.Image, edge int) image.Image {
 }
 
 // encodeCandidates encodes the scaled image as png and/or jpeg and returns
-// the smaller encoding. Opaque images try both; images with alpha prefer
-// png and fall back to jpeg flattened onto white (so transparency degrades
-// to white instead of black).
+// the smaller encoding — measured, not assumed.
+//
+// An opaque image tries both and takes the smaller: screenshots are opaque
+// but flat (text, UI chrome), and lossless PNG beats JPEG on them by a wide
+// margin (measured: a 2000x1125 screenshot encodes to ~229KB as PNG against
+// ~1143KB as JPEG at quality 85 — 5x larger AND lossy, which is how a
+// resized screenshot used to arrive both bigger than the original and
+// blurrier than a lossless encode would have been). A photograph inverts
+// that, and the size comparison picks JPEG there.
+//
+// An image with alpha ALWAYS encodes as PNG: JPEG has no alpha channel, so
+// the only way to reach it is flattening onto white, which can render the
+// image useless (white content on transparency becomes white-on-white). The
+// size cap is not a reason to flatten — the caller's resize loop shrinks
+// until the encoding fits, which degrades resolution instead of content.
 func encodeCandidates(img image.Image, opaque bool) ([]byte, string) {
 	var pngBuf bytes.Buffer
 	pngErr := png.Encode(&pngBuf, img)
@@ -421,9 +433,16 @@ func encodeCandidates(img image.Image, opaque bool) ([]byte, string) {
 		return pngBuf.Bytes(), "image/png"
 	case pngErr != nil:
 		return jpegBuf.Bytes(), "image/jpeg"
-	case opaque || jpegBuf.Len() < pngBuf.Len():
-		return jpegBuf.Bytes(), "image/jpeg"
+	case opaque:
+		// Both encodings are faithful for an opaque image; take the smaller.
+		if jpegBuf.Len() < pngBuf.Len() {
+			return jpegBuf.Bytes(), "image/jpeg"
+		}
+		return pngBuf.Bytes(), "image/png"
 	default:
+		// Transparency present: PNG is the only faithful carrier. Falling
+		// back to JPEG (flattened onto white) would silently change what the
+		// model sees, so the caller's shrink loop handles size instead.
 		return pngBuf.Bytes(), "image/png"
 	}
 }

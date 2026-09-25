@@ -4,9 +4,12 @@ package main
 
 import (
 	"bytes"
+	"encoding/base64"
 	"encoding/json"
 	"image"
 	"image/color"
+	"image/draw"
+	"image/jpeg"
 	"image/png"
 	"os"
 	"path/filepath"
@@ -346,4 +349,216 @@ func absInt(n int) int {
 // base64Len is the encoded length of raw without copying it.
 func base64Len(raw []byte) int {
 	return (len(raw) + 2) / 3 * 4
+}
+
+// ---- resizing ---------------------------------------------------------------
+
+// screenshotLike builds an opaque, FLAT image: white background with thin
+// black marks, the shape a terminal/editor screenshot has. Flat images are
+// the case where lossless PNG beats JPEG by a wide margin, so this is the
+// fixture that catches a "always prefer JPEG when opaque" shortcut.
+func screenshotLike(w, h int) image.Image {
+	img := image.NewRGBA(image.Rect(0, 0, w, h))
+	draw.Draw(img, img.Bounds(), image.White, image.Point{}, draw.Src)
+	black := color.RGBA{A: 255}
+	for y := 8; y < h-8; y += 12 {
+		for x := 20; x < w-20; x += 7 {
+			for dx := 0; dx < 4 && x+dx < w-20; dx++ {
+				img.Set(x+dx, y, black)
+				img.Set(x+dx, y+1, black)
+			}
+		}
+	}
+	return img
+}
+
+// photoLike builds a photographic image — a smooth base with per-pixel
+// noise and millions of distinct colours. This is the case JPEG genuinely
+// wins: measured at 2000x1200, PNG costs ~7 MB here against ~1.2 MB for
+// JPEG. (A low-colour gradient is NOT such a case: PNG's filters beat JPEG
+// on it, which is why the assertion above uses noise rather than a
+// gradient.)
+func photoLike(w, h int) image.Image {
+	img := image.NewRGBA(image.Rect(0, 0, w, h))
+	rnd := uint32(12345)
+	for y := 0; y < h; y++ {
+		for x := 0; x < w; x++ {
+			rnd = rnd*1664525 + 1013904223
+			base := uint8((x*3 + y) % 256)
+			img.Set(x, y, color.RGBA{
+				R: base ^ uint8(rnd>>28), G: base ^ uint8(rnd>>26),
+				B: base ^ uint8(rnd>>24), A: 255})
+		}
+	}
+	return img
+}
+
+func encodePNG(t *testing.T, img image.Image) []byte {
+	t.Helper()
+	var buf bytes.Buffer
+	if err := png.Encode(&buf, img); err != nil {
+		t.Fatalf("png encode: %v", err)
+	}
+	return buf.Bytes()
+}
+
+func TestPrepareImageTakesTheSmallerEncodingForOpaqueImages(t *testing.T) {
+	// A flat opaque screenshot: PNG must win, and win by a lot. Before this
+	// comparison was measured, an opaque image always came back as JPEG —
+	// this fixture encoded ~5x larger AND lossy.
+	shot := screenshotLike(2400, 1400)
+	out, mime, w, h, err := prepareImage(encodePNG(t, shot), "image/png")
+	if err != nil {
+		t.Fatalf("prepareImage: %v", err)
+	}
+	if mime != "image/png" {
+		t.Fatalf("a flat screenshot chose %s (%d bytes); PNG at the same size is %d bytes",
+			mime, len(out), len(encodePNG(t, scaleToEdge(shot, 2000))))
+	}
+	if w != 2000 || h != 1166 {
+		t.Fatalf("scaled to %dx%d, want 2000x1166", w, h)
+	}
+	if got := len(encodePNG(t, scaleToEdge(shot, 2000))); len(out) > got {
+		t.Fatalf("output %d bytes exceeds the png encoding %d bytes", len(out), got)
+	}
+
+	// A noisy photo: JPEG is genuinely smaller here (PNG ~7MB vs JPEG
+	// ~1.2MB at this size), so the measurement must pick it.
+	photo := photoLike(2400, 1400)
+	outP, mimeP, wp, hp, err := prepareImage(encodePNG(t, photo), "image/png")
+	if err != nil {
+		t.Fatalf("prepareImage photo: %v", err)
+	}
+	if mimeP != "image/jpeg" {
+		t.Fatalf("a noisy photo chose %s for %d bytes; the measured jpeg is smaller",
+			mimeP, len(outP))
+	}
+	if wp != 2000 || hp != 1166 {
+		t.Fatalf("photo scaled to %dx%d, want 2000x1166", wp, hp)
+	}
+	if got := base64.StdEncoding.EncodedLen(len(outP)); got > maxImageB64 {
+		t.Fatalf("chosen encoding is over the inline cap: %d > %d", got, maxImageB64)
+	}
+}
+
+func TestPrepareImageKeepsTransparencyAsPNG(t *testing.T) {
+	img := image.NewRGBA(image.Rect(0, 0, 2500, 1400))
+	for y := 0; y < 1400; y++ {
+		for x := 0; x < 2500; x++ {
+			// A hard diagonal edge with a fully transparent field: JPEG must
+			// not silently flatten this to white.
+			if x > y {
+				img.Set(x, y, color.RGBA{R: 255, A: 255})
+			}
+		}
+	}
+	out, mime, _, _, err := prepareImage(encodePNG(t, img), "image/png")
+	if err != nil {
+		t.Fatalf("prepareImage: %v", err)
+	}
+	if mime != "image/png" {
+		t.Fatalf("an image with alpha chose %s; transparency cannot survive JPEG", mime)
+	}
+	decoded, err := png.Decode(bytes.NewReader(out))
+	if err != nil {
+		t.Fatalf("output is not a decodable PNG: %v", err)
+	}
+	// Sample a point well INSIDE the transparent field (below the diagonal):
+	// pixels on the diagonal itself are CatmullRom-interpolated blends, so
+	// asserting on one would test the resampler's edge behavior, not whether
+	// alpha survived.
+	db := decoded.Bounds()
+	if _, _, _, a := decoded.At(db.Dx()/8, db.Dy()-db.Dy()/8).RGBA(); a != 0 {
+		t.Fatalf("a transparent-field pixel became opaque (alpha=%d)", a)
+	}
+	if _, _, _, a := decoded.At(db.Dx()-db.Dx()/8, db.Dy()/8).RGBA(); a == 0 {
+		t.Fatal("an opaque-region pixel became transparent")
+	}
+	// Even when JPEG would be smaller, alpha must keep PNG: flattening onto
+	// white silently changes what the model sees (here it would erase the
+	// white diagonal's contrast entirely).
+	scaled := scaleToEdge(img, maxImageEdge)
+	if !isOpaque(scaled) {
+		var jpegBuf bytes.Buffer
+		if err := jpeg.Encode(&jpegBuf, flattenOnWhite(scaled), &jpeg.Options{Quality: 85}); err == nil &&
+			jpegBuf.Len() < len(out) {
+			t.Logf("jpeg (%d) is smaller than the chosen png (%d) — PNG is still correct for alpha",
+				jpegBuf.Len(), len(out))
+		}
+	}
+}
+
+func TestPrepareImageLeavesSmallImagesByteIdentical(t *testing.T) {
+	raw := encodePNG(t, screenshotLike(800, 600))
+	out, mime, w, h, err := prepareImage(raw, "image/png")
+	if err != nil {
+		t.Fatalf("prepareImage: %v", err)
+	}
+	if !bytes.Equal(out, raw) {
+		t.Fatal("a small, in-budget image was re-encoded instead of passed through")
+	}
+	if mime != "image/png" || w != 800 || h != 600 {
+		t.Fatalf("passthrough changed the metadata: %s %dx%d", mime, w, h)
+	}
+}
+
+func TestPrepareImageNeverUpscales(t *testing.T) {
+	raw := encodePNG(t, screenshotLike(320, 200))
+	_, _, w, h, err := prepareImage(raw, "image/png")
+	if err != nil {
+		t.Fatalf("prepareImage: %v", err)
+	}
+	if w != 320 || h != 200 {
+		t.Fatalf("a small image was upscaled to %dx%d", w, h)
+	}
+	// scaleToEdge must be a no-op at or below the cap, in both orientations.
+	// (A 2001x1 image is genuinely over the cap and is downscaled — see the
+	// aspect-ratio test below, not here.)
+	for _, d := range [][2]int{{320, 200}, {200, 320}, {2000, 2000}, {1, 2000}, {2000, 1}} {
+		img := image.NewRGBA(image.Rect(0, 0, d[0], d[1]))
+		got := scaleToEdge(img, maxImageEdge).Bounds()
+		if got.Dx() != d[0] || got.Dy() != d[1] {
+			t.Fatalf("scaleToEdge(%dx%d) changed the image to %dx%d",
+				d[0], d[1], got.Dx(), got.Dy())
+		}
+	}
+}
+
+func TestScaleToEdgePreservesAspectRatioInBothOrientations(t *testing.T) {
+	for _, tc := range []struct{ w, h, wantW, wantH int }{
+		{4000, 2000, 2000, 1000}, // landscape
+		{2000, 4000, 1000, 2000}, // portrait
+		{4000, 4000, 2000, 2000}, // square
+		{2001, 1000, 2000, 999},  // odd ratio, rounds down
+		{1, 10000, 1, 2000},      // extreme portrait keeps >=1px
+	} {
+		got := scaleToEdge(image.NewRGBA(image.Rect(0, 0, tc.w, tc.h)),
+			maxImageEdge).Bounds()
+		if got.Dx() != tc.wantW || got.Dy() != tc.wantH {
+			t.Fatalf("%dx%d scaled to %dx%d, want %dx%d",
+				tc.w, tc.h, got.Dx(), got.Dy(), tc.wantW, tc.wantH)
+		}
+	}
+}
+
+func TestEncodeCandidatesMeasuredRatherThanAssumed(t *testing.T) {
+	// Opaque + flat: the smaller of the two wins, and for this shape that is
+	// PNG. (The regression: opaque short-circuited to JPEG unconditionally.)
+	flat := scaleToEdge(screenshotLike(1400, 900), maxImageEdge)
+	out, mime := encodeCandidates(flat, isOpaque(flat))
+	var pngBuf bytes.Buffer
+	if err := png.Encode(&pngBuf, flat); err != nil {
+		t.Fatal(err)
+	}
+	var jpegBuf bytes.Buffer
+	if err := jpeg.Encode(&jpegBuf, flattenOnWhite(flat), &jpeg.Options{Quality: 85}); err != nil {
+		t.Fatal(err)
+	}
+	if jpegBuf.Len() < pngBuf.Len() {
+		t.Skip("fixture no longer favors png; the assertion below is the invariant")
+	}
+	if mime != "image/png" || len(out) != pngBuf.Len() {
+		t.Fatalf("flat opaque chose mime=%s len=%d; png=%d jpeg=%d",
+			mime, len(out), pngBuf.Len(), jpegBuf.Len())
+	}
 }
