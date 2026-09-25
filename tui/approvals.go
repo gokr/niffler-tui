@@ -148,7 +148,13 @@ func (m *model) answerApprovalAll() tea.Cmd {
 	}
 	req := m.approvals[0]
 	m.approveAllArmed = false
-	persist := m.rememberAutoApproveAll(req.sessionID)
+	// The runner refuses session controls mid-turn. The local grant covers
+	// this turn; a completion schedules the persistent mode for later turns.
+	if m.approvalSaves == nil {
+		m.approvalSaves = map[string]bool{}
+	}
+	m.approvalSaves[req.sessionID] = true
+	m.rememberAutoApproveAll(req.sessionID)
 	kept := make([]approvalRequest, 0, len(m.approvals))
 	for _, pending := range m.approvals {
 		if pending.id == req.id || (req.sessionID != "" && pending.sessionID == req.sessionID) {
@@ -158,14 +164,12 @@ func (m *model) answerApprovalAll() tea.Cmd {
 		kept = append(kept, pending)
 	}
 	m.approvals = kept
-	return persist
+	return nil
 }
 
 // rememberAutoApproveAll marks the conversation as granting every gated tool
-// and returns the command that persists it as core's own gate mode, so every
-// client and every later turn honors it. Best effort: the in-memory flag
-// still covers this conversation for the rest of the current turn when the
-// control call fails. Idempotent; nil session ids are ignored.
+// for the current turn. The caller defers persisting the mode until the
+// runner has finished that turn; controls sent during approval wait get busy.
 func (m *model) rememberAutoApproveAll(sessionID string) tea.Cmd {
 	if sessionID == "" {
 		return nil
@@ -207,11 +211,16 @@ func (m *model) setAutoApproveAllLocal(sessionID string, on bool) {
 func (m *model) applyApprovalsMode(msg approvalsModeMsg) tea.Cmd {
 	if msg.Err != nil {
 		m.setAutoApproveAllLocal(msg.Session, false)
-		m.addBlock(blockError, t(m.loc, "note.approvalsFailed", msg.Err.Error()))
-		m.syncViewport(true)
+		if msg.Session == m.session {
+			m.addBlock(blockError, t(m.loc, "note.approvalsFailed", msg.Err.Error()))
+			m.syncViewport(true)
+		}
 		return nil
 	}
 	m.setAutoApproveAllLocal(msg.Session, msg.Mode == "auto")
+	if msg.Session != m.session {
+		return nil
+	}
 	if msg.Mode == "auto" {
 		m.addBlock(blockMeta, t(m.loc, "note.approvalsAuto"))
 	} else {

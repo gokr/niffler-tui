@@ -972,18 +972,23 @@ func setConversationApprovalsCmd(comp *sdk.Component, session, mode string) tea.
 			OK        bool   `json:"ok"`
 			Approvals string `json:"approvals"`
 		}
-		err := requestInto(comp, "core", "session", map[string]any{
-			"sessionId": session, "approvals": mode,
-		}, &response)
-		if err == nil && !response.OK {
-			err = fmt.Errorf("approval mode change failed")
+		for attempt := 0; attempt < 20; attempt++ {
+			err := requestInto(comp, "core", "session", map[string]any{
+				"sessionId": session, "approvals": mode,
+			}, &response)
+			if err != nil && strings.Contains(err.Error(), "the conversation is mid-turn") {
+				time.Sleep(100 * time.Millisecond) // done event precedes runner idle
+				continue
+			}
+			if err == nil && !response.OK {
+				err = fmt.Errorf("approval mode change failed")
+			}
+			if err != nil {
+				return approvalsModeMsg{Session: session, Mode: mode, Err: err}
+			}
+			return approvalsModeMsg{Session: session, Mode: response.Approvals}
 		}
-		if err != nil {
-			return approvalsModeMsg{Session: session, Mode: mode, Err: err}
-		}
-		// Report what core stored, not what was asked for — "ask" persists as
-		// "" (the same faithfulness the web UI's handler keeps).
-		return approvalsModeMsg{Session: session, Mode: response.Approvals}
+		return approvalsModeMsg{Session: session, Mode: mode, Err: errMidTurn}
 	}
 }
 
