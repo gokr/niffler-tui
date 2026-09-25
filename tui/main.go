@@ -123,6 +123,60 @@ type sessionEvent struct {
 	RetryAfterMs   int             `json:"retryAfterMs"`
 	Budget         string          `json:"budget"`
 	Reason         string          `json:"reason"`
+	Detail         string          `json:"detail"`
+	TrimAt         int             `json:"trimAt"`
+	BytesSaved     int             `json:"bytesSaved"`
+	Generation     int             `json:"generation"`
+	BeforeTokens   int             `json:"beforeTokens"`
+	AfterTokens    int             `json:"afterTokens"`
+}
+
+// contextNoteFor renders every reason core puts on a context event. The old
+// branch understood only a trim count and a bare threshold warning, so a
+// compaction refusal — the reason the ladder kept trimming — never reached
+// the user; and the warning invented its own wording instead of naming the
+// line core actually trims at ("will trim soon" vs core's "will compact/trim
+// at N%"). Empty means "nothing to say": the caller keeps the previous note.
+func contextNoteFor(event sessionEvent, used, window int) string {
+	switch {
+	case event.Reason == "warn:threshold" && event.TrimAt > 0 && window > 0:
+		return fmt.Sprintf("context at %.0f%% — will compact/trim at %.0f%%",
+			contextPercent(used, window)*100,
+			float64(event.TrimAt)/float64(window)*100)
+	case event.Reason == "reset:compact":
+		return fmt.Sprintf("context compacted — ~%d → ~%d tokens (generation %d)",
+			event.BeforeTokens, event.AfterTokens, event.Generation)
+	case event.Reason == "reset:prune":
+		return fmt.Sprintf("tool results pruned — %d bytes reclaimed", event.BytesSaved)
+	case strings.HasPrefix(event.Reason, "compact:"):
+		verbs := map[string]string{
+			"compact:unavailable": "compaction unavailable — ",
+			"compact:declined":    "compaction declined — ",
+			"compact:invalid":     "compaction rejected — ",
+			"compact:stale":       "compaction stale — ",
+			"compact:failed":      "compaction failed — ",
+		}
+		detail := event.Detail
+		if detail == "" {
+			detail = event.Error
+		}
+		if prefix, ok := verbs[event.Reason]; ok {
+			if detail == "" {
+				return strings.TrimSuffix(prefix, " — ")
+			}
+			return prefix + detail
+		}
+		if detail != "" {
+			return strings.TrimPrefix(event.Reason, "compact:") + ": " + detail
+		}
+		return "compaction: " + strings.TrimPrefix(event.Reason, "compact:")
+	case event.Trimmed > 0 || event.Reason == "reset:trim":
+		return fmt.Sprintf("context trimmed — dropped %d earlier messages", event.Trimmed)
+	case rawJSONBool(event.Warning) && window > 0:
+		return fmt.Sprintf("context at %.0f%% — will compact/trim soon",
+			contextPercent(used, window)*100)
+	}
+	return ""
 }
 
 type connectedMsg struct{}
@@ -2598,11 +2652,8 @@ func (m *model) applySessionEvent(msg sessionEventMsg) tea.Cmd {
 
 	case "context":
 		m.updateRuntimeFromEvent(event)
-		if event.Trimmed > 0 {
-			m.contextNote = fmt.Sprintf("context trimmed — dropped %d earlier messages", event.Trimmed)
-		} else if rawJSONBool(event.Warning) {
-			pct := contextPercent(m.contextUsed, m.runtime.Context) * 100
-			m.contextNote = fmt.Sprintf("context at %.0f%% — will trim soon", pct)
+		if note := contextNoteFor(event, m.contextUsed, m.runtime.Context); note != "" {
+			m.contextNote = note
 		}
 
 	case "done":
