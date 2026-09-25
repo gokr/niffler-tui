@@ -562,6 +562,10 @@ type model struct {
 	approvals    []approvalRequest
 	autoApproved map[string][]string // sessionId -> tool names
 	autoAll      map[string]bool     // sessionId -> "A": every gated tool granted
+	// approvalSaves is set by the modal's A,A while a turn is running.
+	// The runner refuses session controls mid-turn; persist on completion,
+	// retaining the local grant only for the current turn until then.
+	approvalSaves map[string]bool
 	// approveAllArmed is the first stage of the two-stage "approve all" (A,
 	// then A again to confirm). Cleared by any other key, a new request or a
 	// verdict, so an arm never outlives the prompt it was raised for.
@@ -2380,6 +2384,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		cmds = append(cmds, m.sendSteer(msg.content))
 
 	case turnDoneMsg:
+		// The reply completes even if the user switched tabs before it arrived.
+		// Persist the modal's decision for that conversation, not the active tab.
+		if m.approvalSaves[msg.session] {
+			delete(m.approvalSaves, msg.session)
+			m.setAutoApproveAllLocal(msg.session, false) // do not grant a new turn before persistence replies
+			cmds = append(cmds, setConversationApprovalsCmd(m.comp, msg.session, "auto"))
+		}
 		// A turn completion belongs to the session it was sent for; after a
 		// /session or /new switch the old turn's reply must not leak into
 		// the new conversation's transcript or clear its busy flag.
@@ -2596,6 +2607,11 @@ func (m *model) applySessionEvent(msg sessionEventMsg) tea.Cmd {
 
 	case "done":
 		m.finishTurn(event.Reply, event.Error)
+		if m.approvalSaves[event.SessionID] {
+			delete(m.approvalSaves, event.SessionID)
+			m.setAutoApproveAllLocal(event.SessionID, false) // fail closed until core echoes the mode
+			bgCmd = setConversationApprovalsCmd(m.comp, event.SessionID, "auto")
+		}
 	}
 	if msg.kind == "token" {
 		return tea.Batch(renderCmd, flushCmd, bgCmd)

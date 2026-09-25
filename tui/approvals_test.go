@@ -203,6 +203,39 @@ func TestApproveAllArmDisarmsOnOtherKeys(t *testing.T) {
 	}
 }
 
+func TestApproveAllDefersSaveUntilTurnCompletion(t *testing.T) {
+	m := newTestModel()
+	m.session = "sess-1"
+	m.applyApprovalEvent(approvalEventMsg{req: approvalRequest{
+		id: "wait", tool: "bash", sessionID: "sess-1",
+	}})
+	m.approvalKey(approveAllKey())
+	cmd, consumed := m.approvalKey(approveAllKey())
+	if !consumed || cmd != nil || !m.approvalSaves["sess-1"] || !m.autoAll["sess-1"] {
+		t.Fatalf("approval wait scheduled a control before turn completion: consumed=%v cmd=%v pending=%v", consumed, cmd != nil, m.approvalSaves)
+	}
+	// Further requests within the same turn are answered by the local grant.
+	m.applyApprovalEvent(approvalEventMsg{req: approvalRequest{
+		id: "later", tool: "core.spawn", sessionID: "sess-1",
+	}, directed: true})
+	if len(m.approvals) != 0 {
+		t.Fatalf("later request queued: %+v", m.approvals)
+	}
+	updated, _ := m.Update(turnDoneMsg{session: "sess-1", reply: "done"})
+	got := updated.(model)
+	if got.approvalSaves["sess-1"] || got.isAutoApproved("sess-1", "another-tool") {
+		t.Fatal("completion must wait for core to persist the grant")
+	}
+	got.applyApprovalsMode(approvalsModeMsg{Session: "sess-1", Mode: "auto"})
+	if !got.isAutoApproved("sess-1", "another-tool") {
+		t.Fatal("later turn lost persisted grant")
+	}
+	got.applyApprovalsMode(approvalsModeMsg{Session: "sess-1", Mode: "", Err: errors.New("store unavailable")})
+	if got.isAutoApproved("sess-1", "another-tool") {
+		t.Fatal("failed save left a silent later-turn grant")
+	}
+}
+
 // A failed control call must not leave a half-granted mode behind: the flag
 // is set optimistically, so cancelling it is what makes the message true.
 func TestApprovalsModeFailureCancelsGrant(t *testing.T) {
