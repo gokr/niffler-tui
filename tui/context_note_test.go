@@ -28,7 +28,7 @@ func TestContextNoteForRendersEveryReason(t *testing.T) {
 			name:  "legacy threshold warning without trimAt still renders",
 			event: sessionEvent{Reason: "warn:threshold", Warning: json.RawMessage("true")},
 			used:  50000, limit: 100000,
-			want:  "context at 50% — will compact/trim soon",
+			want: "context at 50% — will compact/trim soon",
 		},
 		{
 			name:  "committed compaction reports before and after",
