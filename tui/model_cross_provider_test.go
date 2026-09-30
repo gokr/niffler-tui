@@ -252,3 +252,68 @@ func containsAll(s string, parts ...string) bool {
 	}
 	return true
 }
+
+// selectModelRow points the open picker at the row for a model id.
+func selectModelRow(t *testing.T, m *model, id string) {
+	t.Helper()
+	items := m.selector.list.Items()
+	for i, raw := range items {
+		if item, ok := raw.(selectorItem); ok && item.id == id {
+			m.selector.list.Select(i)
+			return
+		}
+	}
+	t.Fatalf("model row %q not in the picker", id)
+}
+
+// Selecting a row whose provider this harness cannot serve must be refused, and
+// must not fall back to pinning the model alone: a model-only pin sends the id
+// to whatever provider the environment defaults to, which is how Synthetic's
+// hf:deepseek-ai/DeepSeek-V4.1-Flash reached api.deepseek.com and came back as a
+// raw 400 naming DeepSeek's own models.
+func TestModelPickRefusesForeignProviderRow(t *testing.T) {
+	m := newModelPicker(
+		[]providerSummary{{Nickname: "deepseek", Catalog: "deepseek"}},
+		providerStatusResponse{Source: "store", Provider: providerSummary{Nickname: "deepseek"}},
+		crossProviderCandidates())
+	m.session = "s1"
+	m.runtime = runtimeResolution{OK: true, Provider: "deepseek", Model: "deepseek-v4-flash"}
+	m.modelOverride = "deepseek-v4-flash"
+
+	selectModelRow(t, &m, "glm-5.3-flash") // Provider "xiaomi" — not configured here
+	updated, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	m = updated.(model)
+
+	if m.modelOverride != "deepseek-v4-flash" {
+		t.Fatalf("model pinned to %q despite an unservable provider", m.modelOverride)
+	}
+	if m.providerOverride != "" {
+		t.Fatalf("provider pin = %q, want none", m.providerOverride)
+	}
+	if m.mode != modeChat {
+		t.Fatalf("mode = %v, want the chat view with a note", m.mode)
+	}
+	if m.controlPending {
+		t.Fatal("refusal left a save pending")
+	}
+}
+
+// A row named by catalog id still pins: the stored nickname is what resolves, so
+// "xiaomi" (catalog) must pin the provider stored as "work".
+func TestModelPickPinsStoredNicknameForCatalogID(t *testing.T) {
+	m := newModelPicker(
+		[]providerSummary{{Nickname: "work", Catalog: "xiaomi"}},
+		providerStatusResponse{Source: "store", Provider: providerSummary{Nickname: "work"}},
+		crossProviderCandidates())
+	m.session = "s1"
+	m.runtime = runtimeResolution{OK: true, Provider: "work", Model: "glm-5.3-flash"}
+
+	selectModelRow(t, &m, "glm-5.3-flash")
+	updated, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	m = updated.(model)
+
+	if m.providerOverride != "work" || m.modelOverride != "glm-5.3-flash" {
+		t.Fatalf("pin: provider=%q model=%q, want work/glm-5.3-flash",
+			m.providerOverride, m.modelOverride)
+	}
+}

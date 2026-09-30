@@ -1711,6 +1711,14 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.harnessIdentity = msg.Identity
 		m.selfIdentity = msg.Self
 		m.providerOverride = msg.Conversation.ProviderOverride
+		// A conversation remembers the provider it was using — but this harness
+		// may not have it (a store copied from another root, another .env).
+		// Keeping it fails the next turn inside llm with "unknown provider …
+		// (have: default)", so say it once and let the picker fix it.
+		if m.providerOverride != "" && !m.providerResolvable(m.providerOverride) {
+			m.addBlock(blockMeta, t(m.loc, "note.providerMissing", m.providerOverride))
+			m.providerOverride = ""
+		}
 		m.modelOverride = msg.Conversation.ModelOverride
 		m.thinkingEffort = msg.Conversation.ThinkingEffort
 		// Reconcile the gate mode with the conversation header. Another
@@ -2977,13 +2985,24 @@ func (m *model) layout() {
 	// SetWidth recalculates the textarea height (DynamicHeight, capped at
 	// MaxHeight), so the viewport height below sees the settled input size.
 	m.input.SetWidth(max(1, width-2))
+	// The chat frame has five fixed rows besides the viewport and input:
+	// header, spacer, two rules and bottom status. Reserve one row for each
+	// optional line actually rendered by View (not just search/slash): otherwise
+	// a file completion or attachment chip can push the status off-screen.
 	extra := 0
-	if m.searchActive || m.slashComp.active {
-		extra = 1
+	if m.searchActive {
+		extra++
 	}
-	// The chat frame is header + viewport + blank spacer + rule + input +
-	// rule + status — six fixed rows besides the viewport and input.
-	m.viewport.SetHeight(max(1, height-6-m.input.Height()-extra))
+	if m.slashComp.active {
+		extra++
+	}
+	if m.fileComp.active {
+		extra++
+	}
+	if attachmentChips(m.attachments, max(1, m.width-2)) != "" {
+		extra++
+	}
+	m.viewport.SetHeight(max(1, height-5-m.input.Height()-extra))
 	if m.mode == modeProviders || m.mode == modeCatalogProviders || m.mode == modeModels || m.mode == modeSessions || m.mode == modeThemes || m.mode == modeProfiles || m.mode == modeLsp || m.mode == modeProcesses {
 		m.selector.setSize(width-1, max(6, height-4))
 	}
@@ -3118,6 +3137,12 @@ func (m model) View() tea.View {
 		runtimeLine += errorStyle.Render(" !")
 	}
 	headerLine := header + headerSep + thinkChip + headerSep + toolChip + headerSep + effortChip + headerSep + runtimeLine
+	// Even a normal session id plus four chips can outgrow a narrow terminal.
+	// The viewport reserves the last column; the header must honor it too or
+	// its implicit terminal wrap shifts every row, including the bottom status.
+	if m.width > 0 {
+		headerLine = ansi.Truncate(headerLine, m.width-1, "")
+	}
 	makeView := func(content string) tea.View {
 		view := tea.NewView(m.applyMouseSelection(content))
 		view.AltScreen = true

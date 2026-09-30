@@ -1069,6 +1069,39 @@ func (m model) isStoredProviderNickname(nick string) bool {
 	return false
 }
 
+// providerResolvable reports whether this harness can serve a provider name at
+// all: it is either a stored nickname, the provider the runtime already
+// resolved, or empty (meaning "whatever the environment provides").
+func (m model) providerResolvable(nick string) bool {
+	if nick == "" {
+		return true
+	}
+	return m.isStoredProviderNickname(nick) || nick == m.runtime.Provider
+}
+
+// storedNicknameFor maps a model row's provider to a STORED nickname. Catalog
+// views name providers by catalog id ("xiaomi", "synthetic") while the stored
+// provider may be nicknamed anything ("work"), and only a stored nickname can
+// be pinned: llm resolves a named provider through the store first and the
+// environment second, so pinning a catalog id that is not stored fails the turn
+// with "unknown provider".
+func (m model) storedNicknameFor(catalogOrNick string) (string, bool) {
+	if catalogOrNick == "" {
+		return "", false
+	}
+	for _, p := range m.providers {
+		if p.Nickname == catalogOrNick {
+			return p.Nickname, true
+		}
+	}
+	for _, p := range m.providers {
+		if p.Catalog != "" && p.Catalog == catalogOrNick {
+			return p.Nickname, true
+		}
+	}
+	return "", false
+}
+
 func (m *model) openModelSelector() {
 	title := t(m.loc, "selector.models")
 	// Prefer the cross-provider view once its list for the CURRENT provider
@@ -1686,20 +1719,31 @@ func (m model) handleControlKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		if selected.kind == selectorProviderDefaultModel {
 			m.modelOverride = ""
 		} else if selected.kind == selectorModel {
+			// A cross-provider row pins provider AND model in one call, so no
+			// window pairs the new model with the old provider. The row's provider
+			// may be a catalog id rather than the stored nickname, so map it; and
+			// when this harness cannot serve that provider at all, refuse the
+			// pairing BEFORE touching the model — a model-only pin sends the id to
+			// whatever provider the environment defaults to, which is how a
+			// Synthetic model id reached api.deepseek.com and came back as a raw
+			// 400 naming DeepSeek's own models.
+			if candidate, ok := selected.payload.(modelCandidate); ok && candidate.Provider != "" {
+				nick, found := m.storedNicknameFor(candidate.Provider)
+				if !found {
+					m.mode = modeChat
+					m.controlPending = false
+					m.addBlock(blockError, t(m.loc, "note.providerMissing", candidate.Provider))
+					m.syncViewport(true)
+					return m, nil
+				}
+				pinProvider = nick
+				m.providerOverride = nick
+			}
 			m.modelOverride = selected.id
 			m.runtime.Model = selected.id
 			if candidate, ok := selected.payload.(modelSummary); ok && candidate.Limit.Context > 0 {
 				m.runtime.Context = candidate.Limit.Context
 				m.runtime.ContextSource = "catalog"
-			}
-			// A cross-provider row pins provider AND model in one call, so no
-			// window pairs the new model with the old provider. Only stored
-			// nicknames are pinnable: the environment fallback keeps following
-			// the environment instead of being frozen to a synthetic name.
-			if candidate, ok := selected.payload.(modelCandidate); ok &&
-				candidate.Provider != "" && m.isStoredProviderNickname(candidate.Provider) {
-				pinProvider = candidate.Provider
-				m.providerOverride = candidate.Provider
 			}
 		} else {
 			return m, nil
