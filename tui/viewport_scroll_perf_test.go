@@ -105,6 +105,45 @@ func TestSoftWrapRedundantForClampedContent(t *testing.T) {
 	}
 }
 
+// TestChatFrameFillsTerminalRows pins the layout budget: a blank row at
+// the bottom means the viewport gave away a usable transcript row, while an
+// extra row past the bottom makes terminal cursor motion scroll the screen.
+func TestChatFrameFillsTerminalRows(t *testing.T) {
+	restoreDefaultTheme(t)
+	for _, tc := range []struct {
+		name  string
+		setup func(*model)
+	}{
+		{"idle", func(*model) {}},
+		{"multiline", func(m *model) { m.input.SetValue("first\nsecond\nthird") }},
+		{"search", func(m *model) { m.searchActive = true }},
+		{"slash", func(m *model) { m.slashComp.active = true }},
+		{"file", func(m *model) { m.fileComp.active = true }},
+		{"attachments", func(m *model) { m.attachments = []attachment{{Path: "photo.png"}} }},
+		{"search+slash", func(m *model) { m.searchActive, m.slashComp.active = true, true }},
+		{"slash+file", func(m *model) { m.slashComp.active, m.fileComp.active = true, true }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m := newTestModel()
+			m.width, m.height = 80, 24
+			m.cwd = "/project"
+			m.session = "conv-87168cb47358"
+			tc.setup(&m)
+			m.layout()
+			got := len(strings.Split(m.View().Content, "\n"))
+			if got != m.height {
+				t.Fatalf("chat frame occupies %d rows, terminal has %d (viewport %d, input %d)",
+					got, m.height, m.viewport.Height(), m.input.Height())
+			}
+			for i, line := range strings.Split(m.View().Content, "\n") {
+				if w := ansi.StringWidth(line); w >= m.width {
+					t.Fatalf("row %d width %d reaches terminal's last column (width %d)", i, w, m.width)
+				}
+			}
+		})
+	}
+}
+
 // TestViewportMatchesNifflerSettings checks the viewport the model actually
 // builds keeps the fast settings this file benchmarks.
 func TestViewportMatchesNifflerSettings(t *testing.T) {
