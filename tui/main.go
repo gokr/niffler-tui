@@ -1263,6 +1263,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if switchTo != "" {
 			var histCmd tea.Cmd
 			m, histCmd = m.switchSessionWithHistory(switchTo)
+			// Fresh id from uiStartupDecision: the first turn pins the launch
+			// directory as the workspace (see sendTurn).
+			m.sessionNeedsCreate = true
 			// The switch cleared the transcript; the explanation must land
 			// after that reset to stay visible.
 			m.addBlock(blockMeta, note)
@@ -1293,6 +1296,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if switchTo != "" {
 				var histCmd tea.Cmd
 				m, histCmd = m.switchSessionWithHistory(switchTo)
+				// Fresh id from uiStartupDecision: the first turn pins the
+				// launch directory as the workspace (see sendTurn).
+				m.sessionNeedsCreate = true
 				m.addBlock(blockMeta, note)
 				m.syncViewport(true)
 				cmds = append(cmds, histCmd, bootstrapBackendCmd(m.comp, m.session),
@@ -3651,9 +3657,6 @@ func main() {
 		// last-session file must not turn a handover into a fresh conversation.
 		defaultSession = handoffSession
 	}
-	if defaultSession == "" {
-		defaultSession = "console"
-	}
 	session := flag.String("session", defaultSession, "Niffler session id")
 	flag.Parse()
 	if !term.IsTerminal(int(os.Stdin.Fd())) || !term.IsTerminal(int(os.Stdout.Fd())) {
@@ -3663,7 +3666,12 @@ func main() {
 	}
 	*session = sanitizeSessionID(strings.TrimSpace(*session))
 	if *session == "" {
-		*session = "console"
+		// No saved session for this launch directory (and no handoff): start
+		// a fresh conversation instead of resuming the legacy global "console"
+		// id, whose workspace belongs to wherever it was created. The first
+		// turn pins the launch directory as the workspace (sessionNeedsCreate
+		// stays true for a fresh id).
+		*session = newSessionID()
 	}
 
 	if err := os.Setenv("NIF_NATS_URL", natsURL); err != nil {

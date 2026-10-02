@@ -407,6 +407,10 @@ func localNew(m model, cmd slashCommand, argument string) (tea.Model, tea.Cmd) {
 	id := strings.TrimSpace(argument)
 	if id == "" {
 		id = newSessionID()
+		// Genuinely new conversation: the first turn pins the launch directory
+		// as the workspace (see sendTurn). An explicit id argument may name an
+		// existing conversation, so it keeps the current flag.
+		m.sessionNeedsCreate = true
 	}
 	m, historyCmd := m.switchSessionWithHistory(id)
 	return m, tea.Batch(historyCmd, bootstrapBackendCmd(m.comp, id))
