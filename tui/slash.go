@@ -179,6 +179,10 @@ func builtinSlashCommands() []slashCommand {
 		{Name: "discover", Description: "append component schemas to this conversation", builtin: true, run: localDiscover, Params: []slashParam{
 			{Name: "target", Kind: "string", Description: "component name, or tool=NAME"},
 		}},
+		{Name: "recall", Description: "search this conversation's history; add ask to have the LLM answer from the hits", builtin: true, run: localRecall, Params: []slashParam{
+			{Name: "query", Kind: "string", Description: "words to find, matched as token prefixes"},
+			{Name: "ask", Kind: "bool", Description: "ask the LLM to answer from the hits"},
+		}},
 		{Name: "profile", Description: "choose tool profile for new conversations; default clears", builtin: true, run: localProfile},
 		{Name: "mouse", Description: "wheel scrolling and drag selection", builtin: true, run: localMouse, Params: []slashParam{
 			{Name: "state", Kind: "enum", Values: []string{"on", "off"}},

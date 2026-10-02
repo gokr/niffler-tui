@@ -168,6 +168,10 @@ Local commands are handled by the TUI and are never sent to the model:
   can actually call, per component, with each tool's exposure state
 - `/discover <component>|tool=NAME` — expose a component's tools (or one named
   tool) to this conversation, so the model can call them directly
+- `/recall <words…> [ask]` — search this conversation's whole history (the
+  ranked context_recall lane over the store's search index) and show bounded
+  one-line hits with their message ids; `ask` hands the hits to the model as a
+  user turn to answer from. The transcript's own grep for a human.
 - `/profile [name|default]` — tool profile applied to new conversations;
   `default` clears it, and a bare `/profile` opens a picker listing the stored
   profiles with the current choice marked and each one's resolved tool count

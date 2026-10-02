@@ -6,6 +6,16 @@ project aims for [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- **`/recall <words…> [ask]` searches this conversation's history.** The
+  human-facing counterpart to the `context_recall` tool: ranked full-text
+  search over the whole canonical transcript (including trimmed and
+  compacted-away spans), rendered as bounded one-line hits with their message
+  ids — the transcript's own grep. `ask` hands the hits to the model as a user
+  turn to answer from, via the `userMessage` convention (`/status ask`
+  behavior on an asynchronous result).
+
 ## [0.4.0] - 2026-09-29
 
 ### Added
