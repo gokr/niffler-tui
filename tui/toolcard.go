@@ -191,6 +191,19 @@ var cardSGR = regexp.MustCompile(`\x1b\[[0-9;:]*m`)
 func (m model) renderToolRun(run *toolRun, detail toolDetail) string {
 	style := m.cardStyle()
 	body := m.renderToolRunLines(run, detail)
+	// The brief head is a single foreground style. Wordwrap splits its SGR
+	// span but does not repeat the opening foreground on continuation rows,
+	// so style the physical rows *after* wrapping (with or without cards).
+	if detail == detailBrief && run.collapsed {
+		body = clampLines(ansi.Strip(body), m.viewport.Width())
+		rows := strings.Split(body, "\n")
+		for i, row := range rows {
+			if row != "" {
+				rows[i] = toolStyle.Render(row)
+			}
+		}
+		body = strings.Join(rows, "\n")
+	}
 	bg := cardPrefix(style)
 	if bg == "" {
 		return body

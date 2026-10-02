@@ -94,6 +94,42 @@ func shadedCells(line string) []bool {
 	return out
 }
 
+func TestBriefToolHeadForegroundAfterWrap(t *testing.T) {
+	restoreDefaultTheme(t)
+	for _, cards := range []bool{false, true} {
+		for _, calls := range []int{1, 3} {
+			m := newTestModel()
+			m.toolCards = cards
+			m.toolLevel = toolBrief
+			m.viewport.SetWidth(18)
+			run := &toolRun{collapsed: true}
+			for i := 0; i < calls; i++ {
+				run.calls = append(run.calls, toolCall{name: "very_long_tool_name"})
+			}
+			m.blocks = []transcriptBlock{{kind: blockTool, run: run}}
+			out := m.piece(0)
+			rows := strings.Split(out, "\n")
+			if len(rows) < 2 {
+				t.Fatalf("cards=%v calls=%d: expected wrapped head: %q", cards, calls, out)
+			}
+			// Every physical row must re-arm the tool foreground after a wrap.
+			// An SGR reset on row 1 must not leave row 2 at terminal white.
+			prefix, _, ok := strings.Cut(toolStyle.Render("X"), "X")
+			if !ok || prefix == "" {
+				t.Fatalf("no foreground sequence: %q", toolStyle.Render("X"))
+			}
+			for i, row := range rows {
+				if ansi.StringWidth(row) == 0 {
+					continue
+				}
+				if !strings.Contains(row, prefix) {
+					t.Fatalf("cards=%v calls=%d row=%d lost tool foreground: %q", cards, calls, i, row)
+				}
+			}
+		}
+	}
+}
+
 // TestCardBackgroundSpansWholeLine is the regression test: with card shading
 // on, every cell of every rendered card line is backgrounded — for a single
 // call and for a grouped run alike.
