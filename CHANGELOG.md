@@ -6,6 +6,13 @@ project aims for [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- **Eight new color themes** — `monokai`, `one-dark`, `github-dark`,
+  `github-light`, `rose-pine`, `rose-pine-dawn`, `kanagawa` and `everforest`
+  join the `/theme` picker and its tab completion (lights sort first), each
+  pairing the chrome palette with the matching light/dark markdown style.
+
 ## [0.4.1] — 2026-10-05
 
 History recall, reliable provider/model selection and workspace pinning,

@@ -146,10 +146,11 @@ Niffler 的 builder 不使用这个 `go.mod`；它创建隔离的模块，replac
   没有该工具（旧版 harness），则退回对已加载列表做本地过滤
 - `/locale [en|zh|zh-TW]` —— 切换界面语言（持久化）
 - `/theme [name]` —— 切换界面配色主题（持久化）；不带参数的 `/theme` 打开
-  选择器，移动选择即可实时预览。除编译内置的 ANSI 默认主题外，另附九套配色，
-  含适合白底终端的浅色主题（`light`、`sepia`、`solarized-light`），以及
-  `solarized-dark`、`gruvbox-dark`、`nord`、`dracula`、`tokyo-night`、
-  `catppuccin-mocha`。`NIF_TUI_THEME` 可覆盖启动默认值
+  选择器，移动选择即可实时预览。除编译内置的 ANSI 默认主题外，另附十七套配色，
+  含适合白底终端的浅色主题（`light`、`sepia`、`solarized-light`、`github-light`、
+  `rose-pine-dawn`），以及 `solarized-dark`、`gruvbox-dark`、`nord`、`dracula`、
+  `tokyo-night`、`catppuccin-mocha`、`monokai`、`one-dark`、`github-dark`、
+  `rose-pine`、`kanagawa`、`everforest`。`NIF_TUI_THEME` 可覆盖启动默认值
 - `/mouse [on|off]` —— 鼠标追踪（默认开：滚轮、点击和直接拖拽选择可
   同时使用；关闭后使用终端原生选择，但应用收不到滚轮）
 - `/cards [on|off]` —— 用主题的卡片底色渲染工具运行块，使其读作一个整体

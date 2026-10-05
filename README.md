@@ -196,9 +196,11 @@ Local commands are handled by the TUI and are never sent to the model:
 - `/theme [name]` — switch the UI color theme (persisted); a bare `/theme`
   opens a picker with a live preview, and every theme pairs the chrome
   palette with a matching markdown style. Beyond the compiled-in default
-  there are nine curated palettes including light themes (`light`, `sepia`,
-  `solarized-light`) for white-background terminals, plus `solarized-dark`,
-  `gruvbox-dark`, `nord`, `dracula`, `tokyo-night`, and `catppuccin-mocha`.
+  there are seventeen curated palettes including light themes (`light`,
+  `sepia`, `solarized-light`, `github-light`, `rose-pine-dawn`) for
+  white-background terminals, plus `solarized-dark`, `gruvbox-dark`, `nord`,
+  `dracula`, `tokyo-night`, `catppuccin-mocha`, `monokai`, `one-dark`,
+  `github-dark`, `rose-pine`, `kanagawa`, and `everforest`.
   `NIF_TUI_THEME` overrides the startup default
 - `/mouse [on|off]` — mouse tracking (default on: wheel, click, and
   plain-drag selection work together; off uses terminal-native selection but
