@@ -6,6 +6,18 @@ project aims for [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.4.1] — 2026-10-05
+
+History recall, reliable provider/model selection and workspace pinning,
+with terminal layout and wrapped tool-card rendering fixes.
+
+### Fixed
+
+- Pin the launch directory as the conversation workspace.
+- Resolve provider and model as one selection, and validate pins on resume.
+- Keep the chat frame within the terminal's row count.
+- Preserve the tool-card heading foreground across wrapped lines.
+
 ### Added
 
 - **`/recall <words…> [ask]` searches this conversation's history.** The
