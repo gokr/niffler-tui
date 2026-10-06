@@ -197,6 +197,7 @@ func builtinSlashCommands() []slashCommand {
 			{Name: "lang", Kind: "enum", Values: []string{"en", "zh", "zh-TW"}},
 		}},
 		{Name: "restart", Description: "restart the client (picks up a rebuilt binary)", builtin: true, run: localRestart},
+		{Name: "quit", Description: "quit the client", builtin: true, run: localQuit},
 		// User-defined aliases: /alias <name> <prompt> defines a prompt
 		// shortcut, /alias add <name> cli call … a tool invocation (see
 		// alias.go). The declared subcommands drive dispatch, Tab completion

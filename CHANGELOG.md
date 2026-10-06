@@ -12,6 +12,9 @@ project aims for [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `github-light`, `rose-pine`, `rose-pine-dawn`, `kanagawa` and `everforest`
   join the `/theme` picker and its tab completion (lights sort first), each
   pairing the chrome palette with the matching light/dark markdown style.
+- **`/quit`** — a plain exit command, identical to ctrl+c: the client
+  identity is released normally (no restart handoff) and a turn still
+  running keeps going in its session runner.
 
 ## [0.4.1] — 2026-10-05
 

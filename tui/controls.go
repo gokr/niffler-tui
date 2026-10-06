@@ -522,6 +522,16 @@ func localRestart(m model, cmd slashCommand, argument string) (tea.Model, tea.Cm
 	return m, tea.Quit
 }
 
+// localQuit is the plain exit: tea.Quit, identical to ctrl+c, and the normal
+// shutdown path (main.go) releases the ui-registry identity before
+// comp.Close(). Deliberately no handoff record — that is the restart
+// mechanism for a successor client adopting this one's identity, and nothing
+// succeeds a plain quit. A turn still running keeps going in its session
+// runner and is replayed from the store on the next attach.
+func localQuit(m model, cmd slashCommand, argument string) (tea.Model, tea.Cmd) {
+	return m, tea.Quit
+}
+
 func localHelp(m model, cmd slashCommand, argument string) (tea.Model, tea.Cmd) {
 	lines := []string{t(m.loc, "help.title")}
 	for _, builtin := range m.slash.helpCommands() {

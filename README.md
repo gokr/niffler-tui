@@ -212,6 +212,9 @@ Local commands are handled by the TUI and are never sent to the model:
   run without that wrapper it simply exits. The conversation you were in, and
   this client's identity (its `Niffler N` label), carry over to the successor,
   which resumes it even if the old process never released it
+- `/quit` — quit the client, same as ctrl+c; the client identity is released
+  normally (no restart handoff), and a turn still running keeps going in its
+  session runner, replayed from the store on the next attach
 - `/alias <name> <prompt…>` — define a prompt shortcut: typing `/name` (with
   any extra words appended to the stored prompt) sends it as an ordinary turn.
   `/alias add <name> cli call <tool> '<json>'` instead defines a call alias
