@@ -66,6 +66,7 @@ const (
 	blockMeta
 	blockError
 	blockNotice
+	blockDiagnostics
 )
 
 type transcriptBlock struct {
@@ -274,6 +275,8 @@ func (m *model) renderPiece(i int) string {
 			return m.renderToolRun(block.run, detail)
 		}
 		return toolStyle.Render("tool> " + block.text)
+	case blockDiagnostics:
+		return m.renderDiagnostics(block)
 	case blockMeta:
 		return metaStyle.Render(block.text)
 	case blockNotice:

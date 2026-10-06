@@ -95,6 +95,8 @@ func (u usageStats) cacheHitPct() float64 {
 }
 
 type sessionEvent struct {
+	Path           string          `json:"path"`
+	Text           string          `json:"text"`
 	SessionID      string          `json:"sessionId"`
 	Content        string          `json:"content"`
 	Reasoning      string          `json:"reasoning"`
@@ -2634,6 +2636,9 @@ func (m *model) applySessionEvent(msg sessionEventMsg) tea.Cmd {
 				durationMs: event.DurationMs,
 			})
 		}
+
+	case "diagnostics":
+		m.appendDiagnostics(event.Path, event.Text)
 
 	case "retry":
 		// Retry events are emitted between provider attempts. Keep them visible

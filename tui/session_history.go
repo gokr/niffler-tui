@@ -344,6 +344,10 @@ func replayConversation(messages []storedMessage) []transcriptBlock {
 				scratch.addBlock(blockNotice, string(msg.Content))
 				continue
 			}
+			if path, text, ok := storedDiagnostics(string(msg.Content)); ok {
+				scratch.appendDiagnostics(path, text)
+				continue
+			}
 			scratch.addBlock(blockUser, string(msg.Content))
 
 		case "assistant":

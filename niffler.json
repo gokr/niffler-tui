@@ -16,6 +16,7 @@
         "tui/backend.go",
         "tui/context_status.go",
         "tui/controls.go",
+        "tui/diagnostics.go",
         "tui/filecomp.go",
         "tui/history.go",
         "tui/highlight.go",
