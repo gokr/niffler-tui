@@ -162,6 +162,13 @@ func builtinSlashCommands() []slashCommand {
 				Source: &slashSource{Tool: "mcp.mcp_servers", Args: map[string]any{}, Field: "name"}},
 		}},
 		{Name: "status", Description: "show provider/model/context details; add ask to have the LLM interpret it", builtin: true, run: localStatus},
+		// Conversation statistics from the store's message documents — the
+		// native, approval-free version of the console-tool-usage fabric
+		// program (info.go): roles, tool calls, result sizes, token sums.
+		{Name: "info", Description: "conversation statistics: messages, tool calls, result sizes; /info <id> inspects another conversation", builtin: true, run: localInfo, Params: []slashParam{
+			{Name: "id", Kind: "string", Description: "conversation id (default: this one)",
+				Source: &slashSource{Tool: "store.list", Args: map[string]any{"kind": "conversation"}, Field: "id"}},
+		}},
 		{Name: "doctor", Description: "run health checks; add ask to have the LLM interpret the report", Component: "core", Tool: "doctor", builtin: true, run: localDoctor, Params: []slashParam{
 			{Name: "deep", Kind: "bool", Description: "run thorough live probes"},
 			{Name: "ask", Kind: "bool", Description: "ask the LLM to interpret the report"},

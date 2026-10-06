@@ -158,6 +158,12 @@ Local commands are handled by the TUI and are never sent to the model:
   touching the model's drain cursor, d kills with a two-stage confirm
 - `/status [ask]` — detailed effective provider/model/context provenance and usage;
   `ask` sends the report to the LLM for interpretation
+- `/info [id]` — conversation statistics computed from the store's message
+  documents: message counts per role, per-tool call counts and tool-result
+  sizes (total, median, largest, plus the biggest offenders with previews),
+  summed token usage, and the discover/invoke breakdown. Defaults to this
+  conversation; an id inspects another one (tab-completed), subagents show
+  their parent
 - `/doctor [deep] [ask]` — render a readable Markdown health table;
   `deep` runs live probes and `ask` sends the report to the LLM for interpretation
 - `/export [path]` — export the exact current provider-facing request as

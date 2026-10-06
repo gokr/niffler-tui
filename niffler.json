@@ -23,6 +23,7 @@
         "tui/highlight.go",
         "tui/handoff.go",
         "tui/i18n.go",
+        "tui/info.go",
         "tui/mcp_form.go",
         "tui/lsp_form.go",
         "tui/oauth.go",
