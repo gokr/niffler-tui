@@ -528,6 +528,84 @@ func localRestart(m model, cmd slashCommand, argument string) (tea.Model, tea.Cm
 // mechanism for a successor client adopting this one's identity, and nothing
 // succeeds a plain quit. A turn still running keeps going in its session
 // runner and is replayed from the store on the next attach.
+// localName runs /name: set a durable, human-chosen session name (the
+// conversation header's title, replacing the auto-truncated first-message
+// title). Bare /name shows the stored name — fetched, since another
+// client (or an earlier turn) may have renamed it.
+func localName(m model, cmd slashCommand, argument string) (tea.Model, tea.Cmd) {
+	if !m.connected {
+		m.contextNote = t(m.loc, "note.notConnected")
+		return m, nil
+	}
+	name := strings.TrimSpace(argument)
+	session := m.session
+	if name == "" {
+		comp := m.comp
+		return m, func() tea.Msg {
+			title := ""
+			if comp != nil {
+				if item, err := comp.StoreGet("conversation", session, controlTimeout); err == nil {
+					var probe struct {
+						Title string `json:"title"`
+					}
+					if json.Unmarshal(item.Value, &probe) == nil {
+						title = probe.Title
+					}
+				}
+			}
+			return nameMsg{session: session, name: title}
+		}
+	}
+	comp := m.comp
+	return m, func() tea.Msg {
+		var response struct {
+			OK bool `json:"ok"`
+		}
+		err := requestInto(comp, "core", "session", map[string]any{
+			"sessionId": session, "title": name,
+		}, &response)
+		if err == nil && !response.OK {
+			err = fmt.Errorf("session name save failed")
+		}
+		return nameMsg{session: session, name: name, err: err}
+	}
+}
+
+// nameMsg reports a /name save (or the bare /name read).
+type nameMsg struct {
+	session string
+	name    string
+	err     error
+}
+
+// applyNameMsg renders the name result as a meta block.
+func (m *model) applyNameMsg(msg nameMsg) {
+	if msg.session != m.session {
+		return
+	}
+	if msg.err != nil {
+		m.addBlock(blockError, "/name: "+msg.err.Error())
+		m.syncViewport(true)
+		return
+	}
+	m.addBlock(blockMeta, t(m.loc, "name.set", msg.name))
+	m.syncViewport(true)
+}
+
+// localCopy runs /copy: the last assistant reply goes to the clipboard
+// (both clipboards, same as drag selection — OSC 52 through the terminal).
+func localCopy(m model, cmd slashCommand, argument string) (tea.Model, tea.Cmd) {
+	for i := len(m.blocks) - 1; i >= 0; i-- {
+		if m.blocks[i].kind == blockAssistant && strings.TrimSpace(m.blocks[i].text) != "" {
+			text := m.blocks[i].text
+			m.contextNote = t(m.loc, "copy.done", fmt.Sprintf("%d chars", len(text)))
+			return m, tea.Batch(tea.SetClipboard(text), tea.SetPrimaryClipboard(text))
+		}
+	}
+	m.contextNote = t(m.loc, "copy.nothing")
+	return m, nil
+}
+
 func localQuit(m model, cmd slashCommand, argument string) (tea.Model, tea.Cmd) {
 	return m, tea.Quit
 }

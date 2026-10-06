@@ -1572,8 +1572,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.syncViewport(false)
 			return m, nil
 		case "shift+tab":
-			// Rotate the conversation's LLM thinking effort (auto → low →
-			// medium → high → max); persisted like the model override and
+			// Rotate the conversation's LLM thinking effort (auto → low →			// medium → high → max); persisted like the model override and
 			// applied by the session runner on the next turn.
 			if !m.connected {
 				m.contextNote = t(m.loc, "note.notConnected")
@@ -1882,6 +1881,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.contextNote = t(m.loc, "note.snippetSaved")
 		m.addBlock(blockMeta, "✓ "+t(m.loc, "note.snippetSaved"))
 		m.syncViewport(true)
+
+	case nameMsg:
+		m.applyNameMsg(msg)
 
 	case snippetsMsg:
 		m.applySnippetsMsg(msg)

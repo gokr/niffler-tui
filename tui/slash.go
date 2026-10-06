@@ -162,6 +162,15 @@ func builtinSlashCommands() []slashCommand {
 				Source: &slashSource{Tool: "mcp.mcp_servers", Args: map[string]any{}, Field: "name"}},
 		}},
 		{Name: "status", Description: "show provider/model/context details; add ask to have the LLM interpret it", builtin: true, run: localStatus},
+		// /name rewrites the conversation header's title (core's title op),
+		// replacing the auto-truncated first-message title — the /session
+		// browser's search matches it.
+		{Name: "name", Description: "set this conversation's name (shows the current one without an argument)", builtin: true, run: localName, Params: []slashParam{
+			{Name: "name", Kind: "string", Description: "the new session name"},
+		}},
+		// /copy puts the last assistant reply on the clipboard (OSC 52, the
+		// same path drag selection uses) — for pasting a reply out of band.
+		{Name: "copy", Description: "copy the last assistant reply to the clipboard", builtin: true, run: localCopy},
 		// Conversation statistics from the store's message documents — the
 		// native, approval-free version of the console-tool-usage fabric
 		// program (info.go): roles, tool calls, result sizes, token sums.

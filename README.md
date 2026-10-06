@@ -164,6 +164,11 @@ Local commands are handled by the TUI and are never sent to the model:
   summed token usage, and the discover/invoke breakdown. Defaults to this
   conversation; an id inspects another one (tab-completed), subagents show
   their parent
+- `/name [name]` — set this conversation's name (the header title,
+  replacing the auto-truncated first-message one); a bare `/name` shows the
+  stored name
+- `/copy` — put the last assistant reply on the clipboard (OSC 52, the same
+  path drag selection uses)
 - `/doctor [deep] [ask]` — render a readable Markdown health table;
   `deep` runs live probes and `ask` sends the report to the LLM for interpretation
 - `/export [path]` — export the exact current provider-facing request as
