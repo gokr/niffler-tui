@@ -171,6 +171,12 @@ func builtinSlashCommands() []slashCommand {
 		// /copy puts the last assistant reply on the clipboard (OSC 52, the
 		// same path drag selection uses) — for pasting a reply out of band.
 		{Name: "copy", Description: "copy the last assistant reply to the clipboard", builtin: true, run: localCopy},
+		// Favorites are provider/model combos (favorites.go) stored as one
+		// ordered store document; ctrl+x rotates them.
+		{Name: "fav", Description: "list favorite provider/model combos; add marks the current one, rm <n> removes, <n> applies", builtin: true, run: localFav, Params: []slashParam{
+			{Name: "subcommand", Kind: "enum", Values: []string{"add", "rm"}},
+			{Name: "n", Kind: "string", Description: "favorite number from the list (1 = first)"},
+		}},
 		// Conversation statistics from the store's message documents — the
 		// native, approval-free version of the console-tool-usage fabric
 		// program (info.go): roles, tool calls, result sizes, token sums.

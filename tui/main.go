@@ -635,6 +635,12 @@ type model struct {
 	mouse     bool
 	selection mouseSelection
 
+	// Favorite provider/model combinations (favorites.go): the ordered
+	// rotation list (one store document, read at bootstrap and after every
+	// mutation) and whether that read has landed.
+	favorites       []modelFav
+	favoritesLoaded bool
+
 	// streaming marks output that should remain plain until it settles.
 	// renderTimerActive ensures only one settle timer spans token bursts,
 	// including across tool rounds. lastTokenAt drives the quiet check.
@@ -1278,7 +1284,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// plus the mid-turn probe: a restarted TUI must resume a running
 		// conversation in busy state (spinner, ESC-stop, steer-Enter), not
 		// sit idle while its runner keeps working.
-		cmds = append(cmds, bootstrapBackendCmd(m.comp, m.session))
+		cmds = append(cmds, bootstrapBackendCmd(m.comp, m.session), favsLoadCmd(m.comp, false))
 		cmds = append(cmds, m.startHistoryLoad())
 		cmds = append(cmds, sessionProbeCmd(m.comp, m.session))
 		return m, tea.Batch(cmds...)
@@ -1589,6 +1595,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.controlPending = true
 			m.contextNote = t(m.loc, "note.savingEffort")
 			return m, setConversationThinkingCmd(m.comp, m.session, next)
+		case "ctrl+x":
+			// Rotate the favorite provider/model combinations (favorites.go):
+			// the next entry in order, applied as the one-call provider+model
+			// pin. Between turns only, like /model.
+			mm, cmd := m.rotateFavorites()
+			return mm, cmd
 		case "ctrl+o":
 			// The worker cycle: running background processes and working
 			// subagents, the roster above an output pane.
@@ -1872,6 +1884,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.err != nil {
 			m.contextNote = t(m.loc, "note.openFailed", msg.target+": "+msg.err.Error())
 		}
+
+	case favsMsg:
+		m.applyFavsMsg(msg)
+
+	case favApplyMsg:
+		cmds = append(cmds, m.applyFavApplyMsg(msg))
 
 	case snippetSavedMsg:
 		if msg.err != nil {

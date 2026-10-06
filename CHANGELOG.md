@@ -27,10 +27,13 @@ project aims for [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   token usage, and the discover/invoke breakdown — the native, approval-free
   version of the `console-tool-usage` fabric program. Defaults to the current
   conversation; an id inspects another one.
-- **`/name` and `/copy`.** `/name [name]` sets the conversation's name (the
-  header title, via core's title op — the /session browser's search matches
-  it); `/copy` puts the last assistant reply on the clipboard (OSC 52, the
-  same path drag selection uses).
+- **`/name`, `/copy` and `/fav` + `Ctrl+X`.** `/name [name]` sets the
+  conversation's name (the header title, via core's title op — the /session
+  browser's search matches it); `/copy` puts the last assistant reply on the
+  clipboard (OSC 52, the same path drag selection uses). `/fav` manages
+  favorite provider/model combinations — one ordered store document (kind
+  `modelfavorite`) — and `Ctrl+X` rotates to the next favorite, applying it
+  as the one-call provider+model pin (between turns, like `/model`).
 - **Eight new color themes** — `monokai`, `one-dark`, `github-dark`,
   `github-light`, `rose-pine`, `rose-pine-dawn`, `kanagawa` and `everforest`
   join the `/theme` picker and its tab completion (lights sort first), each

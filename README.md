@@ -80,6 +80,8 @@ Keys:
 - Mouse: wheel scrolls the transcript; plain drag selects and copies; left
   click toggles a tool-run card; ctrl+click opens the URL or file path under
   the pointer; alt+drag additionally saves the selection as a snippet
+- `Ctrl+X`: rotate the favorite provider/model combinations (`/fav` manages
+  them; between turns, like `/model`)
 - `Ctrl+C`: quit
 
 Consecutive tool calls in a turn are folded into a single collapsible
@@ -169,6 +171,10 @@ Local commands are handled by the TUI and are never sent to the model:
   stored name
 - `/copy` — put the last assistant reply on the clipboard (OSC 52, the same
   path drag selection uses)
+- `/fav [add|rm <n>|<n>]` — favorite provider/model combinations, stored as
+  one ordered store document (kind `modelfavorite`); `<n>` applies an entry
+  to this conversation, and `Ctrl+X` rotates to the next favorite in order
+  (wrapping; between turns, like `/model`)
 - `/doctor [deep] [ask]` — render a readable Markdown health table;
   `deep` runs live probes and `ask` sends the report to the LLM for interpretation
 - `/export [path]` — export the exact current provider-facing request as

@@ -19,6 +19,7 @@
         "tui/controls.go",
         "tui/diagnostics.go",
         "tui/filecomp.go",
+        "tui/favorites.go",
         "tui/history.go",
         "tui/highlight.go",
         "tui/handoff.go",
