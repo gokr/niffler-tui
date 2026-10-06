@@ -1651,6 +1651,14 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if !m.selection.pressed {
 			return m, nil
 		}
+		// ctrl+click opens the URL or file path under the pointer. The
+		// gesture is reserved: the tool-card toggle must not also fire, and
+		// a drag stays an ordinary selection/copy (the press modifier is
+		// what counts — see mouseSelection.mod).
+		if m.selection.mod&tea.ModCtrl != 0 && !m.selection.dragged {
+			m.clearMouseSelection()
+			return m, m.openUnderPointer(msg.X, msg.Y)
+		}
 		if cmd, dragged := m.finishMouseSelection(msg); dragged {
 			return m, cmd
 		}
@@ -1859,6 +1867,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// tool is not registered yet; a catalog read failure is silent.
 		if msg.Err == nil && !msg.Found {
 			m.contextNote = t(m.loc, "alias.unknownTool", msg.Name, msg.Tool)
+		}
+
+	case openResultMsg:
+		if msg.err != nil {
+			m.contextNote = t(m.loc, "note.openFailed", msg.target+": "+msg.err.Error())
 		}
 
 	case catalogProvidersMsg:

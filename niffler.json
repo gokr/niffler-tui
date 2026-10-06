@@ -15,6 +15,7 @@
         "tui/attach.go",
         "tui/backend.go",
         "tui/context_status.go",
+        "tui/clickopen.go",
         "tui/controls.go",
         "tui/diagnostics.go",
         "tui/filecomp.go",

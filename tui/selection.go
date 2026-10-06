@@ -18,8 +18,13 @@ type selectionPoint struct {
 }
 
 type mouseSelection struct {
-	anchor  selectionPoint
-	focus   selectionPoint
+	anchor selectionPoint
+	focus  selectionPoint
+	// mod holds the modifiers held at press time: ctrl+click opens what
+	// the pointer is on (clickopen.go) instead of toggling a tool card.
+	// Read at press, not from the release events, because only the press
+	// is guaranteed to describe the user's intent.
+	mod     tea.KeyMod
 	pressed bool
 	dragged bool
 }
@@ -55,7 +60,7 @@ func (m *model) beginMouseSelection(msg tea.MouseClickMsg) bool {
 		return false
 	}
 	point := mousePoint(msg.X, msg.Y)
-	m.selection = mouseSelection{anchor: point, focus: point, pressed: true}
+	m.selection = mouseSelection{anchor: point, focus: point, mod: msg.Mod, pressed: true}
 	return true
 }
 

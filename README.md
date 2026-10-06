@@ -78,7 +78,8 @@ Keys:
 - `Esc`: while busy, the first press arms a "Stop?" prompt and the second
   force-cancels the running turn
 - Mouse: wheel scrolls the transcript; plain drag selects and copies; left
-  click toggles a tool-run card
+  click toggles a tool-run card; ctrl+click opens the URL or file path under
+  the pointer
 - `Ctrl+C`: quit
 
 Consecutive tool calls in a turn are folded into a single collapsible
@@ -95,6 +96,14 @@ and a left click toggles the card under the cursor (brief→medium→full for
 that card). Mouse tracking is **on by default**: the wheel scrolls the
 transcript, while plain left-button drag selects and copies text using
 application-owned selection. Both therefore work at the same time.
+A modifier gesture rides the same selection. **Ctrl+click** opens what
+the pointer is on: a URL in the browser, or a file path — optionally with
+a grep-style `:line` suffix, which is dropped — in the platform's default
+handler, resolved against the conversation workspace, the launch directory
+and the harness root (`NIF_TUI_OPEN` replaces the opener wholesale, e.g.
+`NIF_TUI_OPEN='kitty nvim'`). It needs a terminal that reports mouse
+modifiers (SGR mouse encoding — the same xterm-compatible terminals that
+make drag selection work).
 `/mouse off` remains a terminal-native fallback, but the app then receives
 no wheel events, so the transcript scrolls with `PgUp`/`PgDn`/`Ctrl+Up` and
 the wheel behaves as ordinary terminal scroll instead.

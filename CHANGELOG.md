@@ -8,6 +8,11 @@ project aims for [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Ctrl+click opens what the pointer is on** — a URL in the browser, or a
+  file path in the platform's default handler (an optional grep-style
+  `:line` suffix is dropped; relative paths resolve against the
+  conversation workspace, the launch directory and the harness root).
+  `NIF_TUI_OPEN` replaces the opener wholesale for custom handlers.
 - **Eight new color themes** — `monokai`, `one-dark`, `github-dark`,
   `github-light`, `rose-pine`, `rose-pine-dawn`, `kanagawa` and `everforest`
   join the `/theme` picker and its tab completion (lights sort first), each
