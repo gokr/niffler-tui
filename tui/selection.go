@@ -21,9 +21,11 @@ type mouseSelection struct {
 	anchor selectionPoint
 	focus  selectionPoint
 	// mod holds the modifiers held at press time: ctrl+click opens what
-	// the pointer is on (clickopen.go) instead of toggling a tool card.
-	// Read at press, not from the release events, because only the press
-	// is guaranteed to describe the user's intent.
+	// the pointer is on (clickopen.go), alt+drag additionally collects the
+	// selection as a snippet (snippets.go). Read at press, not from the
+	// release events — drag motion and release replies carry modifiers of
+	// their own, but only the press is guaranteed to describe the user's
+	// intent.
 	mod     tea.KeyMod
 	pressed bool
 	dragged bool
@@ -102,7 +104,12 @@ func (m *model) finishMouseSelection(msg tea.MouseReleaseMsg) (tea.Cmd, bool) {
 	// OSC 52 works through the terminal (including remote sessions when the
 	// terminal/tmux permits it). Set both the regular and primary clipboards
 	// so drag selection behaves naturally on every supported platform.
-	return tea.Batch(tea.SetClipboard(text), tea.SetPrimaryClipboard(text)), true
+	cmds := []tea.Cmd{tea.SetClipboard(text), tea.SetPrimaryClipboard(text)}
+	// alt+drag collects the selection as a snippet on top of the copy.
+	if m.selection.mod&tea.ModAlt != 0 {
+		cmds = append(cmds, m.saveSnippetCmd(text))
+	}
+	return tea.Batch(cmds...), true
 }
 
 func (m *model) clearMouseSelection() {

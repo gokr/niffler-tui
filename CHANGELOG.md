@@ -13,6 +13,14 @@ project aims for [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `:line` suffix is dropped; relative paths resolve against the
   conversation workspace, the launch directory and the harness root).
   `NIF_TUI_OPEN` replaces the opener wholesale for custom handlers.
+- **Alt+drag collects snippets.** A plain drag still only copies; holding
+  alt additionally saves the selection as a *snippet* — a store document
+  (kind `snippet`) carrying the collecting conversation and a timestamp.
+  **`/snippets`** lists the collection (`show|ins|del <n>` act on the
+  numbered entry, 1 = newest), and the model recalls the same documents
+  through the store's own tools, so either end of the conversation can do
+  something with a snippet later. Both gestures need a terminal that
+  reports mouse modifiers (SGR mouse encoding).
 - **Eight new color themes** — `monokai`, `one-dark`, `github-dark`,
   `github-light`, `rose-pine`, `rose-pine-dawn`, `kanagawa` and `everforest`
   join the `/theme` picker and its tab completion (lights sort first), each

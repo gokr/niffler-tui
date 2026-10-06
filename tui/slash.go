@@ -183,6 +183,13 @@ func builtinSlashCommands() []slashCommand {
 			{Name: "query", Kind: "string", Description: "words to find, matched as token prefixes"},
 			{Name: "ask", Kind: "bool", Description: "ask the LLM to answer from the hits"},
 		}},
+		// Snippets are alt+drag selections stored as kind "snippet" store
+		// documents (snippets.go); the model reads the same documents via
+		// the store's own tools, so the collection has one home.
+		{Name: "snippets", Description: "list snippets collected with alt+drag; show/ins/del <n> act on one", builtin: true, run: localSnippets, Params: []slashParam{
+			{Name: "subcommand", Kind: "enum", Values: []string{"show", "ins", "del"}},
+			{Name: "n", Kind: "string", Description: "entry number from the list (1 = newest)"},
+		}},
 		{Name: "profile", Description: "choose tool profile for new conversations; default clears", builtin: true, run: localProfile},
 		{Name: "mouse", Description: "wheel scrolling and drag selection", builtin: true, run: localMouse, Params: []slashParam{
 			{Name: "state", Kind: "enum", Values: []string{"on", "off"}},

@@ -33,6 +33,7 @@
         "tui/selectors.go",
         "tui/session_history.go",
         "tui/slash.go",
+        "tui/snippets.go",
         "tui/theme.go",
         "tui/toolprofiles.go",
         "tui/toolrender.go",

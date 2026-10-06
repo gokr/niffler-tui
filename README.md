@@ -79,7 +79,7 @@ Keys:
   force-cancels the running turn
 - Mouse: wheel scrolls the transcript; plain drag selects and copies; left
   click toggles a tool-run card; ctrl+click opens the URL or file path under
-  the pointer
+  the pointer; alt+drag additionally saves the selection as a snippet
 - `Ctrl+C`: quit
 
 Consecutive tool calls in a turn are folded into a single collapsible
@@ -96,14 +96,18 @@ and a left click toggles the card under the cursor (brief→medium→full for
 that card). Mouse tracking is **on by default**: the wheel scrolls the
 transcript, while plain left-button drag selects and copies text using
 application-owned selection. Both therefore work at the same time.
-A modifier gesture rides the same selection. **Ctrl+click** opens what
+Two modifier gestures ride the same selection. **Ctrl+click** opens what
 the pointer is on: a URL in the browser, or a file path — optionally with
 a grep-style `:line` suffix, which is dropped — in the platform's default
 handler, resolved against the conversation workspace, the launch directory
 and the harness root (`NIF_TUI_OPEN` replaces the opener wholesale, e.g.
-`NIF_TUI_OPEN='kitty nvim'`). It needs a terminal that reports mouse
-modifiers (SGR mouse encoding — the same xterm-compatible terminals that
-make drag selection work).
+`NIF_TUI_OPEN='kitty nvim'`). **Alt+drag** additionally saves the selection
+as a *snippet* while still copying. Snippets live in the store (kind
+`snippet`) with the collecting conversation and a timestamp; `/snippets`
+lists them, and the model reads the same documents through the store's own
+tools, so both ends of the conversation can recall one later. Both gestures
+need a terminal that reports mouse modifiers (SGR mouse encoding — the same
+xterm-compatible terminals that make drag selection work).
 `/mouse off` remains a terminal-native fallback, but the app then receives
 no wheel events, so the transcript scrolls with `PgUp`/`PgDn`/`Ctrl+Up` and
 the wheel behaves as ordinary terminal scroll instead.
@@ -181,6 +185,10 @@ Local commands are handled by the TUI and are never sent to the model:
   ranked context_recall lane over the store's search index) and show bounded
   one-line hits with their message ids; `ask` hands the hits to the model as a
   user turn to answer from. The transcript's own grep for a human.
+- `/snippets [show|ins|del <n>]` — the snippet collection gathered with
+  alt+drag (1 = newest). `show` prints the full text, `ins` drops it into
+  the input, `del` removes an entry. Snippets are store documents (kind
+  `snippet`), so the model can recall them too via the store's tools
 - `/profile [name|default]` — tool profile applied to new conversations;
   `default` clears it, and a bare `/profile` opens a picker listing the stored
   profiles with the current choice marked and each one's resolved tool count

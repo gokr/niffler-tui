@@ -1874,6 +1874,18 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.contextNote = t(m.loc, "note.openFailed", msg.target+": "+msg.err.Error())
 		}
 
+	case snippetSavedMsg:
+		if msg.err != nil {
+			m.contextNote = t(m.loc, "note.snippetFailed", msg.err.Error())
+			break
+		}
+		m.contextNote = t(m.loc, "note.snippetSaved")
+		m.addBlock(blockMeta, "✓ "+t(m.loc, "note.snippetSaved"))
+		m.syncViewport(true)
+
+	case snippetsMsg:
+		m.applySnippetsMsg(msg)
+
 	case catalogProvidersMsg:
 		if msg.Err == nil {
 			m.catalogProviders = msg.Providers
