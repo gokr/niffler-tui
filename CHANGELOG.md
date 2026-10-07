@@ -6,6 +6,20 @@ project aims for [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.5.0] — 2026-10-07
+
+Mouse gestures over the transcript — ctrl+click opens URLs and file paths,
+alt+drag collects snippets — plus conversation introspection (/info, /name)
+and quick actions (/copy, /fav with ctrl+x rotation), eight new color themes
+and /quit. Five new local commands and two new store kinds, all
+prompt-cache-safe (nothing enters the frozen prefix).
+
+### Fixed
+
+- Render stored LSP diagnostics ("[lsp diagnostics for …]") at the tool
+  detail level instead of raw text — history is untouched, so older sessions
+  get the presentation too.
+
 ### Added
 
 - **Ctrl+click opens what the pointer is on** — a URL in the browser, or a
