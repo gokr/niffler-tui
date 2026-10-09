@@ -25,6 +25,7 @@ import (
 // with image attachments carries. Unknown telemetry fields (turnId,
 // durationMs, ...) are ignored.
 type storedMessage struct {
+	CreatedAt  float64          `json:"createdAt"`
 	Role       string           `json:"role"`
 	Content    messageContent   `json:"content"`
 	Reasoning  string           `json:"reasoning"`
@@ -276,7 +277,7 @@ func conversationHistoryCmd(comp *sdk.Component, session string, gen, anchor int
 		}
 		return conversationHistoryMsg{
 			Session: session, Gen: gen, Anchor: anchor,
-			Blocks: replayConversation(messages),
+			Blocks: replayConversation(mergeCleanDiagnostics(comp, session, messages)),
 		}
 	}
 }
@@ -332,6 +333,8 @@ func replayConversation(messages []storedMessage) []transcriptBlock {
 	var scratch model
 	for _, msg := range messages {
 		switch msg.Role {
+		case "diagnostic":
+			scratch.appendDiagnostics(msg.Name, string(msg.Content))
 		case "user":
 			if msg.Content == "" {
 				continue

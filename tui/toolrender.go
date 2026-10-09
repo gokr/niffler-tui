@@ -346,7 +346,18 @@ func (m model) renderReadPreview(c *toolCall, full bool) toolPreview {
 	args := toolArgs(c)
 	path := argString(args, "path", "file_path", "filePath")
 	if path == "" {
-		path = "?"
+		if reads, ok := args["reads"].([]any); ok && len(reads) > 0 {
+			path = fmt.Sprintf("%d items", len(reads))
+			if len(reads) == 1 {
+				if item, ok := reads[0].(map[string]any); ok {
+					if p := argString(item, "path", "glob"); p != "" {
+						path = p
+					}
+				}
+			}
+		} else {
+			path = "files"
+		}
 	}
 	rangeSuffix := ""
 	if offset, limit := argInt(args, "offset"), argInt(args, "limit"); offset > 0 || limit > 0 {

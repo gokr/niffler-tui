@@ -813,7 +813,7 @@ func (m *model) applySlashResult(msg slashResultMsg) tea.Cmd {
 		if m.busy {
 			// Mid-turn: steer the rendered prompt into the live turn (the
 			// same path Enter uses for typed input while busy).
-			m.addBlock(blockUser, message)
+			m.addBlock(blockUser, "Steer: "+message)
 			m.layout()
 			m.syncViewport(true)
 			return m.sendSteer(message)

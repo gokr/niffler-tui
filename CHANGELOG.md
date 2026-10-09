@@ -6,6 +6,14 @@ project aims for [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+
+- Batched read cards show an item count or single target instead of `?`.
+- Pending `Steer: ` labels clear on the harness's model-dispatch acknowledgement.
+- Ctrl-hover underlines clickable URL/path tokens with mouse tracking enabled.
+  Modifier changes are detected on mouse movement, as supported by terminals.
+- Clean diagnostic records replay as display-only blocks without model messages.
+
 ## [0.5.0] — 2026-10-07
 
 Mouse gestures over the transcript — ctrl+click opens URLs and file paths,

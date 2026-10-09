@@ -95,6 +95,7 @@ func (u usageStats) cacheHitPct() float64 {
 }
 
 type sessionEvent struct {
+	Contents       []string        `json:"contents"`
 	Path           string          `json:"path"`
 	Text           string          `json:"text"`
 	SessionID      string          `json:"sessionId"`
@@ -634,6 +635,8 @@ type model struct {
 	// wheel events. See /mouse.
 	mouse     bool
 	selection mouseSelection
+	hover     selectionPoint
+	hoverCtrl bool
 
 	// Favorite provider/model combinations (favorites.go): the ordered
 	// rotation list (one store document, read at bootstrap and after every
@@ -1655,6 +1658,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tea.MouseMotionMsg:
+		m.hover = mousePoint(msg.X, msg.Y)
+		m.hoverCtrl = m.mouse && msg.Mod&tea.ModCtrl != 0 && !m.selection.pressed
 		m.extendMouseSelection(msg)
 		return m, nil
 
@@ -1683,6 +1688,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// moves underneath it. Clear it, then let the viewport consume the
 		// wheel below.
 		m.clearMouseSelection()
+		m.hoverCtrl = false
 
 	case tea.PasteMsg:
 		if m.mode == modeProfileForm {
@@ -2682,6 +2688,17 @@ func (m *model) applySessionEvent(msg sessionEventMsg) tea.Cmd {
 			})
 		}
 
+	case "steer_sent":
+		for _, content := range event.Contents {
+			for i := range m.blocks {
+				if m.blocks[i].kind == blockUser && m.blocks[i].text == "Steer: "+content {
+					m.blocks[i].text = content
+					m.markTranscriptDirty()
+					break
+				}
+			}
+		}
+
 	case "diagnostics":
 		m.appendDiagnostics(event.Path, event.Text)
 
@@ -3200,14 +3217,14 @@ func (m model) View() tea.View {
 		headerLine = ansi.Truncate(headerLine, m.width-1, "")
 	}
 	makeView := func(content string) tea.View {
-		view := tea.NewView(m.applyMouseSelection(content))
+		view := tea.NewView(m.applyMouseSelection(m.applyLinkHover(content)))
 		view.AltScreen = true
 		// Cell-motion tracking provides wheel, press, drag, and release events.
 		// selection.go turns drags into highlighted text and copies it on
 		// release, so wheel scrolling and plain-drag selection coexist. With
 		// /mouse off the terminal owns selection and scrollback instead.
 		if m.mouse {
-			view.MouseMode = tea.MouseModeCellMotion
+			view.MouseMode = tea.MouseModeAllMotion
 		}
 		view.WindowTitle = fmt.Sprintf("%s TUI - %s", label, m.session)
 		return view
