@@ -593,13 +593,13 @@ func (m *model) applyNameMsg(msg nameMsg) {
 }
 
 // localCopy runs /copy: the last assistant reply goes to the clipboard
-// (both clipboards, same as drag selection — OSC 52 through the terminal).
+// the same way drag selection copies (clipboard.go).
 func localCopy(m model, cmd slashCommand, argument string) (tea.Model, tea.Cmd) {
 	for i := len(m.blocks) - 1; i >= 0; i-- {
 		if m.blocks[i].kind == blockAssistant && strings.TrimSpace(m.blocks[i].text) != "" {
 			text := m.blocks[i].text
 			m.contextNote = t(m.loc, "copy.done", fmt.Sprintf("%d chars", len(text)))
-			return m, tea.Batch(tea.SetClipboard(text), tea.SetPrimaryClipboard(text))
+			return m, copyToClipboard(text)
 		}
 	}
 	m.contextNote = t(m.loc, "copy.nothing")

@@ -168,8 +168,9 @@ func builtinSlashCommands() []slashCommand {
 		{Name: "name", Description: "set this conversation's name (shows the current one without an argument)", builtin: true, run: localName, Params: []slashParam{
 			{Name: "name", Kind: "string", Description: "the new session name"},
 		}},
-		// /copy puts the last assistant reply on the clipboard (OSC 52, the
-		// same path drag selection uses) — for pasting a reply out of band.
+		// /copy puts the last assistant reply on the clipboard (the same
+		// path drag selection uses, clipboard.go) — for pasting a reply out
+		// of band.
 		{Name: "copy", Description: "copy the last assistant reply to the clipboard", builtin: true, run: localCopy},
 		// Favorites are provider/model combos (favorites.go) stored as one
 		// ordered store document; ctrl+x rotates them.

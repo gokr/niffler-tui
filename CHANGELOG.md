@@ -14,6 +14,13 @@ project aims for [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   Modifier changes are detected on mouse movement, as supported by terminals.
 - Clean diagnostic records replay as display-only blocks without model messages.
 
+### Fixed
+
+- Drag selection and `/copy` fill the clipboard in terminals that ignore
+  OSC 52 (Apple's Terminal, GNOME Terminal): a local session also writes
+  through `pbcopy`, `wl-copy`, `xclip` or `xsel`. Over SSH, OSC 52 stays
+  the only path.
+
 ## [0.5.0] — 2026-10-07
 
 Mouse gestures over the transcript — ctrl+click opens URLs and file paths,
