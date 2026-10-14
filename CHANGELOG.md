@@ -6,6 +6,17 @@ project aims for [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.6.0] — 2026-10-14
+
+Shell escapes: two markers on the input line turn the terminal back into a
+terminal. `!<command>` runs a command in your own shell and keeps the output
+here, exactly as another terminal window would; `?<command>` runs the same
+command and hands its output to the model as a turn. `?` also works on the
+local commands themselves (`?/status`, `?/doctor deep`, `?/recall <words>`),
+which replaces the per-command `ask` argument — one marker now stands in for
+three different parsing dialects, and for every command rather than the three
+that had grown one.
+
 ### Added
 
 - **Shell escapes: `!<command>` runs locally, `?<command>` also asks.** Both
@@ -32,6 +43,9 @@ project aims for [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- The component version announced on the bus (`componentVersion`) now tracks
+  the release: it had stayed at `0.4.0` since the first commit, so the catalog
+  under-reported the client even for 0.5.0.
 - **The `ask` argument is gone** — `/status ask`, `/recall <words> ask` and
   `/doctor [deep] [ask]` are now `?/status`, `?/recall <words>` and
   `?/doctor deep`. One marker for every command replacing three per-command
