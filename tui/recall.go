@@ -1,9 +1,9 @@
 // /recall: search this conversation's canonical history through the recall
 // component's context_recall (mode: search) and render bounded hits — the
 // transcript's own grep for a human (the LLM reaches the same tool through
-// discover + invoke). `ask` hands the hits to the model as a user turn to
-// answer from, via the userMessage convention (docs/WIRE.md) that
-// applySlashResult already implements for registered commands.
+// discover + invoke). Asking about the hits is the "?" marker's job now
+// (ask.go): "?/recall <words>" runs this command and hands what it printed to
+// the model, exactly as it does for any other local command.
 //
 // The call is a direct bus call naming the conversation explicitly: no
 // lease is involved, and the scope stays this conversation unless the
@@ -19,17 +19,15 @@ import (
 	tea "charm.land/bubbletea/v2"
 )
 
-// localRecall handles /recall <words…> [ask]: search first, then render or
-// hand to the LLM. Argument parsing is free-form (the query is words, not
-// tokens): one standalone `ask` word, leading or trailing, sets the flag.
+// localRecall handles /recall <words…>: search and render the bounded hits.
 func localRecall(m model, cmd slashCommand, argument string) (tea.Model, tea.Cmd) {
 	if !m.connected {
 		m.contextNote = t(m.loc, "note.notConnected")
 		return m, nil
 	}
-	query, ask := recallQuery(argument)
+	query := strings.TrimSpace(argument)
 	if query == "" {
-		m.addBlock(blockError, "/recall: needs words to search for — /recall <words> [ask]")
+		m.addBlock(blockError, "/recall: needs words to search for — /recall <words>")
 		m.syncViewport(true)
 		return m, nil
 	}
@@ -41,24 +39,8 @@ func localRecall(m model, cmd slashCommand, argument string) (tea.Model, tea.Cmd
 		err := requestInto(m.comp, "recall", "context_recall",
 			map[string]any{"mode": "search", "query": query, "session": session},
 			&result)
-		if err == nil && ask {
-			result = recallAskPayload(result, query)
-		}
 		return slashResultMsg{Name: cmd.Name, Session: session, Result: result, Err: err}
 	}
-}
-
-// recallQuery splits an argument into the search words and the ask flag:
-// one standalone `ask` token, leading or trailing, is the flag (a query
-// that genuinely contains "ask" only loses it at the ends).
-func recallQuery(argument string) (query string, ask bool) {
-	fields := strings.Fields(argument)
-	if len(fields) > 0 && strings.EqualFold(fields[0], "ask") {
-		ask, fields = true, fields[1:]
-	} else if len(fields) > 1 && strings.EqualFold(fields[len(fields)-1], "ask") {
-		ask, fields = true, fields[:len(fields)-1]
-	}
-	return strings.Join(fields, " "), ask
 }
 
 // recallHitsText renders a context_recall mode:search result as the bounded
@@ -98,25 +80,4 @@ func recallHitsText(raw json.RawMessage) string {
 		fmt.Fprintf(&b, "\n  %s %s  %s", hit.ID, hit.Role, snip)
 	}
 	return b.String()
-}
-
-// recallAskPayload wraps a search result for the ask variant: `text` is the
-// human rendering (shown as the meta block), `userMessage` is the prompt that
-// enters the conversation as a user turn — applySlashResult's convention
-// path does the sending (or mid-turn steering), exactly as a registered
-// command's userMessage result would.
-func recallAskPayload(result json.RawMessage, query string) json.RawMessage {
-	hits := recallHitsText(result)
-	payload := map[string]any{
-		"text": hits,
-		"userMessage": "Use these context_recall hits from this conversation's " +
-			"history to answer the question. A hit id can be read in full with " +
-			"context_recall {\"mode\": \"full\", \"ref\": {\"source\": \"canonical\", \"id\": \"<id>\"}} " +
-			"when a snippet is not enough.\n\nQuestion: " + query + "\n\n" + hits,
-	}
-	raw, err := json.Marshal(payload)
-	if err != nil {
-		return result
-	}
-	return raw
 }

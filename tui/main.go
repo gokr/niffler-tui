@@ -568,6 +568,10 @@ type model struct {
 	contextNote    string
 	controlPending bool
 
+	// ask is the pending "?/command" ask (ask.go): the local command whose
+	// output should be handed to the model once it has been rendered.
+	ask askState
+
 	// cwd is the conversation workspace shown in the bottom row (loaded from
 	// the persisted conversation header).
 	cwd string
@@ -746,6 +750,7 @@ var (
 	toolCardStyle    = lipgloss.NewStyle()
 	metaStyle        = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
 	noticeStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("8")).Italic(true)
+	shellStyle       = lipgloss.NewStyle().Foreground(lipgloss.Color("2"))
 	errorStyle       = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("9"))
 	badgeBgStyle     = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("3"))
 	badgeAgentStyle  = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("6"))
@@ -1479,6 +1484,35 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			content := strings.TrimSpace(m.input.Value())
 			atts := m.attachments
 			if content == "" && len(atts) == 0 {
+				return m, nil
+			}
+			// "?/command" asks about a local command's output (ask.go); it is not a
+			// shell escape, and its own dispatch owns the meta lines it prints.
+			if slashCommand, ok := slashAsk(content); ok && len(atts) == 0 {
+				m.input.SetValue("")
+				if m.addHistory(content) {
+					appendHistoryEntry(m.historyFile, content)
+				}
+				m.histIdx = -1
+				return m.executeSlashAsk(slashCommand)
+			}
+			// Shell escapes (!cmd, ?cmd) run locally and never reach core: they
+			// are the human's own command line, like another terminal (bang.go).
+			if command, ask, ok := shellEscape(content); ok && len(atts) == 0 {
+				m.input.SetValue("")
+				if m.addHistory(content) {
+					appendHistoryEntry(m.historyFile, content)
+				}
+				m.histIdx = -1
+				return m.shellEscapeStart(command, ask)
+			}
+			// "!/command" is neither: "!" is the shell marker, so the slash
+			// registry never sees it and it would otherwise be sent to the model
+			// as prompt text.
+			if strings.HasPrefix(content, "!/") && len(atts) == 0 {
+				m.input.SetValue("")
+				m.addBlock(blockError, t(m.loc, "ask.notShell", content))
+				m.syncViewport(true)
 				return m, nil
 			}
 			if strings.HasPrefix(content, "/") && len(atts) == 0 {
@@ -2355,6 +2389,21 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case thinkingEffortMsg:
 		m.applyThinkingEffort(msg)
+
+	case askResultMsg:
+		// A "?/command" ask wraps the command's own result command (ask.go):
+		// the inner message is handled exactly as it would have been unwrapped,
+		// then the ask closes over the output it rendered.
+		updated, cmd := m.handleAskResult(msg, &cmds)
+		m = updated.(model)
+		cmds = append(cmds, cmd)
+
+	case shellOutputMsg:
+		// A finished shell escape (!cmd, ?cmd — bang.go). The command ran in
+		// this process's own shell, so nothing here came off the bus.
+		updated, cmd := m.handleShellOutput(msg)
+		m = updated.(model)
+		cmds = append(cmds, cmd)
 
 	case compactResultMsg:
 		if msg.Session != m.session {

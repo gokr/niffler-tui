@@ -6,8 +6,38 @@ project aims for [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- **Shell escapes: `!<command>` runs locally, `?<command>` also asks.** Both
+  run the command in your own shell (`$SHELL -c`) in the conversation's
+  workspace and print the output as a dim transcript block; `?` then hands
+  that output to the model as a turn (steering into a live turn, dropping the
+  prompt if the conversation was switched while the command ran). Client-side
+  by construction: no bus traffic, no approval gate (approvals gate the
+  model's tool calls), no connection needed, and `NIF_TUI=1` is set in the
+  command's environment. Output is capped at 8 KB with an explicit truncation
+  line, and a timeout bounds a hung command. A bare `!`/`?` stays an ordinary
+  prompt.
+- **`?/<command>` asks about a local command's output** — `?/status`,
+  `?/doctor deep`, `?/recall <words>`, `?/info`, `?/components` … run the
+  command exactly as `/command` does, then send what it printed (capped the
+  same way) to the model as a turn. The mechanism is one hook, not one per
+  command: the ask records where the command's output starts and closes once
+  it has landed, whether the command prints synchronously or answers through
+  its own message later; a result that carries the `userMessage` convention
+  (MCP prompt templates, `/doctor`'s interpretation prompt) keeps its own
+  wording and closes the ask itself. Commands that open a picker or form
+  (`/session`, `/theme`, `/profile`) have no output text and refuse the
+  marker.
+
 ### Changed
 
+- **The `ask` argument is gone** — `/status ask`, `/recall <words> ask` and
+  `/doctor [deep] [ask]` are now `?/status`, `?/recall <words>` and
+  `?/doctor deep`. One marker for every command replacing three per-command
+  dialects (`ask` was parsed three different ways, and `/status ask`
+  re-implemented the turn start that `applySlashResult` already owns). `!/`
+  is refused with a hint instead of being sent to the model as prompt text.
 - Batched read cards show an item count or single target instead of `?`.
 - Pending `Steer: ` labels clear on the harness's model-dispatch acknowledgement.
 - Ctrl-hover underlines clickable URL/path tokens with mouse tracking enabled.

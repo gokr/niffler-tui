@@ -54,6 +54,11 @@ type slashCommand struct {
 	aliasOf     string           // built-in synonym of another command — never listed in /help
 	run         localCommandFunc // UI-local handler; nil for plugin-registered commands
 	subcommands []slashSubcommand
+	// interactive marks a command that can open a picker or a form. Such a
+	// command has no output text to hand to the model, so "?/command" refuses
+	// it up front instead of opening the UI and asking about a blank screen
+	// (ask.go). Declared here, where the command is declared once.
+	interactive bool
 }
 
 // localCommandFunc handles a UI-local command. cmd is the invoking registry
@@ -126,42 +131,42 @@ func builtinSlashCommands() []slashCommand {
 		{Name: "newsession", Description: "start a new conversation", builtin: true, aliasOf: "new", run: localNew, Params: []slashParam{
 			{Name: "id", Kind: "string", Description: "optional conversation id"},
 		}},
-		{Name: "session", Description: "switch conversation", builtin: true, run: localSession, Params: []slashParam{
+		{Name: "session", Description: "switch conversation", builtin: true, interactive: true, run: localSession, Params: []slashParam{
 			{Name: "id", Kind: "string", Description: "conversation id",
 				Source: &slashSource{Tool: "store.list", Args: map[string]any{"kind": "conversation"}, Field: "id"}},
 		}},
-		{Name: "sessions", Description: "switch conversation", builtin: true, aliasOf: "session", run: localSession, Params: []slashParam{
+		{Name: "sessions", Description: "switch conversation", builtin: true, interactive: true, aliasOf: "session", run: localSession, Params: []slashParam{
 			{Name: "id", Kind: "string", Description: "conversation id",
 				Source: &slashSource{Tool: "store.list", Args: map[string]any{"kind": "conversation"}, Field: "id"}},
 		}},
 		// The first argument is a nickname (completed from provider_list) or a
 		// declared subcommand; only the nickname feeds completion, so Tab keeps
 		// offering providers while /help and validation cover `strip`.
-		{Name: "provider", Description: "choose the global provider", builtin: true, run: localProvider, subcommands: providerSubcommands, Params: []slashParam{
+		{Name: "provider", Description: "choose the global provider", builtin: true, interactive: true, run: localProvider, subcommands: providerSubcommands, Params: []slashParam{
 			{Name: "nickname", Kind: "string", Description: "provider nickname, environment, or strip [on|off]",
 				Source: &slashSource{Tool: "provider.provider_list", Args: map[string]any{}, Field: "nickname"}},
 		}},
-		{Name: "providers", Description: "choose the global provider", builtin: true, aliasOf: "provider", run: localProvider, subcommands: providerSubcommands, Params: []slashParam{
+		{Name: "providers", Description: "choose the global provider", builtin: true, interactive: true, aliasOf: "provider", run: localProvider, subcommands: providerSubcommands, Params: []slashParam{
 			{Name: "nickname", Kind: "string",
 				Source: &slashSource{Tool: "provider.provider_list", Args: map[string]any{}, Field: "nickname"}},
 		}},
-		{Name: "model", Description: "choose this conversation's model", builtin: true, run: localModel, Params: []slashParam{
+		{Name: "model", Description: "choose this conversation's model", builtin: true, interactive: true, run: localModel, Params: []slashParam{
 			{Name: "id", Kind: "string", Description: "model id or 'default'"},
 		}},
-		{Name: "models", Description: "choose this conversation's model", builtin: true, aliasOf: "model", run: localModel, Params: []slashParam{
+		{Name: "models", Description: "choose this conversation's model", builtin: true, interactive: true, aliasOf: "model", run: localModel, Params: []slashParam{
 			{Name: "id", Kind: "string", Description: "model id or 'default'"},
 		}},
-		{Name: "connect", Description: "store a provider connection", builtin: true, run: localConnect},
-		{Name: "lsp", Description: "manage language-server registry entries", builtin: true, run: localLsp, subcommands: lspSubcommands, Params: []slashParam{
+		{Name: "connect", Description: "store a provider connection", builtin: true, interactive: true, run: localConnect},
+		{Name: "lsp", Description: "manage language-server registry entries", builtin: true, interactive: true, run: localLsp, subcommands: lspSubcommands, Params: []slashParam{
 			{Name: "subcommand", Kind: "enum", Values: subcommandNames(lspSubcommands)},
 		}},
-		{Name: "processes", Description: "show and manage background processes", builtin: true, run: localProcesses},
-		{Name: "mcp", Description: "manage external MCP servers", builtin: true, run: localMcp, subcommands: mcpSubcommands, Params: []slashParam{
+		{Name: "processes", Description: "show and manage background processes", builtin: true, interactive: true, run: localProcesses},
+		{Name: "mcp", Description: "manage external MCP servers", builtin: true, interactive: true, run: localMcp, subcommands: mcpSubcommands, Params: []slashParam{
 			{Name: "subcommand", Kind: "enum", Values: subcommandNames(mcpSubcommands)},
 			{Name: "name", Kind: "string", Description: "server name",
 				Source: &slashSource{Tool: "mcp.mcp_servers", Args: map[string]any{}, Field: "name"}},
 		}},
-		{Name: "status", Description: "show provider/model/context details; add ask to have the LLM interpret it", builtin: true, run: localStatus},
+		{Name: "status", Description: "show provider/model/context details", builtin: true, run: localStatus},
 		// /name rewrites the conversation header's title (core's title op),
 		// replacing the auto-truncated first-message title — the /session
 		// browser's search matches it.
@@ -184,9 +189,8 @@ func builtinSlashCommands() []slashCommand {
 			{Name: "id", Kind: "string", Description: "conversation id (default: this one)",
 				Source: &slashSource{Tool: "store.list", Args: map[string]any{"kind": "conversation"}, Field: "id"}},
 		}},
-		{Name: "doctor", Description: "run health checks; add ask to have the LLM interpret the report", Component: "core", Tool: "doctor", builtin: true, run: localDoctor, Params: []slashParam{
+		{Name: "doctor", Description: "run health checks", Component: "core", Tool: "doctor", builtin: true, run: localDoctor, Params: []slashParam{
 			{Name: "deep", Kind: "bool", Description: "run thorough live probes"},
-			{Name: "ask", Kind: "bool", Description: "ask the LLM to interpret the report"},
 		}},
 		{Name: "export", Description: "export the current provider request as pretty-printed JSON; optionally write it to a file", builtin: true, run: localExport, Params: []slashParam{
 			{Name: "path", Kind: "string", Description: "optional output path, relative to the conversation workspace"},
@@ -201,9 +205,8 @@ func builtinSlashCommands() []slashCommand {
 		{Name: "discover", Description: "append component schemas to this conversation", builtin: true, run: localDiscover, Params: []slashParam{
 			{Name: "target", Kind: "string", Description: "component name, or tool=NAME"},
 		}},
-		{Name: "recall", Description: "search this conversation's history; add ask to have the LLM answer from the hits", builtin: true, run: localRecall, Params: []slashParam{
+		{Name: "recall", Description: "search this conversation's history", builtin: true, run: localRecall, Params: []slashParam{
 			{Name: "query", Kind: "string", Description: "words to find, matched as token prefixes"},
-			{Name: "ask", Kind: "bool", Description: "ask the LLM to answer from the hits"},
 		}},
 		// Snippets are alt+drag selections stored as kind "snippet" store
 		// documents (snippets.go); the model reads the same documents via
@@ -212,14 +215,14 @@ func builtinSlashCommands() []slashCommand {
 			{Name: "subcommand", Kind: "enum", Values: []string{"show", "ins", "del"}},
 			{Name: "n", Kind: "string", Description: "entry number from the list (1 = newest)"},
 		}},
-		{Name: "profile", Description: "choose tool profile for new conversations; default clears", builtin: true, run: localProfile},
+		{Name: "profile", Description: "choose tool profile for new conversations; default clears", builtin: true, interactive: true, run: localProfile},
 		{Name: "mouse", Description: "wheel scrolling and drag selection", builtin: true, run: localMouse, Params: []slashParam{
 			{Name: "state", Kind: "enum", Values: []string{"on", "off"}},
 		}},
 		{Name: "cards", Description: "background shading behind tool runs", builtin: true, run: localCards, Params: []slashParam{
 			{Name: "state", Kind: "enum", Values: []string{"on", "off"}},
 		}},
-		{Name: "theme", Description: "choose the UI color theme", builtin: true, run: localTheme, Params: []slashParam{
+		{Name: "theme", Description: "choose the UI color theme", builtin: true, interactive: true, run: localTheme, Params: []slashParam{
 			{Name: "name", Kind: "string", Description: "theme name (empty opens the picker)", Values: themeNames},
 		}},
 		{Name: "locale", Description: "switch the UI language", builtin: true, run: localLocale, Params: []slashParam{
@@ -804,6 +807,10 @@ func (m *model) applySlashResult(msg slashResultMsg) tea.Cmd {
 	// message (MCP prompt templates). The guard matches the web UI: a
 	// session switch while the tool call was in flight drops the result.
 	if message := slashUserMessage(msg.Result); message != "" {
+		// The command brought its own prompt, so a "?/command" ask (ask.go)
+		// closes here instead of synthesizing one: the command's wording wins,
+		// and the model is asked exactly once.
+		m.ask = askState{}
 		m.addBlock(blockMeta, formatSlashResult(msg.Result))
 		if msg.Session != m.session {
 			m.addBlock(blockError, t(m.loc, "slash.conversationChanged"))

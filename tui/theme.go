@@ -708,6 +708,9 @@ func applyTheme(name string) bool {
 	}
 	metaStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(th.meta))
 	noticeStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(th.meta)).Italic(true)
+	// shellStyle colors shell-escape output (!cmd, ?cmd): terminal text, not
+	// conversation content (bang.go).
+	shellStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(th.code))
 	errorStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(th.error))
 	approvalBoxStyle = lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).

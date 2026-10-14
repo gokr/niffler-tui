@@ -276,20 +276,6 @@ func localModel(m model, cmd slashCommand, argument string) (tea.Model, tea.Cmd)
 
 func localStatus(m model, cmd slashCommand, argument string) (tea.Model, tea.Cmd) {
 	report := m.detailedRuntimeStatus()
-	if strings.EqualFold(strings.TrimSpace(argument), "ask") {
-		prompt := "Interpret this Niffler /status report and explain any concerns or useful next steps:\n\n" + report
-		m.addBlock(blockMeta, report)
-		m.busy = true
-		m.hadAssistant = false
-		m.assistantIdx = -1
-		m.thinkingIdx = -1
-		m.setStreaming(false)
-		m.roundClosed = false
-		m.addBlock(blockUser, prompt)
-		m.layout()
-		m.syncViewport(true)
-		return m, tea.Batch(m.sendTurn(prompt, nil), m.armSpinner())
-	}
 	m.addBlock(blockMeta, report)
 	m.syncViewport(true)
 	return m, nil

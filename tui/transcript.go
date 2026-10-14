@@ -67,6 +67,10 @@ const (
 	blockError
 	blockNotice
 	blockDiagnostics
+	// blockShell is a shell escape's output (!command, ?command) — terminal
+	// text, dimmed, and never part of the conversation unless its "?" marker
+	// sent a copy of it to the model as a turn.
+	blockShell
 )
 
 type transcriptBlock struct {
@@ -275,6 +279,8 @@ func (m *model) renderPiece(i int) string {
 			return m.renderToolRun(block.run, detail)
 		}
 		return toolStyle.Render("tool> " + block.text)
+	case blockShell:
+		return shellStyle.Render(block.text)
 	case blockDiagnostics:
 		return m.renderDiagnostics(block)
 	case blockMeta:

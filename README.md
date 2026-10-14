@@ -158,8 +158,7 @@ Local commands are handled by the TUI and are never sent to the model:
   started via bash's run_in_background or process_start): a status-line
   `bg N` badge while anything runs, enter peeks the output tail without
   touching the model's drain cursor, d kills with a two-stage confirm
-- `/status [ask]` — detailed effective provider/model/context provenance and usage;
-  `ask` sends the report to the LLM for interpretation
+- `/status` — detailed effective provider/model/context provenance and usage
 - `/info [id]` — conversation statistics computed from the store's message
   documents: message counts per role, per-tool call counts and tool-result
   sizes (total, median, largest, plus the biggest offenders with previews),
@@ -175,8 +174,7 @@ Local commands are handled by the TUI and are never sent to the model:
   one ordered store document (kind `modelfavorite`); `<n>` applies an entry
   to this conversation, and `Ctrl+X` rotates to the next favorite in order
   (wrapping; between turns, like `/model`)
-- `/doctor [deep] [ask]` — render a readable Markdown health table;
-  `deep` runs live probes and `ask` sends the report to the LLM for interpretation
+- `/doctor [deep]` — render a readable Markdown health table; `deep` runs live probes
 - `/export [path]` — export the exact current provider-facing request as
   pretty-printed JSON; without a path it renders the JSON in the transcript
   (capped), otherwise it writes the file relative to the conversation workspace
@@ -198,10 +196,9 @@ Local commands are handled by the TUI and are never sent to the model:
   can actually call, per component, with each tool's exposure state
 - `/discover <component>|tool=NAME` — expose a component's tools (or one named
   tool) to this conversation, so the model can call them directly
-- `/recall <words…> [ask]` — search this conversation's whole history (the
+- `/recall <words…>` — search this conversation's whole history (the
   ranked context_recall lane over the store's search index) and show bounded
-  one-line hits with their message ids; `ask` hands the hits to the model as a
-  user turn to answer from. The transcript's own grep for a human.
+  one-line hits with their message ids. The transcript's own grep for a human.
 - `/snippets [show|ins|del <n>]` — the snippet collection gathered with
   alt+drag (1 = newest). `show` prints the full text, `ins` drops it into
   the input, `del` removes an entry. Snippets are store documents (kind
@@ -263,6 +260,39 @@ Local commands are handled by the TUI and are never sent to the model:
 Tab completion works for command names and, where a command declares it, for
 argument values (inline candidates, or values fetched lazily from the
 declared source tool). Unknown commands suggest near-miss names.
+
+### Shell escapes
+
+The two shell markers run a command in your own shell — `$SHELL -c`, in the
+conversation's workspace, with this process's environment and `NIF_TUI=1`
+set — and print its output in the transcript as a dim block. They are the
+human's own command line, so they need no connection, raise no approval gate
+(approvals gate the *model's* tool calls, not your keystroke) and are never
+sent to the harness; interactive programs (`vim`, `less`, `ssh` into
+something) are not supported, because the command has no terminal attached.
+Under a remote `NIF_NATS_URL` the command runs on the machine running the
+TUI, not on the harness's machine.
+
+- `!<command>` — output stays here, like typing it in another terminal
+  (`!git status`, `!make test`).
+- `?<command>` — the same command, and its output is then sent to the model
+  as a turn: `?git status` runs locally and asks about what came back. If a
+  turn is already running the output steers into it instead; if the
+  conversation is switched while the command runs, the prompt is dropped
+  (the output stays visible, so you can re-ask it).
+
+Output is capped at 8 KB with an explicit `… N bytes truncated` line, and a
+timeout bounds a hung command. A bare `!` or `?` is an ordinary prompt, but
+otherwise the marker always wins over prose: a line that starts with `!` or
+`?` is an escape, so a sentence meant for the model starts without it.
+
+`?` also works on the local commands themselves: `?/status`, `?/doctor deep`,
+`?/recall <words>`, `?/info`, `?/components` … run the command exactly as
+`/command` does and then send what it printed to the model, capped the same
+way. That is the one way to ask about a command's output — the per-command
+`ask` argument (`/status ask`, `/recall … ask`, `/doctor … ask`) is gone.
+Commands that open a picker or a form (`/session`, `/theme`, `/profile`) have
+no output text and refuse the marker, and `!` never runs a slash command.
 
 Selectors use `/` to filter, arrows to move, `Enter` to choose, and `Esc` to
 return to chat. The provider form masks its API-key field; credentials
