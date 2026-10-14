@@ -6,6 +6,14 @@ project aims for [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.6.1] — 2026-10-14
+
+The two marker lines now actually appear in `/help`. They were added to the
+message catalogs but never rendered: `/help` walks the slash-command registry,
+and `!`/`?` are deliberately not registry entries, so nothing printed them —
+the strings were dead catalog keys that looked present in the source. A test
+now renders `/help` in all three locales and asserts both lines are there.
+
 ## [0.6.0] — 2026-10-14
 
 Shell escapes: two markers on the input line turn the terminal back into a

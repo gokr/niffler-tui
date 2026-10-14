@@ -598,6 +598,11 @@ func localQuit(m model, cmd slashCommand, argument string) (tea.Model, tea.Cmd) 
 
 func localHelp(m model, cmd slashCommand, argument string) (tea.Model, tea.Cmd) {
 	lines := []string{t(m.loc, "help.title")}
+	// The two input markers are not registry entries (they are not slash
+	// commands), so their lines are written here rather than looked up per
+	// command — and they head the list, because they are what a human
+	// reading /help for the first time is looking for.
+	lines = append(lines, t(m.loc, "help.bang"), t(m.loc, "help.slashAsk"))
 	for _, builtin := range m.slash.helpCommands() {
 		lines = append(lines, m.helpLine(builtin))
 	}

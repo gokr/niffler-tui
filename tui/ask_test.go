@@ -203,3 +203,23 @@ func TestSlashAskRefusesShellMarker(tt *testing.T) {
 		tt.Fatalf("last block = %#v", last)
 	}
 }
+
+// TestHelpListsShellMarkers pins the marker lines into /help. They are the one
+// pair of input syntaxes that are not registry commands, so nothing else would
+// notice if their lines stopped being rendered (they were dead catalog keys
+// until this test existed).
+func TestHelpListsShellMarkers(tt *testing.T) {
+	for _, loc := range []Locale{LocaleEN, LocaleZH, LocaleZHTW} {
+		m := newTestModel()
+		m.loc = loc
+		updated, _ := m.executeLocalCommand("/help")
+		m = updated.(model)
+		last := m.blocks[len(m.blocks)-1]
+		for _, key := range []string{"help.bang", "help.slashAsk"} {
+			want := t(loc, key)
+			if !strings.Contains(last.text, want) {
+				tt.Errorf("%s: /help does not render %s:\n%s", loc, key, last.text)
+			}
+		}
+	}
+}
