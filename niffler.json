@@ -11,6 +11,7 @@
       "sources": [
         "tui/approvals.go",
         "tui/agents.go",
+        "tui/agentdefs.go",
         "tui/alias.go",
         "tui/ask.go",
         "tui/attach.go",

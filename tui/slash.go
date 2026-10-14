@@ -216,6 +216,11 @@ func builtinSlashCommands() []slashCommand {
 			{Name: "n", Kind: "string", Description: "entry number from the list (1 = newest)"},
 		}},
 		{Name: "toolset", Description: "choose toolset for new conversations; default clears", builtin: true, interactive: true, run: localProfile},
+		// Agent definitions are the birth identity for conversations started
+		// from here on: a persona to speak as, a toolset, and the model and
+		// budgets that freeze with them. Client state like /toolset — a
+		// selection never rewrites a conversation that already exists.
+		{Name: "agent", Description: "choose the agent definition for new conversations; none clears", builtin: true, interactive: true, run: localAgent},
 		{Name: "profile", Description: "legacy alias for /toolset", builtin: true, interactive: true, aliasOf: "toolset", run: localProfile},
 		{Name: "mouse", Description: "wheel scrolling and drag selection", builtin: true, run: localMouse, Params: []slashParam{
 			{Name: "state", Kind: "enum", Values: []string{"on", "off"}},

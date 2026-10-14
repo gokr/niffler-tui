@@ -203,6 +203,13 @@ Local commands are handled by the TUI and are never sent to the model:
   alt+drag (1 = newest). `show` prints the full text, `ins` drops it into
   the input, `del` removes an entry. Snippets are store documents (kind
   `snippet`), so the model can recall them too via the store's tools
+- `/agent [name|none]` — the agent definition a NEW conversation is born with:
+  the persona it speaks as, the toolset it starts with, and the model, thinking
+  and budgets that freeze with it. `none` clears the choice, and a bare
+  `/agent` opens a picker showing each definition's building blocks. Client
+  state like `/toolset` — a selection applies to conversations created from
+  here on and never rewrites one that already exists (the harness refuses
+  that: an identity is fixed at birth). The active choice shows in the header
 - `/toolset [name|default]` — toolset applied to new conversations;
   `default` clears it, and a bare `/toolset` opens a picker listing the stored
   toolsets with the current choice marked and each one's resolved tool count

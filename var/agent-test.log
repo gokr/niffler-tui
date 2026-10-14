@@ -1,0 +1,2 @@
+go test  ./tui
+ok  	github.com/gokr/niffler-tui/tui	13.467s

@@ -1,0 +1,4 @@
+go build  -o bin/niffler-tui ./tui
+go test  ./tui
+ok  	github.com/gokr/niffler-tui/tui	12.681s
+go vet  ./tui

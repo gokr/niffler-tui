@@ -400,6 +400,7 @@ type model struct {
 	// Profile selection is client state for new conversations; bootstrap
 	// loads only the selected conversation's persisted controls.
 	toolProfile string
+	agent       string // birth identity for conversations started from here on
 	// UI identity + lease (core's ui registry): the component name is
 	// "tui-<hex>" so approval routing is private to this terminal, and the
 	// registry number is the "Niffler 1" header label. launchDir keys the
@@ -743,6 +744,7 @@ var (
 	thinkLevelStyle  = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("5"))
 	toolLevelStyle   = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("3"))
 	effortStyle      = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("4"))
+	agentStyle       = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("5"))
 	linkStyle        = lipgloss.NewStyle().Foreground(lipgloss.Color("12")).Underline(true)
 	codeStyle        = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("2"))
 	activeSlashStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("0")).Background(lipgloss.Color("7"))
@@ -1095,6 +1097,14 @@ func (m model) sendTurn(content string, atts []attachment) tea.Cmd {
 		// fixed, so cwd would be refused as immutable).
 		if m.sessionNeedsCreate {
 			args["cwd"] = m.cwd
+			// Birth-only: the agent identity is set when the conversation is
+			// born, never sent again. The harness refuses a DIFFERENT agent on
+			// an existing conversation, so re-sending a later selection would
+			// turn a UI preference into a failed turn — and the whole point of
+			// a definition is that it freezes at birth.
+			if m.agent != "" {
+				args["agent"] = m.agent
+			}
 		}
 		result, err := m.sessionRequest(args)
 		if err != nil && m.sessionNeedsCreate {
@@ -2115,6 +2125,18 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case profileDeletedMsg:
 		return m.applyProfileDeleted(msg)
+
+	case agentDefsMsg:
+		if m.mode != modeAgents {
+			return m, nil
+		}
+		if msg.Err == nil {
+			m.openAgentSelectorWith(msg.Agents)
+		} else {
+			m.contextNote = msg.Err.Error()
+			m.mode = modeChat
+			m.layout()
+		}
 
 	case profilesMsg:
 		if m.mode != modeProfiles {
@@ -3258,7 +3280,11 @@ func (m model) View() tea.View {
 		// failed llm_resolve must not present stale state as current.
 		runtimeLine += errorStyle.Render(" !")
 	}
-	headerLine := header + headerSep + thinkChip + headerSep + toolChip + headerSep + effortChip + headerSep + runtimeLine
+	agentChip := ""
+	if m.agent != "" {
+		agentChip = agentStyle.Render(t(m.loc, "chip.agent", m.agent)) + headerSep
+	}
+	headerLine := header + headerSep + thinkChip + headerSep + toolChip + headerSep + effortChip + headerSep + agentChip + runtimeLine
 	// Even a normal session id plus four chips can outgrow a narrow terminal.
 	// The viewport reserves the last column; the header must honor it too or
 	// its implicit terminal wrap shifts every row, including the bottom status.
@@ -3289,12 +3315,15 @@ func (m model) View() tea.View {
 		parts := []string{headerLine}
 		switch m.mode {
 		case modeProviders, modeCatalogProviders, modeModels, modeSessions,
-			modeMcp, modeMcpSearch, modeThemes, modeProfiles, modeLsp, modeProcesses:
+			modeMcp, modeMcpSearch, modeThemes, modeProfiles, modeAgents, modeLsp, modeProcesses:
 			control = m.selector.list.View()
 			parts = append(parts, control)
 			footer := t(m.loc, "footer.filterChoose")
 			if m.mode == modeSessions {
 				footer = t(m.loc, "footer.sessions")
+			}
+			if m.mode == modeAgents {
+				footer = t(m.loc, "footer.filterSwitch")
 			}
 			if m.mode == modeProfiles {
 				if m.profileConfirmDelete != "" {

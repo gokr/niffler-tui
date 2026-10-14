@@ -29,6 +29,7 @@ const (
 	modeProcessesPeek
 	modeThemes
 	modeProfiles
+	modeAgents
 	modeProfileForm
 	modeBgPeek
 )
@@ -73,6 +74,8 @@ const (
 	selectorProfile
 	selectorProfileDefault
 	selectorProfileNew
+	selectorAgentDef
+	selectorAgentDefNone
 )
 
 type selectorItem struct {
@@ -601,5 +604,53 @@ func lspSelectorItems(loc Locale, servers []lspServerSummary, confirmDelete stri
 		id:   "__lsp_add__", title: t(loc, "selector.lspAdd"),
 		description: t(loc, "selector.lspAddDesc"),
 	})
+	return items
+}
+
+// agentSelectorItems builds the /agent picker: the "no agent" entry first
+// (which clears the birth identity for conversations started from here on),
+// then every stored agent definition with the buildings blocks it names, so a
+// choice is recognizable without opening the document. The list order is the
+// store's id order — stable across restarts, like every other picker here.
+func agentDefSelectorItems(loc Locale, current string, agents []agentDefSummary) []list.Item {
+	none := t(loc, "selector.agentNone")
+	if current == "" {
+		none = "● " + none
+	}
+	items := make([]list.Item, 0, len(agents)+1)
+	items = append(items, selectorItem{
+		kind: selectorAgentDefNone, id: "", title: none,
+		description: t(loc, "selector.agentNoneDesc"),
+	})
+	for _, agent := range agents {
+		title := agent.Name
+		if agent.Name == current {
+			title = "● " + title
+		}
+		var parts []string
+		if agent.Persona != "" {
+			parts = append(parts, t(loc, "selector.agentPersona", agent.Persona))
+		}
+		if agent.Toolset != "" {
+			parts = append(parts, t(loc, "selector.agentToolset", agent.Toolset))
+		}
+		if agent.Model != "" {
+			parts = append(parts, agent.Model)
+		}
+		if agent.Thinking != "" {
+			parts = append(parts, t(loc, "chip.effort", agent.Thinking))
+		}
+		desc := strings.Join(parts, " · ")
+		if desc == "" {
+			desc = t(loc, "selector.agentBare")
+		}
+		if agent.Note != "" {
+			desc += " — " + agent.Note
+		}
+		items = append(items, selectorItem{
+			kind: selectorAgentDef, id: agent.Name, title: title,
+			description: desc, payload: agent,
+		})
+	}
 	return items
 }

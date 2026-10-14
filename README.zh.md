@@ -156,6 +156,10 @@ Niffler 的 builder 不使用这个 `go.mod`；它创建隔离的模块，replac
 - `/snippets [show|ins|del <n>]` —— alt+拖拽收集的片段列表（1 = 最新）。
   `show` 显示全文，`ins` 插入输入框，`del` 删除一条。片段以 store 文档
   （kind `snippet`）存放，模型也能通过 store 的工具取回它们
+- `/agent [名称|none]` —— 新对话出生时的 agent 定义：它说话所用的 persona、起始工具集，
+  以及随之冻结的模型、思考深度和预算。`none` 清除选择，不带参数的 `/agent` 打开选择器，
+  显示每个定义的组成。与 `/toolset` 一样是客户端状态：选择只对之后新建的对话生效，
+  绝不改写已存在的对话（harness 会拒绝——身份在出生时固定）。当前选择显示在标题栏
 - `/toolset [名称|default]` —— 应用于新会话的工具配置；`default` 清除它，
   不带参数的 `/toolset` 打开选择器，列出已存储的配置，标出当前选择与每个
   配置解析出的工具数。选择器中的 `＋ New profile…` 打开表单，在存储前
