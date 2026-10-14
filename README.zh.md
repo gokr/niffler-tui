@@ -156,8 +156,8 @@ Niffler 的 builder 不使用这个 `go.mod`；它创建隔离的模块，replac
 - `/snippets [show|ins|del <n>]` —— alt+拖拽收集的片段列表（1 = 最新）。
   `show` 显示全文，`ins` 插入输入框，`del` 删除一条。片段以 store 文档
   （kind `snippet`）存放，模型也能通过 store 的工具取回它们
-- `/profile [名称|default]` —— 应用于新会话的工具配置；`default` 清除它，
-  不带参数的 `/profile` 打开选择器，列出已存储的配置，标出当前选择与每个
+- `/toolset [名称|default]` —— 应用于新会话的工具配置；`default` 清除它，
+  不带参数的 `/toolset` 打开选择器，列出已存储的配置，标出当前选择与每个
   配置解析出的工具数。选择器中的 `＋ New profile…` 打开表单，在存储前
   对照实时目录校验每个选择器：裸选择器命名组件，单个工具写作
   `component.tool`（如 `edit.read`，而非 `read`），`-tool` 表示排除。

@@ -339,7 +339,7 @@ func helpText(t *testing.T, m model) string {
 }
 
 // TestHelpListsEveryBuiltin is the regression for /components, /discover and
-// /profile missing from /help: the listing is generated from the registry,
+// /toolset missing from /help: the listing is generated from the registry,
 // so every registered built-in that is not an explicit alias must appear.
 func TestHelpListsEveryBuiltin(tt *testing.T) {
 	m := newTestModel()
@@ -369,8 +369,8 @@ func TestHelpListsEveryBuiltin(tt *testing.T) {
 			tt.Errorf("catalog is missing help.%s", cmd.Name)
 		}
 	}
-	// /components, /discover and /profile are the ones that disappeared.
-	for _, name := range []string{"/components", "/discover", "/profile"} {
+	// /components, /discover and /toolset are the ones that disappeared.
+	for _, name := range []string{"/components", "/discover", "/toolset"} {
 		if !strings.Contains(text, name) {
 			tt.Errorf("/help is missing %s\n%s", name, text)
 		}
@@ -512,7 +512,7 @@ func TestPluginCommandDispatch(t *testing.T) {
 func TestAliasDispatch(t *testing.T) {
 	aliases := map[string]string{
 		"?": "help", "newsession": "new", "providers": "provider",
-		"models": "model", "sessions": "session",
+		"models": "model", "sessions": "session", "profile": "toolset",
 	}
 	for alias, canonical := range aliases {
 		entry, ok := builtinCommand(alias)

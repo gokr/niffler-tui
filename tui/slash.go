@@ -215,7 +215,8 @@ func builtinSlashCommands() []slashCommand {
 			{Name: "subcommand", Kind: "enum", Values: []string{"show", "ins", "del"}},
 			{Name: "n", Kind: "string", Description: "entry number from the list (1 = newest)"},
 		}},
-		{Name: "profile", Description: "choose tool profile for new conversations; default clears", builtin: true, interactive: true, run: localProfile},
+		{Name: "toolset", Description: "choose toolset for new conversations; default clears", builtin: true, interactive: true, run: localProfile},
+		{Name: "profile", Description: "legacy alias for /toolset", builtin: true, interactive: true, aliasOf: "toolset", run: localProfile},
 		{Name: "mouse", Description: "wheel scrolling and drag selection", builtin: true, run: localMouse, Params: []slashParam{
 			{Name: "state", Kind: "enum", Values: []string{"on", "off"}},
 		}},

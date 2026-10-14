@@ -60,6 +60,8 @@ that had grown one.
   dialects (`ask` was parsed three different ways, and `/status ask`
   re-implemented the turn start that `applySlashResult` already owns). `!/`
   is refused with a hint instead of being sent to the model as prompt text.
+- `/toolset` replaces `/profile` for selecting and managing tool visibility;
+  `/profile` remains a command alias. Requires the harness's `toolset` API.
 - Batched read cards show an item count or single target instead of `?`.
 - Pending `Steer: ` labels clear on the harness's model-dispatch acknowledgement.
 - Ctrl-hover underlines clickable URL/path tokens with mouse tracking enabled.

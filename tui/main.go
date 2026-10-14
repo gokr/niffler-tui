@@ -1070,7 +1070,7 @@ func (m model) sendTurn(content string, atts []attachment) tea.Cmd {
 	return func() tea.Msg {
 		args := map[string]any{
 			"sessionId": m.session,
-			"profile":   m.toolProfile,
+			"toolset":   m.toolProfile,
 			"content":   content,
 			// Always include the key: empty explicitly clears a previously
 			// persisted conversation override after a provider/default change.
