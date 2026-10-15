@@ -31,6 +31,7 @@
         "tui/info.go",
         "tui/instances.go",
         "tui/instance_transport.go",
+        "tui/instance_claim.go",
         "tui/instance_launch.go",
         "tui/instance_switch.go",
         "tui/niffler.go",

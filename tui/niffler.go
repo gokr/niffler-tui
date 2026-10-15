@@ -1,7 +1,6 @@
 package main
 
 import (
-	"context"
 	"fmt"
 	"strings"
 
@@ -9,11 +8,17 @@ import (
 )
 
 type instanceSwitchMsg struct {
-	name string
-	err  error
+	name  string
+	claim *instanceClaim
+	err   error
 }
 
 func localNiffler(m model, cmd slashCommand, argument string) (tea.Model, tea.Cmd) {
+	// A switch owns the UI until it answers: a second one would race the same
+	// claim, and a quit with a reservation nobody handed over.
+	if m.instanceSwitchPending || m.switchInstance != "" {
+		return m, nil
+	}
 	path, err := instanceRegistryPath()
 	if err != nil {
 		m.addBlock(blockError, err.Error())
@@ -68,13 +73,10 @@ func localNiffler(m model, cmd slashCommand, argument string) (tea.Model, tea.Cm
 		m.syncViewport(true)
 		return m, nil
 	}
-	// Read-only verification happens off the UI loop. A failed switch never
-	// releases the current client claim or changes its connection.
+	// Secure the target before main is allowed to release the current UI.
+	m.instanceSwitchPending = true
 	return m, func() tea.Msg {
-		tr, _, err := openInstanceTransport(context.Background(), p)
-		if err == nil {
-			tr.Close()
-		}
-		return instanceSwitchMsg{name: name, err: err}
+		claim, err := reserveInstance(m.ctx, p)
+		return instanceSwitchMsg{name: name, claim: claim, err: err}
 	}
 }

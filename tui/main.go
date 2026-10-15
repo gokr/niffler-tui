@@ -17,7 +17,6 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 
 	"charm.land/bubbles/v2/key"
@@ -406,25 +405,27 @@ type model struct {
 	// "tui-<hex>" so approval routing is private to this terminal, and the
 	// registry number is the "Niffler 1" header label. launchDir keys the
 	// resume-state file and pins new conversations' workspaces.
-	uiID               string
-	uiName             string
-	uiNumber           int
-	launchDir          string
-	sessionNeedsCreate bool // no conversation header yet: first turn pins cwd
-	ctx                context.Context
-	comp               *sdk.Component
-	session            string
-	natsURL            string
-	instanceState      string
-	instanceName       string
-	switchInstance     string
-	remoteInstance     bool
-	loc                Locale
-	theme              string // active UI color theme (themeRegistry key)
-	viewport           viewport.Model
-	input              textarea.Model
-	spinner            spinner.Model
-	blocks             []transcriptBlock
+	uiID                  string
+	uiName                string
+	uiNumber              int
+	launchDir             string
+	sessionNeedsCreate    bool // no conversation header yet: first turn pins cwd
+	ctx                   context.Context
+	comp                  *sdk.Component
+	session               string
+	natsURL               string
+	instanceState         string
+	instanceName          string
+	switchInstance        string
+	instanceSwitchPending bool
+	switchClaim           *instanceClaim
+	remoteInstance        bool
+	loc                   Locale
+	theme                 string // active UI color theme (themeRegistry key)
+	viewport              viewport.Model
+	input                 textarea.Model
+	spinner               spinner.Model
+	blocks                []transcriptBlock
 
 	width     int
 	height    int
@@ -1956,10 +1957,24 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.syncViewport(true)
 
 	case instanceSwitchMsg:
-		if msg.err != nil {
+		// instanceSwitchPending is cleared only here: the field is written before
+		// the reservation's goroutine starts and read back when it answers.
+		m.instanceSwitchPending = false
+		if msg.err == nil && msg.claim == nil {
+			msg.err = fmt.Errorf("target claim missing")
+		}
+		switch {
+		case msg.err != nil:
 			m.addBlock(blockError, "Instance switch refused: "+msg.err.Error())
 			m.syncViewport(true)
-		} else {
+		case m.switchInstance != "":
+			// Already quitting for another target: this reservation would be a
+			// claim nobody hands over.
+			msg.claim.Close()
+		default:
+			// The reservation outlives the UI loop: the successor adopts the same
+			// ui id on the target and its ordinary lease tick keeps the claim.
+			m.switchClaim = msg.claim
 			m.switchInstance = msg.name
 			persistSession(m.instanceStateScope(), m.launchDir, m.session)
 			return m, tea.Quit
@@ -3852,6 +3867,11 @@ func main() {
 			launchDir = profile.Expect.Root
 		}
 	}
+	claimHandoff, claimErr := consumeInstanceClaim(stateScope, launchDir)
+	if claimErr != nil {
+		fmt.Fprintln(os.Stderr, "niffler-tui:", claimErr)
+		return
+	}
 	// A /restart predecessor hands its registry identity — and the conversation
 	// it was on — to this process (handoff.go), so a restart resumes that
 	// conversation even when the predecessor's release never reached core.
@@ -3867,10 +3887,23 @@ func main() {
 	}
 	session := flag.String("session", defaultSession, "Niffler session id")
 	flag.Parse()
+	if claimHandoff.UI != "" {
+		// The reserved session wins over flags, saved state and restart files.
+		handoffUI, *session = claimHandoff.UI, claimHandoff.Session
+	}
 	if !term.IsTerminal(int(os.Stdin.Fd())) || !term.IsTerminal(int(os.Stdout.Fd())) {
 		fmt.Fprintln(os.Stderr,
 			"niffler-tui: interactive terminal required; run this binary from a terminal")
 		return
+	}
+	if claimHandoff.UI != "" {
+		// Confirmed on the target before this client took over, re-verified
+		// immediately before the predecessor released it. A reservation that
+		// did not survive is not worth opening a stranger's client for.
+		if err := verifyInstanceClaim(natsURL, claimHandoff); err != nil {
+			fmt.Fprintln(os.Stderr, "niffler-tui: target claim lost:", err)
+			return
+		}
 	}
 	*session = sanitizeSessionID(strings.TrimSpace(*session))
 	if *session == "" {
@@ -4064,24 +4097,40 @@ func main() {
 		os.Exit(1)
 	}
 	if fm, ok := final.(model); ok {
+		// A reservation without a switch answer (unreachable today) still has to
+		// go back: it is a live claim on the target's conversation.
+		if fm.switchClaim != nil && fm.switchInstance == "" {
+			fm.switchClaim.Close()
+		}
 		if fm.switchInstance != "" {
+			reservation := fm.switchClaim
+			if reservation == nil {
+				fmt.Fprintln(os.Stderr, "instance switch failed: no target reservation")
+				comp.Close()
+				return
+			}
+			// Last check before the point of no return: the reservation was
+			// confirmed when it was taken and must still be livable now. A lost
+			// target is not silently replaced with an empty conversation.
+			if err := verifyInstanceClaim(reservation.transport.URL, reservation.handoff); err != nil {
+				fmt.Fprintln(os.Stderr, "instance switch claim lost:", err)
+				reservation.Close()
+				comp.Close()
+				return
+			}
+			// The current UI goes back now — every path from here on either hands
+			// the reservation over or rolls it back, so no window is left without
+			// one of the two.
 			releaseUI(fm.comp, fm.uiID)
 			comp.Close()
 			if transport != nil {
 				transport.Close()
 			}
-			executable, err := os.Executable()
-			if err == nil {
-				args := instanceSwitchArgs(originalArgs, fm.switchInstance)
-				args[0] = executable
-				env := []string{}
-				for _, entry := range os.Environ() {
-					if !strings.HasPrefix(entry, "NIF_SESSION=") {
-						env = append(env, entry)
-					}
-				}
-				err = syscall.Exec(executable, args, env)
-			}
+			err := relaunchInstance(originalArgs, fm.switchInstance, reservation.handoff)
+			// Only a relaunch that never started may release the reservation: a
+			// successful exec never returns, so from then on the successor holds
+			// the same ui id and releasing here would void the claim it adopted.
+			reservation.Close()
 			fmt.Fprintln(os.Stderr, "instance relaunch failed:", err)
 			return
 		}

@@ -38,8 +38,13 @@ re-resolves the remote endpoint and verifies the pinned catalog identity before
 forwarding SDK traffic, including reconnects. A mismatch closes that lane; no
 fallback occurs. This uses a separate probe connection, not authentication against
 a malicious endpoint swap. Background approvals are not implemented yet.
-A switch verifies before leaving but does not pre-claim
-the target conversation; a failure during successor startup exits loudly.
+A switch verifies the target, then reserves its conversation there (`ui`
+register + claim, renewed in the background) before this client releases its
+current UI. The reservation travels to the re-executed client through a private
+`NIF_TUI_INSTANCE_CLAIM` environment handoff, is re-verified before the old
+claim is released, and is released again if the exec fails. A refused claim
+leaves the current instance untouched; a reservation lost before
+the handoff exits loudly instead of opening an empty conversation.
 
 ## Build
 
@@ -277,7 +282,7 @@ Local commands are handled by the TUI and are never sent to the model:
   provides no app wheel)
 - `/cards [on|off]` — shade tool runs with the theme's card background so a
   run reads as one block (per-run display toggle)
-- `/niffler [NAME|next]` — list or switch pinned remote instances by re-exec; failed verification stays put. Returning to implicit local requires quitting and a plain launch.
+- `/niffler [NAME|next]` — list or switch pinned remote instances by re-exec; failed verification stays put. A switch reserves the target conversation (`ui` claim) before this client is released, hands that reservation to the re-executed client through the environment, and releases it again if the relaunch fails. Returning to implicit local requires quitting and a plain launch.
 - `/restart` — quit with a reserved exit code so the installed `niffler-tui`
   wrapper re-runs the binary, picking up a rebuilt install after an update;
   run without that wrapper it simply exits. The conversation you were in, and
