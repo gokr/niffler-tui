@@ -414,6 +414,8 @@ type model struct {
 	comp               *sdk.Component
 	session            string
 	natsURL            string
+	instanceState      string
+	remoteInstance     bool
 	loc                Locale
 	theme              string // active UI color theme (themeRegistry key)
 	viewport           viewport.Model
@@ -3787,15 +3789,62 @@ func main() {
 	// harnesses (each with its own store) never resume each other's
 	// conversations, and starting in a different project starts that
 	// project's conversation, not the previous one's.
+	opts, remaining, fleetErr := parseInstanceOptions(os.Args)
+	if fleetErr != nil {
+		fmt.Fprintln(os.Stderr, fleetErr)
+		os.Exit(1)
+	}
+	os.Args = remaining
+	if opts.Import != "" {
+		if err := importInstanceReceipt(context.Background(), opts.Name, opts.Import); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		fmt.Fprintln(os.Stdout, "Verified instance imported:", opts.Name)
+		return
+	}
+	if opts.Probe != "" {
+		_, tr, err := selectInstance(context.Background(), opts.Probe)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		id, err := probeInstanceURL(tr.URL)
+		tr.Close()
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		data, _ := json.Marshal(id)
+		fmt.Println(string(data))
+		return
+	}
 	natsURL := resolveNATSURL()
 	launchDir := initialCwd()
+	stateScope := natsURL
+	var transport *instanceTransport
+	if opts.Name != "" {
+		profile, tr, err := selectInstance(context.Background(), opts.Name)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "niffler-tui:", err)
+			os.Exit(1)
+		}
+		transport = tr
+		defer transport.Close()
+		natsURL = transport.URL
+		stateScope = instanceStateKey(profile)
+		launchDir = profile.Workspace
+		if launchDir == "" {
+			launchDir = profile.Expect.Root
+		}
+	}
 	// A /restart predecessor hands its registry identity — and the conversation
 	// it was on — to this process (handoff.go), so a restart resumes that
 	// conversation even when the predecessor's release never reached core.
-	handoffUI, handoffSession := consumeHandoff(natsURL, launchDir, time.Now())
+	handoffUI, handoffSession := consumeHandoff(stateScope, launchDir, time.Now())
 	defaultSession := strings.TrimSpace(os.Getenv("NIF_SESSION"))
 	if defaultSession == "" {
-		defaultSession = loadLastSession(natsURL, launchDir)
+		defaultSession = loadLastSession(stateScope, launchDir)
 	}
 	if defaultSession == "" {
 		// The handoff names the conversation too: a missing or unreadable
@@ -3984,6 +4033,11 @@ func main() {
 	m.uiID = uiID
 	m.uiName = uiName
 	m.launchDir = launchDir
+	if transport != nil {
+		m.instanceState = stateScope
+		m.remoteInstance = true
+		m.cwd = launchDir
+	}
 	program = tea.NewProgram(m)
 	final, err := program.Run()
 	if err != nil {
@@ -4001,6 +4055,9 @@ func main() {
 			// localRestart wrote, so the registration must stay warm: releasing
 			// it here would make the successor a stranger that core refuses the
 			// very conversation the handoff is carrying over.
+			if transport != nil {
+				transport.Close()
+			}
 			os.Exit(restartExitCode)
 		}
 		releaseUI(fm.comp, fm.uiID)

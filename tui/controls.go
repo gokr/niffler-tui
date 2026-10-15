@@ -37,11 +37,11 @@ func (m model) switchSession(id string) model {
 		m.gate.setSessions(id, m.agents)
 	}
 	m.restoreUsage(m.usageCache[id])
-	m.cwd = initialCwd()
+	m.cwd = m.initialWorkspace()
 	// Remember the active conversation so a restart resumes it (explicit
 	// -session/NIF_SESSION still win at startup). Keyed by bus URL + the
 	// TUI's launch directory: different projects do not resume each other.
-	persistSession(m.natsURL, m.launchDir, id)
+	persistSession(m.instanceStateScope(), m.launchDir, id)
 	m.blocks = nil
 	m.markTranscriptDirty()
 	m.renderFrom = 0
@@ -531,7 +531,7 @@ func localRestart(m model, cmd slashCommand, argument string) (tea.Model, tea.Cm
 	// deliberately skips the release for a restart — that is the restart which
 	// picks up a rebuilt install, where the predecessor may be an older build
 	// that cannot release at all.
-	writeHandoff(m.natsURL, m.launchDir, m.uiID, m.session)
+	writeHandoff(m.instanceStateScope(), m.launchDir, m.uiID, m.session)
 	m.addBlock(blockMeta, t(m.loc, "chat.restarting"))
 	m.syncViewport(true)
 	return m, tea.Quit

@@ -10,6 +10,28 @@ tool-call、assistant 與 completion 事件。
 
 該組件以零工具註冊。執行它不會給任何 LLM 的工具上下文新增東西。
 
+## Fleet startup (experimental)
+
+可從 harness 的 `scripts/fleet.py` 匯入私有部署回執，隨後探測或啟動實例：
+
+```bash
+./bin/niffler-tui --instance worker --instance-import /path/to/worker.json
+./bin/niffler-tui --instance-probe worker
+./bin/niffler-tui --instance worker
+```
+
+匯入先驗證線上 catalog，再將 0600 設定儲存到
+`$XDG_CONFIG_HOME/niffler/instances.json`（預設 `~/.config/niffler/`）。
+SSH 使用正常設定和 known_hosts，停用 agent 轉送；Multipass 使用 exec 和
+Python 3 socket 橋，不擷取金鑰、不掛載主機。不啟動或停止遠端服務。
+目標缺失或身分不符會拒絕，不退回本地。須配套 harness 包裝器，以避免遠端
+參數觸發本地自動啟動；普通啟動不變。
+
+遠端工作區預設回執根目錄，不使用本機 cwd。上次會話和重啟狀態使用穩定實例
+ID，不使用轉送連接埠。遠端停用本地路徑補全和記錄檔案開啟；附件仍由明確選擇
+的本地檔案提供。此階段僅提供啟動選擇，尚無 `/niffler` 切換、背景核准或重連
+時身分複驗。
+
 ## 建置
 
 期望把本倉庫 checkout 在 Niffler 旁邊，這樣本地 `go.mod` 的 replacement

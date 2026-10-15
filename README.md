@@ -9,6 +9,32 @@ UI: it drives `session` calls through `svc.core.call` and renders
 The component registers with zero tools. Running it does not add anything to
 an LLM's tool context.
 
+## Fleet startup (experimental)
+
+Import a private provisioning receipt from the harness's `scripts/fleet.py`,
+then probe or launch that named instance:
+
+```bash
+./bin/niffler-tui --instance worker --instance-import /path/to/worker.json
+./bin/niffler-tui --instance-probe worker
+./bin/niffler-tui --instance worker
+```
+
+Import probes the live catalog before saving a 0600 client-local registry at
+`$XDG_CONFIG_HOME/niffler/instances.json` (default `~/.config/niffler/`). SSH
+uses normal configuration/known_hosts with agent forwarding disabled; Multipass
+uses `exec` plus a Python 3 socket bridge, without keys or host mounts. No remote
+service is started or stopped. Missing targets and identity mismatches refuse;
+there is no local fallback. Use the matching harness wrapper to ensure remote
+options bypass its local autostart. Plain launches remain unchanged.
+
+Remote workspace defaults to the receipt root, not the laptop's cwd. Saved last
+session/restart state uses the stable instance ID, not the forwarding port.
+Local path completion and transcript file opening are disabled remotely;
+attachments still refer to explicitly selected local files. This slice provides
+explicit startup selection, not `/niffler` switching, background approvals or
+reconnect-time identity revalidation yet.
+
 ## Build
 
 This checkout is expected next to Niffler so the local `go.mod` replacement

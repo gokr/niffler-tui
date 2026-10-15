@@ -253,6 +253,9 @@ func (m *model) openUnderPointer(x, y int) tea.Cmd {
 		m.contextNote = t(m.loc, "note.openNothing")
 		return nil
 	}
+	if !isURL && m.remoteInstance {
+		return nil
+	} // remote files are not local opener targets
 	if !isURL {
 		target = m.resolveOpenPath(target)
 	}

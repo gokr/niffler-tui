@@ -408,6 +408,9 @@ func (m model) handlePathTab(backward bool, prefix, dir, base string) (model, te
 // cycle, a single candidate fills directly. A key with no @-token to
 // complete falls through untouched (nil cmd), like the slash handler.
 func (m model) handleFileTab(backward bool) (model, tea.Cmd) {
+	if m.remoteInstance {
+		return m, nil
+	} // never enumerate remote paths locally
 	runes := []rune(m.input.Value())
 	offset, ok := m.cursorOffset()
 	if !ok || offset != len(runes) {
