@@ -79,8 +79,10 @@ type catalogProvidersResponse struct {
 // clone root plus its git revision — so /status shows which instance the
 // tui is talking to (two clones must never be confused).
 type harnessIdentity struct {
-	Root    string `json:"root"`
-	GitHash string `json:"gitHash"`
+	Root       string `json:"root"`
+	GitHash    string `json:"gitHash"`
+	InstanceID string `json:"instanceId"`
+	Name       string `json:"name"`
 }
 
 // selfIdentity describes this tui's own binary, for /status. The builder
