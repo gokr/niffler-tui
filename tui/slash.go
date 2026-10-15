@@ -234,7 +234,7 @@ func builtinSlashCommands() []slashCommand {
 		{Name: "locale", Description: "switch the UI language", builtin: true, run: localLocale, Params: []slashParam{
 			{Name: "lang", Kind: "enum", Values: []string{"en", "zh", "zh-TW"}},
 		}},
-		{Name: "niffler", Description: "list instances or switch to NAME; next rotates (remote targets only)", builtin: true, run: localNiffler},
+		{Name: "niffler", Description: "list instances or switch to NAME; next rotates (remote targets only)", builtin: true, interactive: true, run: localNiffler},
 		{Name: "restart", Description: "restart the client (picks up a rebuilt binary)", builtin: true, run: localRestart},
 		{Name: "quit", Description: "quit the client", builtin: true, run: localQuit},
 		// User-defined aliases: /alias <name> <prompt> defines a prompt

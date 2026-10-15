@@ -84,6 +84,11 @@ func shellEscape(line string) (command string, ask, ok bool) {
 // through the user's shell, with this process's environment.
 func (m model) shellEscapeCmd(command string, ask bool) tea.Cmd {
 	dir := m.cwd
+	if m.remoteInstance {
+		// Shell escapes are deliberately local, unlike model tool calls. A
+		// remote path must never select a coincidentally matching local folder.
+		dir = initialCwd()
+	}
 	session := m.session
 	return func() tea.Msg {
 		if dir == "" {
