@@ -192,6 +192,79 @@ func probeInstanceURL(url string) (harnessIdentity, error) {
 	return identity, err
 }
 
+// checkedInstanceRelay verifies each new forwarding lane before exposing it to
+// the SDK. The probe uses a separate connection: this is routing protection,
+// not authentication against a malicious peer swapping endpoints mid-handshake.
+func checkedInstanceRelay(ctx context.Context, conn net.Conn, p instanceProfile) {
+	defer conn.Close()
+	checkCtx, cancel := context.WithTimeout(ctx, 25*time.Second)
+	defer cancel()
+	endpoint := p.URL
+	var err error
+	if endpoint == "" {
+		endpoint, err = resolveInstanceEndpoint(checkCtx, p)
+	}
+	if err != nil {
+		return
+	}
+	probeURL := endpoint
+	var probeListener net.Listener
+	if p.URL == "" {
+		probeListener, err = net.Listen("tcp4", "127.0.0.1:0")
+		if err != nil {
+			return
+		}
+		defer probeListener.Close()
+		probeDone := make(chan struct{})
+		defer func() { cancel(); probeListener.Close(); <-probeDone }()
+		probeURL = "nats://" + probeListener.Addr().String()
+		go func() {
+			defer close(probeDone)
+			c, acceptErr := probeListener.Accept()
+			if acceptErr != nil {
+				return
+			}
+			cmd, commandErr := instanceRelayCommand(checkCtx, p, endpoint)
+			if commandErr != nil {
+				c.Close()
+				return
+			}
+			relayInstanceSocket(checkCtx, c, cmd)
+		}()
+	}
+	identity, err := probeInstanceURL(probeURL)
+	if err != nil || verifyInstance(p, identity) != nil {
+		return
+	}
+	if p.URL != "" {
+		upstream, dialErr := (&net.Dialer{}).DialContext(ctx, "tcp", strings.TrimPrefix(endpoint, "nats://"))
+		if dialErr != nil {
+			return
+		}
+		defer upstream.Close()
+		done := make(chan struct{})
+		go func() {
+			select {
+			case <-ctx.Done():
+				conn.Close()
+				upstream.Close()
+			case <-done:
+			}
+		}()
+		copied := make(chan struct{})
+		go func() { _, _ = io.Copy(upstream, conn); upstream.Close(); close(copied) }()
+		_, _ = io.Copy(conn, upstream)
+		conn.Close()
+		<-copied
+		close(done)
+		return
+	}
+	cmd, err := instanceRelayCommand(ctx, p, endpoint)
+	if err == nil {
+		relayInstanceSocket(ctx, conn, cmd)
+	}
+}
+
 func openInstanceTransport(parent context.Context, p instanceProfile) (*instanceTransport, harnessIdentity, error) {
 	var identity harnessIdentity
 	r := instanceRegistry{Version: 1, Order: []string{"remote"}, Instances: map[string]instanceProfile{"remote": p}}
@@ -200,14 +273,7 @@ func openInstanceTransport(parent context.Context, p instanceProfile) (*instance
 	}
 	ctx, cancel := context.WithCancel(parent)
 	t := &instanceTransport{URL: p.URL, cancel: cancel}
-	if p.URL == "" {
-		resolveCtx, stop := context.WithTimeout(ctx, 20*time.Second)
-		endpoint, err := resolveInstanceEndpoint(resolveCtx, p)
-		stop()
-		if err != nil {
-			t.Close()
-			return nil, identity, err
-		}
+	{
 		listener, err := net.Listen("tcp4", "127.0.0.1:0")
 		if err != nil {
 			t.Close()
@@ -223,13 +289,8 @@ func openInstanceTransport(parent context.Context, p instanceProfile) (*instance
 				if err != nil {
 					return
 				}
-				cmd, err := instanceRelayCommand(ctx, p, endpoint)
-				if err != nil {
-					conn.Close()
-					continue
-				}
 				t.wg.Add(1)
-				go func() { defer t.wg.Done(); relayInstanceSocket(ctx, conn, cmd) }()
+				go func() { defer t.wg.Done(); checkedInstanceRelay(ctx, conn, p) }()
 			}
 		}()
 	}

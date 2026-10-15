@@ -42,7 +42,17 @@ func localNiffler(m model, cmd slashCommand, argument string) (tea.Model, tea.Cm
 		return m, nil
 	}
 	if name == "next" {
-		name = nextInstanceName(registry.Order, m.instanceName)
+		order := []string{}
+		for _, candidate := range registry.Order {
+			p := registry.Instances[candidate]
+			if p.URL != "" || p.SSH != "" || p.Multipass != "" {
+				order = append(order, candidate)
+			}
+		}
+		name = nextInstanceName(order, m.instanceName)
+		if name == "" {
+			return m, nil
+		}
 	}
 	if name == m.instanceName {
 		return m, nil

@@ -33,8 +33,12 @@ session/restart state uses the stable instance ID, not the forwarding port.
 Local path completion and transcript file opening are disabled remotely;
 attachments still refer to explicitly selected local files. This slice provides
 explicit startup selection and `/niffler NAME`/`next` re-exec switching between
-remote targets. Background approvals and reconnect-time identity revalidation
-are not implemented yet. A switch verifies before leaving but does not pre-claim
+remote targets (`next` skips implicit local). Each new forwarding connection
+re-resolves the remote endpoint and verifies the pinned catalog identity before
+forwarding SDK traffic, including reconnects. A mismatch closes that lane; no
+fallback occurs. This uses a separate probe connection, not authentication against
+a malicious endpoint swap. Background approvals are not implemented yet.
+A switch verifies before leaving but does not pre-claim
 the target conversation; a failure during successor startup exits loudly.
 
 ## Build
