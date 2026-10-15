@@ -17,6 +17,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"charm.land/bubbles/v2/key"
@@ -415,6 +416,8 @@ type model struct {
 	session            string
 	natsURL            string
 	instanceState      string
+	instanceName       string
+	switchInstance     string
 	remoteInstance     bool
 	loc                Locale
 	theme              string // active UI color theme (themeRegistry key)
@@ -1951,6 +1954,16 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.contextNote = t(m.loc, "note.snippetSaved")
 		m.addBlock(blockMeta, "✓ "+t(m.loc, "note.snippetSaved"))
 		m.syncViewport(true)
+
+	case instanceSwitchMsg:
+		if msg.err != nil {
+			m.addBlock(blockError, "Instance switch refused: "+msg.err.Error())
+			m.syncViewport(true)
+		} else {
+			m.switchInstance = msg.name
+			persistSession(m.instanceStateScope(), m.launchDir, m.session)
+			return m, tea.Quit
+		}
 
 	case nameMsg:
 		m.applyNameMsg(msg)
@@ -3785,6 +3798,7 @@ func persistSession(natsURL, workspace, id string) {
 }
 
 func main() {
+	originalArgs := append([]string(nil), os.Args...)
 	// The saved last session is keyed by bus URL + launch directory: two
 	// harnesses (each with its own store) never resume each other's
 	// conversations, and starting in a different project starts that
@@ -4033,6 +4047,10 @@ func main() {
 	m.uiID = uiID
 	m.uiName = uiName
 	m.launchDir = launchDir
+	m.instanceName = opts.Name
+	if m.instanceName == "" {
+		m.instanceName = "local"
+	}
 	if transport != nil {
 		m.instanceState = stateScope
 		m.remoteInstance = true
@@ -4046,6 +4064,27 @@ func main() {
 		os.Exit(1)
 	}
 	if fm, ok := final.(model); ok {
+		if fm.switchInstance != "" {
+			releaseUI(fm.comp, fm.uiID)
+			comp.Close()
+			if transport != nil {
+				transport.Close()
+			}
+			executable, err := os.Executable()
+			if err == nil {
+				args := instanceSwitchArgs(originalArgs, fm.switchInstance)
+				args[0] = executable
+				env := []string{}
+				for _, entry := range os.Environ() {
+					if !strings.HasPrefix(entry, "NIF_SESSION=") {
+						env = append(env, entry)
+					}
+				}
+				err = syscall.Exec(executable, args, env)
+			}
+			fmt.Fprintln(os.Stderr, "instance relaunch failed:", err)
+			return
+		}
 		// /restart hands the restart to whoever launched us: the installed
 		// wrapper loops on this exit code and re-runs the binary from disk, so
 		// the fresh process picks up a rebuilt install. Run() returns the final

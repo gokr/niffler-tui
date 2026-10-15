@@ -32,8 +32,10 @@ Remote workspace defaults to the receipt root, not the laptop's cwd. Saved last
 session/restart state uses the stable instance ID, not the forwarding port.
 Local path completion and transcript file opening are disabled remotely;
 attachments still refer to explicitly selected local files. This slice provides
-explicit startup selection, not `/niffler` switching, background approvals or
-reconnect-time identity revalidation yet.
+explicit startup selection and `/niffler NAME`/`next` re-exec switching between
+remote targets. Background approvals and reconnect-time identity revalidation
+are not implemented yet. A switch verifies before leaving but does not pre-claim
+the target conversation; a failure during successor startup exits loudly.
 
 ## Build
 
@@ -271,6 +273,7 @@ Local commands are handled by the TUI and are never sent to the model:
   provides no app wheel)
 - `/cards [on|off]` — shade tool runs with the theme's card background so a
   run reads as one block (per-run display toggle)
+- `/niffler [NAME|next]` — list or switch pinned remote instances by re-exec; failed verification stays put. Returning to implicit local requires quitting and a plain launch.
 - `/restart` — quit with a reserved exit code so the installed `niffler-tui`
   wrapper re-runs the binary, picking up a rebuilt install after an update;
   run without that wrapper it simply exits. The conversation you were in, and
