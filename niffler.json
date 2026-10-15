@@ -30,6 +30,7 @@
         "tui/i18n.go",
         "tui/info.go",
         "tui/instances.go",
+        "tui/instance_transport.go",
         "tui/mcp_form.go",
         "tui/lsp_form.go",
         "tui/linkhover.go",
