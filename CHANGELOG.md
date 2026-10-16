@@ -56,7 +56,21 @@ falling back to local.
   granted roots, next to the workspace itself. The branch is read locally and
   omitted for a remote instance (there `cwd` names a directory on the other
   machine, so a local `git` read would name an unrelated repo). The count
-  excludes the primary workspace, which is not a grant.
+  excludes the primary workspace, which is not a grant. A **linked worktree**
+  is marked `⧉` next to its branch, because a worktree and the primary checkout
+  are indistinguishable as paths — and which one an edit lands in is the thing
+  the mark answers. The distinction comes from git itself (`--git-dir` vs
+  `--git-common-dir`), so nothing is inferred from the filesystem.
+- `/workspace [path]` reports where the conversation works (path, git branch,
+  worktree-vs-primary, granted-root count) and **repins** it while the
+  conversation is still pristine. The client pins the launch directory as the
+  workspace on the first turn, so "I started the client in the wrong directory"
+  had no answer short of a restart. Core allows the repin only before a turn has
+  run — resumes must resolve context and paths exactly as the original turn did,
+  and the system prompt is frozen against the old root — so the refusal is
+  surfaced verbatim and the report always says which case applies. Distinct from
+  `/roots`: this is the primary root (what relative paths resolve against),
+  `/roots` grants *extra* roots on top of it.
 - `/toolset` replaces `/profile` for selecting and managing tool visibility;
   `/profile` remains a command alias. Requires the harness's `toolset` API.
 - Each new forwarding connection re-resolves the remote endpoint and re-verifies

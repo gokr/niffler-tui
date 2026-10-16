@@ -46,14 +46,17 @@ type rootChangeMsg struct {
 	Err     error
 }
 
-// branchMsg carries the primary workspace's current git branch. Empty means
-// "not a git checkout, or git is unavailable" — the row then shows no branch
-// rather than a placeholder, the same omission rule the context gauge uses
-// when no limit is known.
+// branchMsg carries the primary workspace's git facts: the current branch,
+// whether this checkout is a LINKED worktree rather than the primary one, and
+// where the primary checkout is. Empty Branch means "not a git checkout, or git
+// is unavailable" — the row then shows no branch rather than a placeholder, the
+// same omission rule the context gauge uses when no limit is known.
 type branchMsg struct {
-	Dir    string
-	Branch string
-	Err    error
+	Dir      string
+	Branch   string
+	Worktree bool   // linked worktree, not the primary checkout
+	Primary  string // the primary checkout's path, when derivable
+	Err      error
 }
 
 // sessionRootsResponse is the slice of core's session status this file needs.
@@ -183,32 +186,67 @@ func resolveRootPath(argument, workspace string) (string, error) {
 	return filepath.Clean(path), nil
 }
 
-// loadBranchCmd reads the primary workspace's branch. Local-only on purpose:
-// for a remote instance `cwd` names a directory on the other machine, so
-// exec'ing git here would inspect an unrelated (or missing) local path. The
-// row omits the branch there rather than showing a wrong one.
+// loadBranchCmd reads the workspace's git branch and whether this checkout is
+// a linked worktree. Local-only on purpose: for a remote instance `cwd` names a
+// directory on the other machine, so exec'ing git here would inspect an
+// unrelated (or missing) local path. The row omits the branch there rather than
+// showing a wrong one.
+//
+// A linked worktree is told apart from the primary checkout by comparing git's
+// own two answers: `--git-dir` names this checkout's git directory while
+// `--git-common-dir` names the shared one. They are the same path in the primary
+// checkout (`./.git`) and differ in a worktree (`.git/worktrees/<name>` vs
+// `.git`), which is exactly the distinction — no filesystem guessing, and a
+// plain, non-repo directory simply fails the command and shows nothing.
 func loadBranchCmd(dir string, remote bool) tea.Cmd {
 	if dir == "" || remote {
 		return nil
 	}
 	return func() tea.Msg {
-		// --abbrev-ref prints "HEAD" on a detached head; report it as-is
-		// rather than inventing a branch name.
-		cmd := exec.Command("git", "-C", dir, "rev-parse", "--abbrev-ref", "HEAD")
+		// One git invocation for all three answers. --abbrev-ref prints "HEAD"
+		// on a detached head; report it as-is rather than inventing a name.
+		cmd := exec.Command("git", "-C", dir, "rev-parse", "--abbrev-ref", "HEAD",
+			"--git-dir", "--git-common-dir")
 		out, err := cmd.Output()
 		if err != nil {
 			return branchMsg{Dir: dir, Err: err}
 		}
-		return branchMsg{Dir: dir, Branch: strings.TrimSpace(string(out))}
+		lines := strings.Split(strings.TrimSpace(string(out)), "\n")
+		if len(lines) < 3 {
+			return branchMsg{Dir: dir, Err: fmt.Errorf("unexpected git output: %q", out)}
+		}
+		msg := branchMsg{Dir: dir, Branch: strings.TrimSpace(lines[0])}
+		gitDir := strings.TrimSpace(lines[1])
+		commonDir := strings.TrimSpace(lines[2])
+		if gitDir != commonDir {
+			msg.Worktree = true
+			// The common dir is the primary checkout's .git directory, so its
+			// parent is the primary checkout itself. Only when git reports an
+			// absolute path: a relative one names the querying checkout.
+			if filepath.IsAbs(commonDir) {
+				msg.Primary = filepath.Dir(commonDir)
+			}
+		}
+		return msg
 	}
 }
 
 // branchChip renders the branch for the bottom row, or "" when there is
 // nothing truthful to show (no repo, git unavailable; a detached HEAD keeps
 // "HEAD" because that is the real state).
+//
+// A linked worktree is marked, because the row's path alone cannot say it: two
+// worktrees of one repo are different directories with different branches and
+// nothing on screen distinguishes "my checkout" from "a worktree of my
+// checkout" — which matters when deciding where an edit lands. The mark is a
+// glyph rather than a word to keep the row narrow; /workspace and /roots spell
+// it out.
 func (m model) branchChip() string {
 	if m.branch == "" {
 		return ""
+	}
+	if m.worktree {
+		return t(m.loc, "workspace.branchWorktree", m.branch)
 	}
 	return t(m.loc, "workspace.branch", m.branch)
 }
@@ -322,4 +360,95 @@ func rootsReport(loc Locale, cwd string, granted []string) string {
 	b.WriteString("\n")
 	b.WriteString(t(loc, "roots.hint"))
 	return b.String()
+}
+
+// ---- /workspace -----------------------------------------------------------
+
+// workspaceReport describes where a conversation works: the path, its git
+// shape (branch, and whether this is a linked worktree of another checkout),
+// and the granted roots. The worktree line is what the bottom row cannot say —
+// a worktree and a primary checkout look identical as paths.
+func workspaceReport(loc Locale, cwd, branch string, worktree bool, primary string, granted []string) string {
+	var b strings.Builder
+	b.WriteString(t(loc, "workspace.current", displayPath(cwd, 0)))
+	if branch != "" {
+		b.WriteString("\n")
+		if worktree {
+			b.WriteString(t(loc, "workspace.reportWorktree", branch))
+			if primary != "" {
+				b.WriteString("\n")
+				b.WriteString(t(loc, "workspace.reportPrimary", displayPath(primary, 0)))
+			}
+		} else {
+			b.WriteString(t(loc, "workspace.reportBranch", branch))
+		}
+	}
+	if len(granted) > 0 {
+		b.WriteString("\n")
+		b.WriteString(t(loc, "workspace.reportRoots", fmt.Sprint(len(granted))))
+	}
+	return b.String()
+}
+
+// localWorkspace reports or repins the conversation's workspace. It is the
+// control for the one thing the client pins on the user's behalf at birth
+// (sendTurn sends the launch directory as `cwd`), so "I started the client in
+// the wrong directory" has an answer inside the client rather than requiring a
+// restart.
+//
+// A repin is only possible while the conversation is pristine — core refuses to
+// move a workspace once a turn has run, because resumes must resolve context
+// and paths exactly as the original turn did, and the system prompt is frozen
+// against it. The refusal is surfaced verbatim, and the report below always
+// states which case applies, so the rule is visible before it is hit.
+func localWorkspace(m model, cmd slashCommand, argument string) (tea.Model, tea.Cmd) {
+	if !m.connected {
+		m.contextNote = t(m.loc, "note.notConnected")
+		return m, nil
+	}
+	argument = strings.TrimSpace(argument)
+	if argument == "" {
+		m.addBlock(blockMeta, workspaceReport(m.loc, m.cwd, m.branch,
+			m.worktree, m.primary, m.grantedRoots))
+		m.syncViewport(true)
+		return m, nil
+	}
+	path, err := resolveRootPath(argument, m.cwd)
+	if err != nil {
+		m.addBlock(blockError, t(m.loc, "workspace.badPath", argument, err.Error()))
+		m.syncViewport(true)
+		return m, nil
+	}
+	m.addBlock(blockMeta, "→ /workspace "+displayPath(path, 0))
+	m.syncViewport(true)
+	return m, setWorkspaceCmd(m.comp, m.session, path)
+}
+
+// setWorkspaceCmd asks core to repin the workspace. core validates (an existing
+// absolute directory) and refuses once turns exist; on success it also
+// re-resolves the constitution against the new root and publishes
+// ev.workspace.opened, so nothing here has to recompute the prompt.
+func setWorkspaceCmd(comp *sdk.Component, session, path string) tea.Cmd {
+	return func() tea.Msg {
+		var response sessionRootsResponse
+		if err := requestInto(comp, "core", "session",
+			map[string]any{"sessionId": session, "cwd": path}, &response); err != nil {
+			return workspaceChangeMsg{Session: session, Path: path, Err: err}
+		}
+		if response.Error != "" {
+			return workspaceChangeMsg{Session: session, Path: path,
+				Err: errors.New(response.Error)}
+		}
+		return workspaceChangeMsg{Session: session, Path: path, Cwd: response.Cwd}
+	}
+}
+
+// workspaceChangeMsg reports the outcome of a /workspace repin. Cwd is core's
+// own answer, so the row follows core's normalization rather than the typed
+// string.
+type workspaceChangeMsg struct {
+	Session string
+	Path    string
+	Cwd     string
+	Err     error
 }

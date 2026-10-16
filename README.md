@@ -233,6 +233,18 @@ Local commands are handled by the TUI and are never sent to the model:
   program-shaped calls too, which the per-tool `a` deliberately does not — so
   the widest grant needs the extra keypress. `a` keeps its narrower meaning
   (always allow *this* tool for this session).
+- `/workspace [path]` — where this conversation works, and the control for the
+  one thing the client pins on your behalf: started in a directory, the first
+  turn pins it as the conversation's workspace. A bare `/workspace` reports the
+  path, its git branch, whether the checkout is a **linked worktree** rather
+  than the primary one (with the primary's path), and the granted-root count. A
+  path argument **repins** the workspace — allowed only while the conversation
+  is pristine, because once a turn has run the workspace is immutable: resumes
+  must resolve context and paths exactly as the original turn did, and the
+  system prompt is frozen against it. Core refuses past that point and says so;
+  start a new conversation instead. Distinct from `/roots`: this is the primary
+  root (what relative paths resolve against), `/roots` grants *extra* roots on
+  top. The bottom row marks a linked worktree with `⧉` next to the branch.
 - `/roots [add|remove <dir>]` — the conversation's working set: a bare
   `/roots` reports the primary workspace (immutable, pinned when the
   conversation is born) and every root granted on top of it; `add` and

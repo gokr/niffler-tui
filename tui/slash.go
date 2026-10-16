@@ -208,6 +208,15 @@ func builtinSlashCommands() []slashCommand {
 			{Name: "subcommand", Kind: "enum", Values: subcommandNames(rootsSubcommands)},
 			{Name: "path", Kind: "string", Description: "directory to grant or revoke (empty = show the current set)"},
 		}},
+		// /workspace reports where the conversation works (and its git shape),
+		// and repins it while the conversation is still pristine — the control
+		// for the launch directory this client pins at birth. Distinct from
+		// /roots: the workspace is the primary root (immutable once turns
+		// exist, and what relative paths resolve against), while /roots grants
+		// EXTRA roots on top of it.
+		{Name: "workspace", Description: "show the conversation workspace; repin it before the first turn", builtin: true, run: localWorkspace, Params: []slashParam{
+			{Name: "path", Kind: "string", Description: "new workspace directory (empty = show the current one)"},
+		}},
 		{Name: "components", Description: "show what this conversation can call", builtin: true, run: localComponents, Params: []slashParam{
 			{Name: "filter", Kind: "enum", Values: []string{"all", "direct", "discovered", "undiscovered", "unknown"}},
 		}},

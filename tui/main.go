@@ -587,6 +587,11 @@ type model struct {
 	cwd          string
 	grantedRoots []string
 	branch       string
+	// worktree marks the workspace as a LINKED git worktree (not the primary
+	// checkout) and primary names the checkout it branches from, so the row can
+	// distinguish "my checkout" from "a worktree of my checkout".
+	worktree bool
+	primary  string
 
 	// transcript is the cached joined rendering of the scroll window (see
 	// renderTranscript); viewportContent is the last string pushed into the
@@ -1325,6 +1330,33 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// that simply omit the branch from the row.
 		if msg.Err == nil {
 			m.branch = msg.Branch
+			m.worktree = msg.Worktree
+			m.primary = msg.Primary
+		}
+
+	case workspaceChangeMsg:
+		if msg.Session != m.session {
+			break
+		}
+		if msg.Err != nil {
+			// The common case is core's immutability refusal, which names the
+			// current workspace and the remedy (start a new conversation); the
+			// message is the whole story, so it is surfaced verbatim.
+			m.addBlock(blockError, t(m.loc, "workspace.changeFailed", msg.Err.Error()))
+			m.syncViewport(true)
+			break
+		}
+		if msg.Cwd != "" {
+			m.cwd = msg.Cwd
+		}
+		// The git facts belong to the workspace, so a repin invalidates them:
+		// clear first so a stale branch cannot label the new directory while
+		// the read is in flight, then re-read.
+		m.branch, m.worktree, m.primary = "", false, ""
+		m.addBlock(blockMeta, t(m.loc, "workspace.changed", displayPath(m.cwd, 0)))
+		m.syncViewport(true)
+		if cmd := loadBranchCmd(m.cwd, m.remoteInstance); cmd != nil {
+			cmds = append(cmds, cmd)
 		}
 
 	case connectedMsg:

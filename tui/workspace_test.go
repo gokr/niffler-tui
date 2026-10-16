@@ -9,9 +9,12 @@ package main
 import (
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/charmbracelet/x/ansi"
 )
 
 // mustGetwd is the process working directory, which resolveRootPath falls back
@@ -469,3 +472,269 @@ func TestLoadBranchCmdSkipsRemoteAndEmpty(t *testing.T) {
 		t.Fatal("loadBranchCmd skipped a local workspace")
 	}
 }
+
+// ---- worktree detection and /workspace ------------------------------------
+
+// TestLoadBranchCmdDetectsWorktreeShape runs against real git repositories. The
+// distinction is the point: a linked worktree and the primary checkout are both
+// just directories with a branch, and only git's own two answers tell them
+// apart, so this drives git rather than mocking it.
+func TestLoadBranchCmdDetectsWorktreeShape(t *testing.T) {
+	if _, err := execLookPath("git"); err != nil {
+		t.Skip("git not on PATH")
+	}
+	primary := t.TempDir()
+	gitRun(t, primary, "init", "-q", "-b", "main")
+	gitRun(t, primary, "config", "user.email", "t@example.invalid")
+	gitRun(t, primary, "config", "user.name", "workspace test")
+	osWrite(t, filepath.Join(primary, "README.md"), "hello\n")
+	gitRun(t, primary, "add", "README.md")
+	gitRun(t, primary, "commit", "-q", "-m", "init")
+
+	linked := filepath.Join(t.TempDir(), "wt")
+	gitRun(t, primary, "worktree", "add", "-q", "-b", "feat/x", linked)
+
+	t.Run("primary checkout", func(t *testing.T) {
+		msg, ok := loadBranchCmd(primary, false)().(branchMsg)
+		if !ok {
+			t.Fatal("not a branchMsg")
+		}
+		if msg.Err != nil {
+			t.Fatalf("err: %v", msg.Err)
+		}
+		if msg.Branch != "main" {
+			t.Fatalf("branch = %q, want main", msg.Branch)
+		}
+		if msg.Worktree {
+			t.Fatalf("primary checkout reported as a linked worktree (primary=%q)", msg.Primary)
+		}
+		if msg.Primary != "" {
+			t.Fatalf("primary checkout named a primary: %q", msg.Primary)
+		}
+	})
+
+	t.Run("linked worktree", func(t *testing.T) {
+		msg, ok := loadBranchCmd(linked, false)().(branchMsg)
+		if !ok {
+			t.Fatal("not a branchMsg")
+		}
+		if msg.Err != nil {
+			t.Fatalf("err: %v", msg.Err)
+		}
+		if msg.Branch != "feat/x" {
+			t.Fatalf("branch = %q, want feat/x", msg.Branch)
+		}
+		if !msg.Worktree {
+			t.Fatal("linked worktree not detected")
+		}
+		// The primary is derivable because git reports an absolute common dir
+		// for a linked worktree; losing it would leave the report unable to
+		// name what the worktree belongs to.
+		if filepath.Base(msg.Primary) != filepath.Base(primary) {
+			t.Fatalf("primary = %q, want the primary checkout %q", msg.Primary, primary)
+		}
+	})
+
+	t.Run("plain directory is not a repo", func(t *testing.T) {
+		msg, ok := loadBranchCmd(t.TempDir(), false)().(branchMsg)
+		if !ok {
+			t.Fatal("not a branchMsg")
+		}
+		if msg.Err == nil {
+			t.Fatalf("a non-repo reported success: branch=%q worktree=%v", msg.Branch, msg.Worktree)
+		}
+		if msg.Branch != "" || msg.Worktree {
+			t.Fatalf("a non-repo carried git facts: %+v", msg)
+		}
+	})
+}
+
+func TestBranchChipMarksWorktree(t *testing.T) {
+	m := newTestModel()
+	m.loc = LocaleEN
+
+	m.branch = "feat/x"
+	m.worktree = false
+	if got := m.branchChip(); got != "(feat/x)" {
+		t.Fatalf("primary chip = %q, want (feat/x)", got)
+	}
+	// A linked worktree is marked so two checkouts of one repo are
+	// distinguishable on screen.
+	m.worktree = true
+	got := m.branchChip()
+	if got != "(feat/x ⧉)" {
+		t.Fatalf("worktree chip = %q, want (feat/x ⧉)", got)
+	}
+	if ansi.StringWidth(got) != ansi.StringWidth("(feat/x ⧉)") {
+		t.Fatalf("marker width is not single-column: %q", got)
+	}
+}
+
+func TestWorkspaceReport(t *testing.T) {
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		t.Skip("no home directory")
+	}
+	cwd := filepath.Join(home, "git", "niffler-tui-fleet")
+
+	t.Run("primary checkout", func(t *testing.T) {
+		got := workspaceReport(LocaleEN, cwd, "main", false, "", nil)
+		if !strings.Contains(got, "~/git/niffler-tui-fleet") {
+			t.Fatalf("path missing: %q", got)
+		}
+		if !strings.Contains(got, "main") {
+			t.Fatalf("branch missing: %q", got)
+		}
+		if strings.Contains(got, "LINKED") {
+			t.Fatalf("primary checkout claimed to be a worktree: %q", got)
+		}
+	})
+
+	t.Run("linked worktree names the primary", func(t *testing.T) {
+		got := workspaceReport(LocaleEN, cwd, "feat/fleet", true,
+			filepath.Join(home, "git", "niffler-tui"), nil)
+		if !strings.Contains(got, "LINKED") {
+			t.Fatalf("worktree not called out: %q", got)
+		}
+		if !strings.Contains(got, "~/git/niffler-tui") {
+			t.Fatalf("primary checkout missing: %q", got)
+		}
+	})
+
+	t.Run("not a repo shows no branch line", func(t *testing.T) {
+		got := workspaceReport(LocaleEN, cwd, "", false, "", nil)
+		if strings.Contains(got, "branch") {
+			t.Fatalf("branch line rendered without a branch: %q", got)
+		}
+	})
+
+	t.Run("grant count is reported", func(t *testing.T) {
+		got := workspaceReport(LocaleEN, cwd, "main", false, "", []string{"/a", "/b"})
+		if !strings.Contains(got, "2") {
+			t.Fatalf("grant count missing: %q", got)
+		}
+	})
+}
+
+// TestWorkspaceChangeAppliesAndGuardsStale mirrors the roots handlers: a repin
+// updates the row, and a reply for another conversation is dropped.
+func TestWorkspaceChangeAppliesAndGuardsStale(t *testing.T) {
+	m := newTestModel()
+	m.loc = LocaleEN
+	m.session = "sess-1"
+	m.cwd = "/old"
+	// Stale git facts must not survive a repin: they describe the old path.
+	m.branch, m.worktree, m.primary = "old-branch", true, "/primary"
+
+	updated, _ := m.Update(workspaceChangeMsg{
+		Session: "sess-1", Path: "/new", Cwd: "/new",
+	})
+	m = updated.(model)
+	if m.cwd != "/new" {
+		t.Fatalf("cwd = %q, want /new", m.cwd)
+	}
+	if m.branch != "" || m.worktree || m.primary != "" {
+		t.Fatalf("stale git facts survived a repin: branch=%q worktree=%v primary=%q",
+			m.branch, m.worktree, m.primary)
+	}
+
+	// A refusal (the immutability case) keeps the current workspace and
+	// surfaces core's reason verbatim.
+	before := m.cwd
+	updated, _ = m.Update(workspaceChangeMsg{
+		Session: "sess-1", Path: "/nope",
+		Err: errors.New("conversation cwd is immutable once turns exist (currently /new); start a new conversation to work elsewhere"),
+	})
+	m = updated.(model)
+	if m.cwd != before {
+		t.Fatalf("a refused repin changed the workspace: %q", m.cwd)
+	}
+	last := m.blocks[len(m.blocks)-1]
+	if last.kind != blockError || !strings.Contains(last.text, "immutable") {
+		t.Fatalf("refusal block = %q (kind %v)", last.text, last.kind)
+	}
+
+	// A stale reply from another conversation must not move this one.
+	updated, _ = m.Update(workspaceChangeMsg{
+		Session: "sess-other", Path: "/elsewhere", Cwd: "/elsewhere",
+	})
+	m = updated.(model)
+	if m.cwd != before {
+		t.Fatalf("stale repin reply moved the workspace: %q", m.cwd)
+	}
+}
+
+func TestLocalWorkspaceReportsWithoutArgument(t *testing.T) {
+	m := newTestModel()
+	m.loc = LocaleEN
+	m.connected = true
+	m.cwd = "/ws"
+	m.branch = "main"
+	cmd, _ := builtinCommand("workspace")
+
+	updated, got := localWorkspace(m, cmd, "")
+	out := updated.(model)
+	if got != nil {
+		t.Fatal("a bare /workspace returned a command (it is a local readback)")
+	}
+	last := out.blocks[len(out.blocks)-1]
+	if !strings.Contains(last.text, "/ws") {
+		t.Fatalf("readback = %q", last.text)
+	}
+}
+
+func TestLocalWorkspaceRepinsWithArgument(t *testing.T) {
+	m := newTestModel()
+	m.loc = LocaleEN
+	m.connected = true
+	m.cwd = t.TempDir()
+	cmd, _ := builtinCommand("workspace")
+
+	updated, got := localWorkspace(m, cmd, "/tmp")
+	out := updated.(model)
+	if got == nil {
+		t.Fatal("a repin returned no command")
+	}
+	if len(out.blocks) == 0 {
+		t.Fatal("no echo block for the repin")
+	}
+	if !strings.Contains(out.blocks[len(out.blocks)-1].text, "/tmp") {
+		t.Fatalf("repin echo = %q", out.blocks[len(out.blocks)-1].text)
+	}
+}
+
+func TestLocalWorkspaceRefusesWhenDisconnected(t *testing.T) {
+	m := newTestModel()
+	m.loc = LocaleEN
+	m.connected = false
+	cmd, _ := builtinCommand("workspace")
+
+	updated, got := localWorkspace(m, cmd, "")
+	out := updated.(model)
+	if got != nil {
+		t.Fatal("returned a command while disconnected")
+	}
+	if out.contextNote == "" {
+		t.Fatal("no note explaining the refusal")
+	}
+}
+
+// gitRun runs one git command in dir, failing the test on a nonzero exit.
+func gitRun(t *testing.T, dir string, args ...string) {
+	t.Helper()
+	cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git %s: %v (%s)", strings.Join(args, " "), err, out)
+	}
+}
+
+func osWrite(t *testing.T, path, content string) {
+	t.Helper()
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// execLookPath is os/exec.LookPath behind a tiny wrapper so the test file's
+// imports stay obvious.
+func execLookPath(name string) (string, error) { return exec.LookPath(name) }
