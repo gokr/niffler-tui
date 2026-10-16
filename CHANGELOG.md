@@ -6,6 +6,56 @@ project aims for [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+Fleet support (experimental): the client can be pinned to provisioned remote
+instances and switch between them, always by verification and never by
+falling back to local.
+
+### Added
+
+- Client-local fleet registry with pinned identity validation.
+  `--instance-import` probes the live catalog before saving a 0600 registry at
+  `$XDG_CONFIG_HOME/niffler/instances.json`; `--instance NAME` and
+  `--instance-probe` select and verify a target at startup. Missing targets and
+  identity mismatches refuse, and there is no local fallback.
+- Owned SSH and Multipass transport with an identity probe. SSH uses normal
+  configuration/known_hosts with agent forwarding disabled; Multipass uses
+  `exec` plus a Python 3 socket bridge, without keys or host mounts. No remote
+  service is started or stopped.
+- `/niffler [NAME|next]` switches between pinned instances by re-exec; `next`
+  skips implicit local, and returning to implicit local requires quitting and a
+  plain launch.
+- `/agent [name|none]` chooses the agent definition a new conversation is born
+  with — the persona it speaks as plus the toolset, model, thinking and budgets
+  that freeze with it. A bare `/agent` opens a picker showing each definition's
+  building blocks, `none` clears the choice, and the header carries the active
+  choice. Client state like `/toolset`: it applies to conversations created from
+  here on and never rewrites one that already exists.
+
+### Changed
+
+- `/toolset` replaces `/profile` for selecting and managing tool visibility;
+  `/profile` remains a command alias. Requires the harness's `toolset` API.
+- Each new forwarding connection re-resolves the remote endpoint and re-verifies
+  the pinned catalog identity before forwarding SDK traffic, including on
+  reconnect. A mismatch closes that lane rather than continuing.
+- A switch verifies the target and then reserves its conversation there (`ui`
+  register + claim, renewed in the background) before the current client
+  releases its UI. The reservation travels to the re-executed client through a
+  private `NIF_TUI_INSTANCE_CLAIM` environment handoff and is re-verified before
+  the old claim is released, so a refused claim leaves the current instance
+  untouched.
+- Remote workspace defaults to the receipt root rather than the local cwd, and
+  saved last-session state keys off the stable instance ID rather than the
+  forwarding port. Local path completion and transcript file opening are
+  disabled remotely; attachments still refer to explicitly selected local files.
+
+### Fixed
+
+- Local shell escapes (`!cmd`) run locally while a remote instance is selected.
+- The fleet registry stays private to the client.
+
+Background approvals are not implemented yet.
+
 ## [0.6.1] — 2026-10-14
 
 The two marker lines now actually appear in `/help`. They were added to the
@@ -60,8 +110,6 @@ that had grown one.
   dialects (`ask` was parsed three different ways, and `/status ask`
   re-implemented the turn start that `applySlashResult` already owns). `!/`
   is refused with a hint instead of being sent to the model as prompt text.
-- `/toolset` replaces `/profile` for selecting and managing tool visibility;
-  `/profile` remains a command alias. Requires the harness's `toolset` API.
 - Batched read cards show an item count or single target instead of `?`.
 - Pending `Steer: ` labels clear on the harness's model-dispatch acknowledgement.
 - Ctrl-hover underlines clickable URL/path tokens with mouse tracking enabled.
