@@ -230,6 +230,12 @@ func builtinSlashCommands() []slashCommand {
 		// budgets that freeze with them. Client state like /toolset — a
 		// selection never rewrites a conversation that already exists.
 		{Name: "agent", Description: "choose the agent definition for new conversations; none clears", builtin: true, interactive: true, run: localAgent},
+		// /skills is declared here rather than left to the skills component's
+		// own registration (skills.go): the component's command routes to
+		// skill_list and prints JSON, which is unusable as a menu, cannot show
+		// what is already loaded, and offers no way to load. A built-in shadows
+		// a component command by design.
+		{Name: "skills", Description: "browse skills, see which are loaded, and load one", builtin: true, interactive: true, run: localSkills},
 		{Name: "profile", Description: "legacy alias for /toolset", builtin: true, interactive: true, aliasOf: "toolset", run: localProfile},
 		{Name: "mouse", Description: "wheel scrolling and drag selection", builtin: true, run: localMouse, Params: []slashParam{
 			{Name: "state", Kind: "enum", Values: []string{"on", "off"}},

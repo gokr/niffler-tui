@@ -2231,6 +2231,19 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.layout()
 		}
 
+	case skillsListMsg:
+		// The picker may have been dismissed while the list was in flight.
+		if m.mode != modeSkills {
+			return m, nil
+		}
+		if msg.Err == nil {
+			m.openSkillsSelectorWith(msg.Skills)
+		} else {
+			m.contextNote = t(m.loc, "skills.unavailable", msg.Err.Error())
+			m.mode = modeChat
+			m.layout()
+		}
+
 	case profilesMsg:
 		if m.mode != modeProfiles {
 			return m, nil
@@ -3240,7 +3253,7 @@ func (m *model) layout() {
 		extra++
 	}
 	m.viewport.SetHeight(max(1, height-5-m.input.Height()-extra))
-	if m.mode == modeProviders || m.mode == modeCatalogProviders || m.mode == modeModels || m.mode == modeSessions || m.mode == modeThemes || m.mode == modeProfiles || m.mode == modeLsp || m.mode == modeProcesses {
+	if m.mode == modeProviders || m.mode == modeCatalogProviders || m.mode == modeModels || m.mode == modeSessions || m.mode == modeThemes || m.mode == modeProfiles || m.mode == modeSkills || m.mode == modeLsp || m.mode == modeProcesses {
 		m.selector.setSize(width-1, max(6, height-4))
 	}
 	if m.mode == modeConnectForm {
@@ -3408,7 +3421,8 @@ func (m model) View() tea.View {
 		parts := []string{headerLine}
 		switch m.mode {
 		case modeProviders, modeCatalogProviders, modeModels, modeSessions,
-			modeMcp, modeMcpSearch, modeThemes, modeProfiles, modeAgents, modeLsp, modeProcesses:
+			modeMcp, modeMcpSearch, modeThemes, modeProfiles, modeAgents, modeSkills,
+			modeLsp, modeProcesses:
 			control = m.selector.list.View()
 			parts = append(parts, control)
 			footer := t(m.loc, "footer.filterChoose")

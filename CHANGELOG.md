@@ -31,6 +31,16 @@ falling back to local.
   building blocks, `none` clears the choice, and the header carries the active
   choice. Client state like `/toolset`: it applies to conversations created from
   here on and never rewrites one that already exists.
+- `/skills [name]` browses the installed skills as a menu and loads one.
+  The component's own command could only print `skill_list`'s JSON, and said
+  nothing about which skills were already in context or how to load one — the
+  client now declares the command instead (a built-in shadows a component
+  registration), marks the loaded ones, and loads on selection. The list still
+  comes from `skill_list` and the load still goes through the model's own
+  `skill_load`, so the size cap and the discovery/shadowing rules keep one
+  implementation. Loaded state is derived from the transcript (a load is a
+  `skill_load` call in the history), so it cannot disagree with what the model
+  actually received, and a refused load does not read as loaded.
 
 ### Changed
 

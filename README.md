@@ -260,6 +260,16 @@ Local commands are handled by the TUI and are never sent to the model:
   state like `/toolset` — a selection applies to conversations created from
   here on and never rewrites one that already exists (the harness refuses
   that: an identity is fixed at birth). The active choice shows in the header
+- `/skills [name]` — browse the skills installed on the harness and load one.
+  A bare `/skills` opens a menu listing each skill with the discovery root it
+  came from (`project`/`bundled`/`home`/`config`) and its description; skills
+  this conversation has already loaded are marked `● ` and sorted first, so
+  what is already in context is visible rather than remembered. Selecting one
+  loads it, and `/skills <name>` loads without opening the menu. The list comes
+  from the skills component's `skill_list` and the load goes through the same
+  `skill_load` the model uses, so the size cap and the discovery/shadowing rules
+  have one implementation — this command replaces the component's own raw-JSON
+  listing, which could not show what was loaded or offer a way to load it.
 - `/toolset [name|default]` — toolset applied to new conversations;
   `default` clears it, and a bare `/toolset` opens a picker listing the stored
   toolsets with the current choice marked and each one's resolved tool count

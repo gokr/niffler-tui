@@ -30,6 +30,7 @@ const (
 	modeThemes
 	modeProfiles
 	modeAgents
+	modeSkills
 	modeProfileForm
 	modeBgPeek
 )
@@ -42,7 +43,8 @@ const (
 func isSelectorMode(mode uiMode) bool {
 	switch mode {
 	case modeProviders, modeCatalogProviders, modeModels, modeSessions,
-		modeMcp, modeMcpSearch, modeThemes, modeProfiles, modeLsp, modeProcesses:
+		modeMcp, modeMcpSearch, modeThemes, modeProfiles, modeLsp, modeProcesses,
+		modeSkills:
 		return true
 	}
 	return false
@@ -76,6 +78,7 @@ const (
 	selectorProfileNew
 	selectorAgentDef
 	selectorAgentDefNone
+	selectorSkill
 )
 
 type selectorItem struct {

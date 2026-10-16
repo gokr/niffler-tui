@@ -167,6 +167,54 @@ func localDiscover(m model, cmd slashCommand, argument string) (tea.Model, tea.C
 	return m, m.toolVisibilityCmd(cmd.Name, argument)
 }
 
+// localSkills opens the skills menu: what is installed, which ones this
+// conversation has already loaded, and a way to load one (skills.go). The
+// component's own /skills is shadowed by this built-in because its output is
+// raw JSON and it offers no load — the two complaints this command exists to
+// fix. An argument loads directly, so /skills <name> works without the menu and
+// a name is still validated by the component's own skill_load.
+func localSkills(m model, cmd slashCommand, argument string) (tea.Model, tea.Cmd) {
+	if !m.connected {
+		m.contextNote = t(m.loc, "note.notConnected")
+		return m, nil
+	}
+	argument = strings.TrimSpace(argument)
+	if argument == "" {
+		m.openSkillsSelector()
+		return m, skillsListCmd(m.comp)
+	}
+	return m.loadSkill(argument)
+}
+
+// loadSkill sends the load as a turn. Loading a skill is a
+// conversation-content change and a turn is the only client-visible way to
+// append to a conversation today (core exposes `discovery` for schemas but no
+// general append-text op), so the prompt names skill_load explicitly rather
+// than hoping the model infers the mechanism. It also keeps the human in the
+// loop for what enters context.
+func (m model) loadSkill(name string) (tea.Model, tea.Cmd) {
+	if m.busy {
+		m.contextNote = t(m.loc, "skills.busy")
+		return m, nil
+	}
+	prompt := skillLoadPrompt(name)
+	m.busy = true
+	m.busySince = time.Now()
+	m.lastTokenAt = m.busySince
+	m.streamKind = streamNone
+	m.steered = 0
+	m.hadAssistant = false
+	m.assistantIdx = -1
+	m.thinkingIdx = -1
+	m.setStreaming(false)
+	m.roundClosed = false
+	m.turnEndRendered = false
+	m.addBlock(blockUser, prompt)
+	m.layout()
+	m.syncViewport(true)
+	return m, tea.Batch(m.sendTurn(prompt, nil), m.armSpinner())
+}
+
 func localCompact(m model, cmd slashCommand, argument string) (tea.Model, tea.Cmd) {
 	if !m.connected {
 		m.contextNote = t(m.loc, "note.notConnected")
@@ -1928,6 +1976,20 @@ func (m model) handleControlKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		}
 		m.syncViewport(true)
 		return m, nil
+	case modeSkills:
+		// Loading is a turn, so it is refused mid-turn (skills.busy) rather
+		// than queued: the human can retry, and a queued load would enter
+		// context at a moment they did not choose.
+		if selected.kind != selectorSkill {
+			return m, nil
+		}
+		name, ok := selected.payload.(skillSummary)
+		if !ok || name.Name == "" {
+			return m, nil
+		}
+		m.mode = modeChat
+		m.layout()
+		return m.loadSkill(name.Name)
 	case modeSessions:
 		switch selected.kind {
 		case selectorNewSession:
