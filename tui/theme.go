@@ -694,6 +694,7 @@ func applyTheme(name string) bool {
 	thinkLevelStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(th.thinkLevel))
 	toolLevelStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(th.toolLevel))
 	effortStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(th.effort))
+	agentStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(th.effort))
 	linkStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(th.link)).Underline(true)
 	codeStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(th.code))
 	activeSlashStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(th.slashFg)).Background(lipgloss.Color(th.slashBg))

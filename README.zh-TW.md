@@ -10,6 +10,34 @@ tool-call、assistant 與 completion 事件。
 
 該組件以零工具註冊。執行它不會給任何 LLM 的工具上下文新增東西。
 
+## Fleet startup (experimental)
+
+可從 harness 的 `scripts/fleet.py` 匯入私有部署回執，隨後探測或啟動實例：
+
+```bash
+./bin/niffler-tui --instance worker --instance-import /path/to/worker.json
+./bin/niffler-tui --instance-probe worker
+./bin/niffler-tui --instance worker
+```
+
+匯入先驗證線上 catalog，再將 0600 設定儲存到
+`$XDG_CONFIG_HOME/niffler/instances.json`（預設 `~/.config/niffler/`）。
+SSH 使用正常設定和 known_hosts，停用 agent 轉送；Multipass 使用 exec 和
+Python 3 socket 橋，不擷取金鑰、不掛載主機。不啟動或停止遠端服務。
+目標缺失或身分不符會拒絕，不退回本地。須配套 harness 包裝器，以避免遠端
+參數觸發本地自動啟動；普通啟動不變。
+
+遠端工作區預設回執根目錄，不使用本機 cwd。上次會話和重啟狀態使用穩定實例
+ID，不使用轉送連接埠。遠端停用本地路徑補全和記錄檔案開啟；附件仍由明確選擇
+的本地檔案提供。目前支援啟動選擇和 `/niffler NAME`/`next` 遠端重新執行切換。
+`next` 跳過隱式本地。每次新建轉送連線（含重連）都重新解析端點並驗證固定
+catalog 身分；不符會關閉該通道，不退回。驗證使用獨立探測連線，不能抵禦惡意
+端點在探測後切換。尚無背景核准。切換先驗證目標，再在目標上預先認領會話
+（`ui` register + claim，並在背景續租），之後本客戶端才釋放目前 UI。認領透過
+私有 `NIF_TUI_INSTANCE_CLAIM` 環境變數交給重新執行的客戶端，釋放舊認領前
+會再次驗證，exec 失敗則釋放該預留。認領被拒絕時目前實例不受影響；交接前
+失去預留則明確退出，而不會開啟空會話。
+
 ## 建置
 
 期望把本倉庫 checkout 在 Niffler 旁邊，這樣本地 `go.mod` 的 replacement
@@ -156,8 +184,12 @@ Niffler 的 builder 不使用這個 `go.mod`；它建立隔離的模組，replac
 - `/snippets [show|ins|del <n>]` —— alt+拖曳收集的片段列表（1 = 最新）。
   `show` 顯示全文，`ins` 插入輸入框，`del` 刪除一條。片段以 store 文件
   （kind `snippet`）存放，模型也能透過 store 的工具取回它們
-- `/profile [名稱|default]` —— 套用於新對話的工具設定；`default` 清除它，
-  不帶參數的 `/profile` 開啟選擇器，列出已儲存的設定，標出目前選擇與每個
+- `/agent [名稱|none]` —— 新對話出生時的 agent 定義：它說話所用的 persona、起始工具集，
+  以及隨之凍結的模型、思考深度和預算。`none` 清除選擇，不帶參數的 `/agent` 打開選擇器，
+  顯示每個定義的組成。與 `/toolset` 一樣是客戶端狀態：選擇只對之後新建的對話生效，
+  絕不改寫已存在的對話（harness 會拒絕——身份在出生時固定）。當前選擇顯示在標題列
+- `/toolset [名稱|default]` —— 套用於新對話的工具設定；`default` 清除它，
+  不帶參數的 `/toolset` 開啟選擇器，列出已儲存的設定，標出目前選擇與每個
   設定解析出的工具數。選擇器中的 `＋ New profile…` 開啟表單，在儲存前
   對照即時目錄校驗每個選擇器：裸選擇器命名元件，單一工具寫作
   `component.tool`（如 `edit.read`，而非 `read`），`-tool` 表示排除。
@@ -178,6 +210,7 @@ Niffler 的 builder 不使用這個 `go.mod`；它建立隔離的模組，replac
   同時使用；關閉後使用終端機原生選取，但應用收不到滾輪）
 - `/cards [on|off]` —— 用主題的卡片底色渲染工具執行區塊，使其讀作一個
   整體（僅本次執行的顯示開關）
+- `/niffler [NAME|next]` — 列出或重新執行切換固定身分的遠端實例；驗證失敗則留在原處。返回隱式本地實例須退出後普通啟動。
 - `/restart` —— 以保留的結束代碼結束，讓已安裝的 `niffler-tui` 包裝腳本重新執行
   二進位，從而在更新後載入新組建的安裝；不透過包裝腳本執行時則直接結束。
   你所在的對話和此客戶端的身份（其 `Niffler N` 標籤）會移交到繼任程序，

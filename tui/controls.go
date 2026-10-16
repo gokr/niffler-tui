@@ -37,11 +37,11 @@ func (m model) switchSession(id string) model {
 		m.gate.setSessions(id, m.agents)
 	}
 	m.restoreUsage(m.usageCache[id])
-	m.cwd = initialCwd()
+	m.cwd = m.initialWorkspace()
 	// Remember the active conversation so a restart resumes it (explicit
 	// -session/NIF_SESSION still win at startup). Keyed by bus URL + the
 	// TUI's launch directory: different projects do not resume each other.
-	persistSession(m.natsURL, m.launchDir, id)
+	persistSession(m.instanceStateScope(), m.launchDir, id)
 	m.blocks = nil
 	m.markTranscriptDirty()
 	m.renderFrom = 0
@@ -230,6 +230,35 @@ func localProfile(m model, cmd slashCommand, argument string) (tea.Model, tea.Cm
 		return m, profilesCmd(m.comp)
 	}
 	return m, m.toolVisibilityCmd(cmd.Name, argument)
+}
+
+func localAgent(m model, cmd slashCommand, argument string) (tea.Model, tea.Cmd) {
+	// Bare /agent opens the picker; an argument applies directly, validated
+	// against the store so a typo fails here instead of at the next /new.
+	argument = strings.TrimSpace(argument)
+	if argument == "" {
+		m.openAgentSelector()
+		return m, agentDefsCmd(m.comp)
+	}
+	if argument == "none" || argument == "default" {
+		m.agent = ""
+		m.addBlock(blockMeta, t(m.loc, "agent.cleared"))
+		m.syncViewport(true)
+		return m, nil
+	}
+	ok, err := agentExists(m.comp, argument)
+	if err != nil {
+		m.contextNote = err.Error()
+		return m, nil
+	}
+	if !ok {
+		m.contextNote = t(m.loc, "agent.notFound", argument)
+		return m, nil
+	}
+	m.agent = argument
+	m.addBlock(blockMeta, describeAgentChange(m.loc, argument, nil))
+	m.syncViewport(true)
+	return m, nil
 }
 
 func localModel(m model, cmd slashCommand, argument string) (tea.Model, tea.Cmd) {
@@ -502,7 +531,7 @@ func localRestart(m model, cmd slashCommand, argument string) (tea.Model, tea.Cm
 	// deliberately skips the release for a restart — that is the restart which
 	// picks up a rebuilt install, where the predecessor may be an older build
 	// that cannot release at all.
-	writeHandoff(m.natsURL, m.launchDir, m.uiID, m.session)
+	writeHandoff(m.instanceStateScope(), m.launchDir, m.uiID, m.session)
 	m.addBlock(blockMeta, t(m.loc, "chat.restarting"))
 	m.syncViewport(true)
 	return m, tea.Quit
@@ -1874,6 +1903,28 @@ func (m model) handleControlKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			m.addBlock(blockMeta, t(m.loc, "profile.cleared"))
 		} else {
 			m.addBlock(blockMeta, t(m.loc, "profile.selected", m.toolProfile))
+		}
+		m.syncViewport(true)
+		return m, nil
+	case modeAgents:
+		// The definition applies to conversations created from here on, so it
+		// is client state rather than a per-conversation override — the same
+		// rule as the toolset, and for the same reason: a born conversation's
+		// prompt and watermark are frozen and the harness refuses to re-birth.
+		switch selected.kind {
+		case selectorAgentDefNone:
+			m.agent = ""
+		case selectorAgentDef:
+			m.agent = selected.id
+		default:
+			return m, nil
+		}
+		m.mode = modeChat
+		m.layout()
+		if def, ok := selected.payload.(agentDefSummary); ok {
+			m.addBlock(blockMeta, describeAgentChange(m.loc, m.agent, []agentDefSummary{def}))
+		} else {
+			m.addBlock(blockMeta, t(m.loc, "agent.cleared"))
 		}
 		m.syncViewport(true)
 		return m, nil

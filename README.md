@@ -9,6 +9,43 @@ UI: it drives `session` calls through `svc.core.call` and renders
 The component registers with zero tools. Running it does not add anything to
 an LLM's tool context.
 
+## Fleet startup (experimental)
+
+Import a private provisioning receipt from the harness's `scripts/fleet.py`,
+then probe or launch that named instance:
+
+```bash
+./bin/niffler-tui --instance worker --instance-import /path/to/worker.json
+./bin/niffler-tui --instance-probe worker
+./bin/niffler-tui --instance worker
+```
+
+Import probes the live catalog before saving a 0600 client-local registry at
+`$XDG_CONFIG_HOME/niffler/instances.json` (default `~/.config/niffler/`). SSH
+uses normal configuration/known_hosts with agent forwarding disabled; Multipass
+uses `exec` plus a Python 3 socket bridge, without keys or host mounts. No remote
+service is started or stopped. Missing targets and identity mismatches refuse;
+there is no local fallback. Use the matching harness wrapper to ensure remote
+options bypass its local autostart. Plain launches remain unchanged.
+
+Remote workspace defaults to the receipt root, not the laptop's cwd. Saved last
+session/restart state uses the stable instance ID, not the forwarding port.
+Local path completion and transcript file opening are disabled remotely;
+attachments still refer to explicitly selected local files. This slice provides
+explicit startup selection and `/niffler NAME`/`next` re-exec switching between
+remote targets (`next` skips implicit local). Each new forwarding connection
+re-resolves the remote endpoint and verifies the pinned catalog identity before
+forwarding SDK traffic, including reconnects. A mismatch closes that lane; no
+fallback occurs. This uses a separate probe connection, not authentication against
+a malicious endpoint swap. Background approvals are not implemented yet.
+A switch verifies the target, then reserves its conversation there (`ui`
+register + claim, renewed in the background) before this client releases its
+current UI. The reservation travels to the re-executed client through a private
+`NIF_TUI_INSTANCE_CLAIM` environment handoff, is re-verified before the old
+claim is released, and is released again if the exec fails. A refused claim
+leaves the current instance untouched; a reservation lost before
+the handoff exits loudly instead of opening an empty conversation.
+
 ## Build
 
 This checkout is expected next to Niffler so the local `go.mod` replacement
@@ -203,11 +240,18 @@ Local commands are handled by the TUI and are never sent to the model:
   alt+drag (1 = newest). `show` prints the full text, `ins` drops it into
   the input, `del` removes an entry. Snippets are store documents (kind
   `snippet`), so the model can recall them too via the store's tools
-- `/profile [name|default]` — tool profile applied to new conversations;
-  `default` clears it, and a bare `/profile` opens a picker listing the stored
-  profiles with the current choice marked and each one's resolved tool count
-  and token cost (`default` is offered as the "no profile" entry). The picker's
-  `＋ New profile…` entry opens a form that validates each selector against the
+- `/agent [name|none]` — the agent definition a NEW conversation is born with:
+  the persona it speaks as, the toolset it starts with, and the model, thinking
+  and budgets that freeze with it. `none` clears the choice, and a bare
+  `/agent` opens a picker showing each definition's building blocks. Client
+  state like `/toolset` — a selection applies to conversations created from
+  here on and never rewrites one that already exists (the harness refuses
+  that: an identity is fixed at birth). The active choice shows in the header
+- `/toolset [name|default]` — toolset applied to new conversations;
+  `default` clears it, and a bare `/toolset` opens a picker listing the stored
+  toolsets with the current choice marked and each one's resolved tool count
+  and token cost (`default` is offered as the "standard toolset" entry). The picker's
+  `＋ New toolset…` entry opens a form that validates each selector against the
   live catalog before storing: a bare selector names a component, a single tool
   is `component.tool` (so `edit.read`, not `read`), and `-tool` excludes. There
   is no security boundary here — a profile only trims or adds tools for
@@ -238,6 +282,7 @@ Local commands are handled by the TUI and are never sent to the model:
   provides no app wheel)
 - `/cards [on|off]` — shade tool runs with the theme's card background so a
   run reads as one block (per-run display toggle)
+- `/niffler [NAME|next]` — list or switch pinned remote instances by re-exec; failed verification stays put. A switch reserves the target conversation (`ui` claim) before this client is released, hands that reservation to the re-executed client through the environment, and releases it again if the relaunch fails. Returning to implicit local requires quitting and a plain launch.
 - `/restart` — quit with a reserved exit code so the installed `niffler-tui`
   wrapper re-runs the binary, picking up a rebuilt install after an update;
   run without that wrapper it simply exits. The conversation you were in, and

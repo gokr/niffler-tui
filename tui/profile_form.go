@@ -156,7 +156,7 @@ func createProfile(d profileDraft, loc Locale, request func(string, map[string]a
 // names; edit intentionally upserts the selected profile.
 func saveProfile(d profileDraft, loc Locale, overwrite bool, request func(string, map[string]any, any) error) error {
 	var existing profilesResponse
-	if err := request("profile", map[string]any{"op": "list"}, &existing); err != nil {
+	if err := request("toolset", map[string]any{"op": "list"}, &existing); err != nil {
 		return err
 	}
 	for _, p := range existing.Profiles {
@@ -174,7 +174,7 @@ func saveProfile(d profileDraft, loc Locale, overwrite bool, request func(string
 		return fmt.Errorf("%s", t(loc, "profileForm.missing", strings.Join(missing, ", ")))
 	}
 	var saved okResponse
-	if err := request("profile", map[string]any{"op": "save", "name": d.name, "tools": d.tools, "note": d.note}, &saved); err != nil {
+	if err := request("toolset", map[string]any{"op": "save", "name": d.name, "tools": d.tools, "note": d.note}, &saved); err != nil {
 		return err
 	}
 	if !saved.OK {
@@ -220,7 +220,7 @@ func (m model) applyProfileDeleted(msg profileDeletedMsg) (tea.Model, tea.Cmd) {
 	if m.toolProfile == msg.name {
 		m.toolProfile = ""
 	}
-	m.contextNote = "Profile removed: " + msg.name
+	m.contextNote = "Toolset removed: " + msg.name
 	return m, profilesCmd(m.comp)
 }
 

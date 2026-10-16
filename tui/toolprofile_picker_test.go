@@ -41,7 +41,7 @@ func TestBareProfileOpensPicker(t *testing.T) {
 		t.Fatalf("profilesMsg closed the picker: mode = %v", got.mode)
 	}
 	view := stripANSI(got.View().Content)
-	for _, want := range []string{"Tool profiles", "review", "full", "2 tools"} {
+	for _, want := range []string{"Toolsets", "review", "full", "2 tools"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("profile picker missing %q:\n%s", want, view)
 		}

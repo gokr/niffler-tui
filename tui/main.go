@@ -400,25 +400,32 @@ type model struct {
 	// Profile selection is client state for new conversations; bootstrap
 	// loads only the selected conversation's persisted controls.
 	toolProfile string
+	agent       string // birth identity for conversations started from here on
 	// UI identity + lease (core's ui registry): the component name is
 	// "tui-<hex>" so approval routing is private to this terminal, and the
 	// registry number is the "Niffler 1" header label. launchDir keys the
 	// resume-state file and pins new conversations' workspaces.
-	uiID               string
-	uiName             string
-	uiNumber           int
-	launchDir          string
-	sessionNeedsCreate bool // no conversation header yet: first turn pins cwd
-	ctx                context.Context
-	comp               *sdk.Component
-	session            string
-	natsURL            string
-	loc                Locale
-	theme              string // active UI color theme (themeRegistry key)
-	viewport           viewport.Model
-	input              textarea.Model
-	spinner            spinner.Model
-	blocks             []transcriptBlock
+	uiID                  string
+	uiName                string
+	uiNumber              int
+	launchDir             string
+	sessionNeedsCreate    bool // no conversation header yet: first turn pins cwd
+	ctx                   context.Context
+	comp                  *sdk.Component
+	session               string
+	natsURL               string
+	instanceState         string
+	instanceName          string
+	switchInstance        string
+	instanceSwitchPending bool
+	switchClaim           *instanceClaim
+	remoteInstance        bool
+	loc                   Locale
+	theme                 string // active UI color theme (themeRegistry key)
+	viewport              viewport.Model
+	input                 textarea.Model
+	spinner               spinner.Model
+	blocks                []transcriptBlock
 
 	width     int
 	height    int
@@ -743,6 +750,7 @@ var (
 	thinkLevelStyle  = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("5"))
 	toolLevelStyle   = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("3"))
 	effortStyle      = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("4"))
+	agentStyle       = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("5"))
 	linkStyle        = lipgloss.NewStyle().Foreground(lipgloss.Color("12")).Underline(true)
 	codeStyle        = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("2"))
 	activeSlashStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("0")).Background(lipgloss.Color("7"))
@@ -1070,7 +1078,7 @@ func (m model) sendTurn(content string, atts []attachment) tea.Cmd {
 	return func() tea.Msg {
 		args := map[string]any{
 			"sessionId": m.session,
-			"profile":   m.toolProfile,
+			"toolset":   m.toolProfile,
 			"content":   content,
 			// Always include the key: empty explicitly clears a previously
 			// persisted conversation override after a provider/default change.
@@ -1095,6 +1103,14 @@ func (m model) sendTurn(content string, atts []attachment) tea.Cmd {
 		// fixed, so cwd would be refused as immutable).
 		if m.sessionNeedsCreate {
 			args["cwd"] = m.cwd
+			// Birth-only: the agent identity is set when the conversation is
+			// born, never sent again. The harness refuses a DIFFERENT agent on
+			// an existing conversation, so re-sending a later selection would
+			// turn a UI preference into a failed turn — and the whole point of
+			// a definition is that it freezes at birth.
+			if m.agent != "" {
+				args["agent"] = m.agent
+			}
 		}
 		result, err := m.sessionRequest(args)
 		if err != nil && m.sessionNeedsCreate {
@@ -1940,6 +1956,30 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.addBlock(blockMeta, "✓ "+t(m.loc, "note.snippetSaved"))
 		m.syncViewport(true)
 
+	case instanceSwitchMsg:
+		// instanceSwitchPending is cleared only here: the field is written before
+		// the reservation's goroutine starts and read back when it answers.
+		m.instanceSwitchPending = false
+		if msg.err == nil && msg.claim == nil {
+			msg.err = fmt.Errorf("target claim missing")
+		}
+		switch {
+		case msg.err != nil:
+			m.addBlock(blockError, "Instance switch refused: "+msg.err.Error())
+			m.syncViewport(true)
+		case m.switchInstance != "":
+			// Already quitting for another target: this reservation would be a
+			// claim nobody hands over.
+			msg.claim.Close()
+		default:
+			// The reservation outlives the UI loop: the successor adopts the same
+			// ui id on the target and its ordinary lease tick keeps the claim.
+			m.switchClaim = msg.claim
+			m.switchInstance = msg.name
+			persistSession(m.instanceStateScope(), m.launchDir, m.session)
+			return m, tea.Quit
+		}
+
 	case nameMsg:
 		m.applyNameMsg(msg)
 
@@ -2115,6 +2155,18 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case profileDeletedMsg:
 		return m.applyProfileDeleted(msg)
+
+	case agentDefsMsg:
+		if m.mode != modeAgents {
+			return m, nil
+		}
+		if msg.Err == nil {
+			m.openAgentSelectorWith(msg.Agents)
+		} else {
+			m.contextNote = msg.Err.Error()
+			m.mode = modeChat
+			m.layout()
+		}
 
 	case profilesMsg:
 		if m.mode != modeProfiles {
@@ -3258,7 +3310,11 @@ func (m model) View() tea.View {
 		// failed llm_resolve must not present stale state as current.
 		runtimeLine += errorStyle.Render(" !")
 	}
-	headerLine := header + headerSep + thinkChip + headerSep + toolChip + headerSep + effortChip + headerSep + runtimeLine
+	agentChip := ""
+	if m.agent != "" {
+		agentChip = agentStyle.Render(t(m.loc, "chip.agent", m.agent)) + headerSep
+	}
+	headerLine := header + headerSep + thinkChip + headerSep + toolChip + headerSep + effortChip + headerSep + agentChip + runtimeLine
 	// Even a normal session id plus four chips can outgrow a narrow terminal.
 	// The viewport reserves the last column; the header must honor it too or
 	// its implicit terminal wrap shifts every row, including the bottom status.
@@ -3289,12 +3345,15 @@ func (m model) View() tea.View {
 		parts := []string{headerLine}
 		switch m.mode {
 		case modeProviders, modeCatalogProviders, modeModels, modeSessions,
-			modeMcp, modeMcpSearch, modeThemes, modeProfiles, modeLsp, modeProcesses:
+			modeMcp, modeMcpSearch, modeThemes, modeProfiles, modeAgents, modeLsp, modeProcesses:
 			control = m.selector.list.View()
 			parts = append(parts, control)
 			footer := t(m.loc, "footer.filterChoose")
 			if m.mode == modeSessions {
 				footer = t(m.loc, "footer.sessions")
+			}
+			if m.mode == modeAgents {
+				footer = t(m.loc, "footer.filterSwitch")
 			}
 			if m.mode == modeProfiles {
 				if m.profileConfirmDelete != "" {
@@ -3754,19 +3813,72 @@ func persistSession(natsURL, workspace, id string) {
 }
 
 func main() {
+	originalArgs := append([]string(nil), os.Args...)
 	// The saved last session is keyed by bus URL + launch directory: two
 	// harnesses (each with its own store) never resume each other's
 	// conversations, and starting in a different project starts that
 	// project's conversation, not the previous one's.
+	opts, remaining, fleetErr := parseInstanceOptions(os.Args)
+	if fleetErr != nil {
+		fmt.Fprintln(os.Stderr, fleetErr)
+		os.Exit(1)
+	}
+	os.Args = remaining
+	if opts.Import != "" {
+		if err := importInstanceReceipt(context.Background(), opts.Name, opts.Import); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		fmt.Fprintln(os.Stdout, "Verified instance imported:", opts.Name)
+		return
+	}
+	if opts.Probe != "" {
+		_, tr, err := selectInstance(context.Background(), opts.Probe)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		id, err := probeInstanceURL(tr.URL)
+		tr.Close()
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		data, _ := json.Marshal(id)
+		fmt.Println(string(data))
+		return
+	}
 	natsURL := resolveNATSURL()
 	launchDir := initialCwd()
+	stateScope := natsURL
+	var transport *instanceTransport
+	if opts.Name != "" {
+		profile, tr, err := selectInstance(context.Background(), opts.Name)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "niffler-tui:", err)
+			os.Exit(1)
+		}
+		transport = tr
+		defer transport.Close()
+		natsURL = transport.URL
+		stateScope = instanceStateKey(profile)
+		launchDir = profile.Workspace
+		if launchDir == "" {
+			launchDir = profile.Expect.Root
+		}
+	}
+	claimHandoff, claimErr := consumeInstanceClaim(stateScope, launchDir)
+	if claimErr != nil {
+		fmt.Fprintln(os.Stderr, "niffler-tui:", claimErr)
+		return
+	}
 	// A /restart predecessor hands its registry identity — and the conversation
 	// it was on — to this process (handoff.go), so a restart resumes that
 	// conversation even when the predecessor's release never reached core.
-	handoffUI, handoffSession := consumeHandoff(natsURL, launchDir, time.Now())
+	handoffUI, handoffSession := consumeHandoff(stateScope, launchDir, time.Now())
 	defaultSession := strings.TrimSpace(os.Getenv("NIF_SESSION"))
 	if defaultSession == "" {
-		defaultSession = loadLastSession(natsURL, launchDir)
+		defaultSession = loadLastSession(stateScope, launchDir)
 	}
 	if defaultSession == "" {
 		// The handoff names the conversation too: a missing or unreadable
@@ -3775,10 +3887,23 @@ func main() {
 	}
 	session := flag.String("session", defaultSession, "Niffler session id")
 	flag.Parse()
+	if claimHandoff.UI != "" {
+		// The reserved session wins over flags, saved state and restart files.
+		handoffUI, *session = claimHandoff.UI, claimHandoff.Session
+	}
 	if !term.IsTerminal(int(os.Stdin.Fd())) || !term.IsTerminal(int(os.Stdout.Fd())) {
 		fmt.Fprintln(os.Stderr,
 			"niffler-tui: interactive terminal required; run this binary from a terminal")
 		return
+	}
+	if claimHandoff.UI != "" {
+		// Confirmed on the target before this client took over, re-verified
+		// immediately before the predecessor released it. A reservation that
+		// did not survive is not worth opening a stranger's client for.
+		if err := verifyInstanceClaim(natsURL, claimHandoff); err != nil {
+			fmt.Fprintln(os.Stderr, "niffler-tui: target claim lost:", err)
+			return
+		}
 	}
 	*session = sanitizeSessionID(strings.TrimSpace(*session))
 	if *session == "" {
@@ -3955,6 +4080,15 @@ func main() {
 	m.uiID = uiID
 	m.uiName = uiName
 	m.launchDir = launchDir
+	m.instanceName = opts.Name
+	if m.instanceName == "" {
+		m.instanceName = "local"
+	}
+	if transport != nil {
+		m.instanceState = stateScope
+		m.remoteInstance = true
+		m.cwd = launchDir
+	}
 	program = tea.NewProgram(m)
 	final, err := program.Run()
 	if err != nil {
@@ -3963,6 +4097,43 @@ func main() {
 		os.Exit(1)
 	}
 	if fm, ok := final.(model); ok {
+		// A reservation without a switch answer (unreachable today) still has to
+		// go back: it is a live claim on the target's conversation.
+		if fm.switchClaim != nil && fm.switchInstance == "" {
+			fm.switchClaim.Close()
+		}
+		if fm.switchInstance != "" {
+			reservation := fm.switchClaim
+			if reservation == nil {
+				fmt.Fprintln(os.Stderr, "instance switch failed: no target reservation")
+				comp.Close()
+				return
+			}
+			// Last check before the point of no return: the reservation was
+			// confirmed when it was taken and must still be livable now. A lost
+			// target is not silently replaced with an empty conversation.
+			if err := verifyInstanceClaim(reservation.transport.URL, reservation.handoff); err != nil {
+				fmt.Fprintln(os.Stderr, "instance switch claim lost:", err)
+				reservation.Close()
+				comp.Close()
+				return
+			}
+			// The current UI goes back now — every path from here on either hands
+			// the reservation over or rolls it back, so no window is left without
+			// one of the two.
+			releaseUI(fm.comp, fm.uiID)
+			comp.Close()
+			if transport != nil {
+				transport.Close()
+			}
+			err := relaunchInstance(originalArgs, fm.switchInstance, reservation.handoff)
+			// Only a relaunch that never started may release the reservation: a
+			// successful exec never returns, so from then on the successor holds
+			// the same ui id and releasing here would void the claim it adopted.
+			reservation.Close()
+			fmt.Fprintln(os.Stderr, "instance relaunch failed:", err)
+			return
+		}
 		// /restart hands the restart to whoever launched us: the installed
 		// wrapper loops on this exit code and re-runs the binary from disk, so
 		// the fresh process picks up a rebuilt install. Run() returns the final
@@ -3972,6 +4143,9 @@ func main() {
 			// localRestart wrote, so the registration must stay warm: releasing
 			// it here would make the successor a stranger that core refuses the
 			// very conversation the handoff is carrying over.
+			if transport != nil {
+				transport.Close()
+			}
 			os.Exit(restartExitCode)
 		}
 		releaseUI(fm.comp, fm.uiID)

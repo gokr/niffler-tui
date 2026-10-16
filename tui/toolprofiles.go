@@ -104,23 +104,23 @@ func (m model) toolVisibilityCmd(name, arg string) tea.Cmd {
 		msg := slashResultMsg{Name: name, Session: m.session}
 		var result any
 		switch name {
-		case "profile":
+		case "toolset", "profile":
 			if arg != "" {
 				selected := arg
 				if arg == "default" {
 					selected = ""
 				} else {
 					var preview json.RawMessage
-					msg.Err = requestInto(m.comp, "core", "profile", map[string]any{"op": "get", "name": arg}, &preview)
+					msg.Err = requestInto(m.comp, "core", "toolset", map[string]any{"op": "get", "name": arg}, &preview)
 					if msg.Err != nil {
 						return msg
 					}
 				}
 				msg.Profile = &selected
-				result = map[string]any{"text": "Profile for new conversations: " + arg}
+				result = map[string]any{"text": "Toolset for new conversations: " + arg}
 			} else {
 				var listing json.RawMessage
-				msg.Err = requestInto(m.comp, "core", "profile", map[string]any{"op": "list"}, &listing)
+				msg.Err = requestInto(m.comp, "core", "toolset", map[string]any{"op": "list"}, &listing)
 				result = map[string]any{"current": m.toolProfile, "available": listing}
 			}
 		case "discover":
@@ -133,7 +133,7 @@ func (m model) toolVisibilityCmd(name, arg string) tea.Cmd {
 				discovery = map[string]any{"tools": []string{strings.TrimPrefix(arg, "tool=")}}
 			}
 			var found json.RawMessage
-			msg.Err = requestInto(m.comp, "core", "session", map[string]any{"sessionId": m.session, "profile": m.toolProfile, "discovery": discovery}, &found)
+			msg.Err = requestInto(m.comp, "core", "session", map[string]any{"sessionId": m.session, "toolset": m.toolProfile, "discovery": discovery}, &found)
 			result = found
 		case "components":
 			var status struct {

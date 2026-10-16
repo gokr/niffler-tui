@@ -215,7 +215,13 @@ func builtinSlashCommands() []slashCommand {
 			{Name: "subcommand", Kind: "enum", Values: []string{"show", "ins", "del"}},
 			{Name: "n", Kind: "string", Description: "entry number from the list (1 = newest)"},
 		}},
-		{Name: "profile", Description: "choose tool profile for new conversations; default clears", builtin: true, interactive: true, run: localProfile},
+		{Name: "toolset", Description: "choose toolset for new conversations; default clears", builtin: true, interactive: true, run: localProfile},
+		// Agent definitions are the birth identity for conversations started
+		// from here on: a persona to speak as, a toolset, and the model and
+		// budgets that freeze with them. Client state like /toolset — a
+		// selection never rewrites a conversation that already exists.
+		{Name: "agent", Description: "choose the agent definition for new conversations; none clears", builtin: true, interactive: true, run: localAgent},
+		{Name: "profile", Description: "legacy alias for /toolset", builtin: true, interactive: true, aliasOf: "toolset", run: localProfile},
 		{Name: "mouse", Description: "wheel scrolling and drag selection", builtin: true, run: localMouse, Params: []slashParam{
 			{Name: "state", Kind: "enum", Values: []string{"on", "off"}},
 		}},
@@ -228,6 +234,7 @@ func builtinSlashCommands() []slashCommand {
 		{Name: "locale", Description: "switch the UI language", builtin: true, run: localLocale, Params: []slashParam{
 			{Name: "lang", Kind: "enum", Values: []string{"en", "zh", "zh-TW"}},
 		}},
+		{Name: "niffler", Description: "list instances or switch to NAME; next rotates (remote targets only)", builtin: true, interactive: true, run: localNiffler},
 		{Name: "restart", Description: "restart the client (picks up a rebuilt binary)", builtin: true, run: localRestart},
 		{Name: "quit", Description: "quit the client", builtin: true, run: localQuit},
 		// User-defined aliases: /alias <name> <prompt> defines a prompt

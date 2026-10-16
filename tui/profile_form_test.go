@@ -1,4 +1,4 @@
-// The /profile creation form: "＋ New profile…" in the picker opens a
+// The /profile creation form: "＋ New toolset…" in the picker opens a
 // three-field form (name, selectors, note) whose save validates selectors
 // against the live catalog before storing — core's resolver silently skips
 // unresolvable selectors, so the form must reject them up front and never
@@ -106,7 +106,7 @@ func TestProfileFormNewEntryOpens(t *testing.T) {
 		}
 	}
 	if newIndex < 0 {
-		t.Fatalf("no + New profile entry among %d items", len(items))
+		t.Fatalf("no + New toolset entry among %d items", len(items))
 	}
 	m.selector.list.Select(newIndex)
 	updated, _ := m.handleControlKey(tea.KeyPressMsg{Code: tea.KeyEnter})
@@ -114,7 +114,7 @@ func TestProfileFormNewEntryOpens(t *testing.T) {
 	if got.mode != modeProfileForm {
 		t.Fatalf("new entry mode = %v, want modeProfileForm", got.mode)
 	}
-	if !strings.Contains(got.View().Content, "New profile") {
+	if !strings.Contains(got.View().Content, "New toolset") {
 		t.Fatalf("form did not render:\n%s", got.View().Content)
 	}
 	// Esc returns to the picker and re-loads it.
@@ -138,7 +138,7 @@ const (
 func fakeRequest(t *testing.T, kind requestKind, profiles []toolProfileSummary, comps []visibilityComponent) func(string, map[string]any, any) error {
 	return func(tool string, args map[string]any, out any) error {
 		switch tool {
-		case "profile":
+		case "toolset":
 			if args["op"] == "list" {
 				out.(*profilesResponse).Profiles = profiles
 				return nil
@@ -167,7 +167,7 @@ func TestProfileFormSaveFlow(t *testing.T) {
 	var calls []string
 	request := func(tool string, args map[string]any, out any) error {
 		calls = append(calls, tool)
-		if tool == "profile" && args["op"] == "save" {
+		if tool == "toolset" && args["op"] == "save" {
 			if args["name"] != "recon" {
 				t.Fatalf("save name = %v", args["name"])
 			}
@@ -217,7 +217,7 @@ func TestProfileFormEditOverwritesExisting(t *testing.T) {
 	var saved bool
 	request := func(tool string, args map[string]any, out any) error {
 		switch tool {
-		case "profile":
+		case "toolset":
 			if args["op"] == "list" {
 				out.(*profilesResponse).Profiles = []toolProfileSummary{{Name: "review"}}
 				return nil

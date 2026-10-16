@@ -2,3 +2,6 @@
 
 # worktrees (using-git-worktrees skill)
 .worktrees/
+
+# disposable runtime state (test and gate logs, smoke configs)
+var/

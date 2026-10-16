@@ -79,8 +79,10 @@ type catalogProvidersResponse struct {
 // clone root plus its git revision — so /status shows which instance the
 // tui is talking to (two clones must never be confused).
 type harnessIdentity struct {
-	Root    string `json:"root"`
-	GitHash string `json:"gitHash"`
+	Root       string `json:"root"`
+	GitHash    string `json:"gitHash"`
+	InstanceID string `json:"instanceId"`
+	Name       string `json:"name"`
 }
 
 // selfIdentity describes this tui's own binary, for /status. The builder
@@ -1361,6 +1363,21 @@ type profilesResponse struct {
 	Profiles []toolProfileSummary `json:"profiles"`
 }
 
+func (r *profilesResponse) UnmarshalJSON(data []byte) error {
+	var wire struct {
+		Toolsets []toolProfileSummary `json:"toolsets"`
+		Profiles []toolProfileSummary `json:"profiles"`
+	}
+	if err := json.Unmarshal(data, &wire); err != nil {
+		return err
+	}
+	r.Profiles = wire.Toolsets
+	if r.Profiles == nil {
+		r.Profiles = wire.Profiles
+	}
+	return nil
+}
+
 type profileDeletedMsg struct {
 	name string
 	err  error
@@ -1375,7 +1392,7 @@ type profilesMsg struct {
 func profilesCmd(comp *sdk.Component) tea.Cmd {
 	return func() tea.Msg {
 		var response profilesResponse
-		err := requestInto(comp, "core", "profile", map[string]any{"op": "list"}, &response)
+		err := requestInto(comp, "core", "toolset", map[string]any{"op": "list"}, &response)
 		return profilesMsg{Profiles: response.Profiles, Err: err}
 	}
 }
@@ -1383,7 +1400,7 @@ func profilesCmd(comp *sdk.Component) tea.Cmd {
 func deleteProfileCmd(comp *sdk.Component, name string) tea.Cmd {
 	return func() tea.Msg {
 		var response okResponse
-		err := requestInto(comp, "core", "profile", map[string]any{
+		err := requestInto(comp, "core", "toolset", map[string]any{
 			"op": "delete", "name": name,
 		}, &response)
 		if err == nil && !response.OK {
