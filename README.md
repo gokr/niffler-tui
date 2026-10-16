@@ -75,6 +75,12 @@ leave no receipt at all: absence means unknown, never success.
 
 ### Remote specifics
 
+**Requires a harness with the multi-instance SDK seams** (`sdk.NewWithURL` and
+`Component.OnReconnected`); building this branch against an older harness fails
+at compile time rather than degrading. Until those land on harness `main`,
+develop against the harness feature checkout (this worktree uses an untracked
+`go.work` to do exactly that).
+
 Remote workspace defaults to the receipt root, not the laptop's cwd. Saved last
 session/restart state uses the stable instance ID, not the forwarding port, so a
 new tunnel port does not orphan history. Local path completion and transcript
