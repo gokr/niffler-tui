@@ -197,6 +197,12 @@ type conversationState struct {
 	ContextUsed  int
 	PromptTokens int
 	Cwd          string
+	// GrantedRoots are the extra roots a human granted on top of the
+	// primary workspace. core keeps the authoritative copy in a `grantedroot`
+	// store document and mirrors it into the conversation header (best-effort
+	// — see core's updateConversationHeader), so the header is the cheap read
+	// for display and the session status is the authoritative readback.
+	GrantedRoots []string
 	CachePrompt  int
 	CacheRead    int
 }
@@ -409,18 +415,19 @@ func loadConversationState(comp *sdk.Component, session string) (conversationSta
 	var response struct {
 		OK    bool `json:"ok"`
 		Value struct {
-			ProviderOverride string `json:"providerOverride"`
-			ModelOverride    string `json:"modelOverride"`
-			ThinkingEffort   string `json:"thinkingEffort"`
-			Approvals        string `json:"approvals"`
-			Provider         string `json:"provider"`
-			Model            string `json:"model"`
-			Context          int    `json:"context"`
-			ContextUsed      int    `json:"contextUsed"`
-			PromptTokens     int    `json:"promptTokens"`
-			Cwd              string `json:"cwd"`
-			CachePrompt      int    `json:"cachePrompt"`
-			CacheRead        int    `json:"cacheRead"`
+			ProviderOverride string   `json:"providerOverride"`
+			ModelOverride    string   `json:"modelOverride"`
+			ThinkingEffort   string   `json:"thinkingEffort"`
+			Approvals        string   `json:"approvals"`
+			Provider         string   `json:"provider"`
+			Model            string   `json:"model"`
+			Context          int      `json:"context"`
+			ContextUsed      int      `json:"contextUsed"`
+			PromptTokens     int      `json:"promptTokens"`
+			Cwd              string   `json:"cwd"`
+			GrantedRoots     []string `json:"grantedRoots"`
+			CachePrompt      int      `json:"cachePrompt"`
+			CacheRead        int      `json:"cacheRead"`
 		} `json:"value"`
 		Code string `json:"code"`
 	}
@@ -441,6 +448,7 @@ func loadConversationState(comp *sdk.Component, session string) (conversationSta
 		Context: response.Value.Context, ContextUsed: response.Value.ContextUsed,
 		PromptTokens: response.Value.PromptTokens,
 		Cwd:          response.Value.Cwd,
+		GrantedRoots: response.Value.GrantedRoots,
 		CachePrompt:  response.Value.CachePrompt,
 		CacheRead:    response.Value.CacheRead,
 	}, true, nil

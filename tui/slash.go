@@ -199,6 +199,15 @@ func builtinSlashCommands() []slashCommand {
 		{Name: "approvals", Description: "show or set this conversation's approval gate (ask/auto); auto grants every gated tool without asking", builtin: true, run: localApprovals, Params: []slashParam{
 			{Name: "mode", Kind: "enum", Values: []string{"ask", "auto"}, Description: "empty = show the current mode"},
 		}},
+		// /roots is the audit and the control for the conversation's working
+		// set: a bare call reports the primary workspace and every granted
+		// root, `add`/`remove` change the grants. A grant widens what tools
+		// accept and what the write fence admits, so it needs a readback the
+		// human can check and a way back out (workspace.go).
+		{Name: "roots", Description: "show the conversation workspace and granted roots; add/remove a root", builtin: true, run: localRoots, subcommands: rootsSubcommands, Params: []slashParam{
+			{Name: "subcommand", Kind: "enum", Values: subcommandNames(rootsSubcommands)},
+			{Name: "path", Kind: "string", Description: "directory to grant or revoke (empty = show the current set)"},
+		}},
 		{Name: "components", Description: "show what this conversation can call", builtin: true, run: localComponents, Params: []slashParam{
 			{Name: "filter", Kind: "enum", Values: []string{"all", "direct", "discovered", "undiscovered", "unknown"}},
 		}},

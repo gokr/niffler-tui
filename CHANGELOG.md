@@ -34,6 +34,19 @@ falling back to local.
 
 ### Changed
 
+- `/roots` in the client: a bare call reports the conversation's primary
+  workspace and every root granted on top of it, and `add`/`remove` change the
+  grants. A grant widens what tools accept and what the write fence admits
+  (core's session `roots` op) and stays until removed, so it needed a readback
+  a human can audit and a way back out — until now the only interface was a raw
+  `session` call. The client expands `~` and resolves a relative path against
+  the conversation workspace, because core requires an absolute, existing
+  directory; refusals are surfaced verbatim and never reported as a change.
+- The bottom row now carries the workspace's git branch and a `+N` count of
+  granted roots, next to the workspace itself. The branch is read locally and
+  omitted for a remote instance (there `cwd` names a directory on the other
+  machine, so a local `git` read would name an unrelated repo). The count
+  excludes the primary workspace, which is not a grant.
 - `/toolset` replaces `/profile` for selecting and managing tool visibility;
   `/profile` remains a command alias. Requires the harness's `toolset` API.
 - Each new forwarding connection re-resolves the remote endpoint and re-verifies

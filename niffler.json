@@ -53,6 +53,7 @@
         "tui/toolcard.go",
         "tui/transcript.go",
         "tui/uirelease.go",
+        "tui/workspace.go",
         "tui/processes.go"
       ],
       "interactive": true,

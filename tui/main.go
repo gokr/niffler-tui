@@ -580,8 +580,13 @@ type model struct {
 	ask askState
 
 	// cwd is the conversation workspace shown in the bottom row (loaded from
-	// the persisted conversation header).
-	cwd string
+	// the persisted conversation header). grantedRoots are the extra roots a
+	// human granted on top of it, and branch names where the work currently
+	// sits — the two additions to the row that make a grant auditable and a
+	// worktree visible (workspace.go, /roots).
+	cwd          string
+	grantedRoots []string
+	branch       string
 
 	// transcript is the cached joined rendering of the scroll window (see
 	// renderTranscript); viewportContent is the last string pushed into the
@@ -1274,6 +1279,54 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case approvalsModeMsg:
 		return m, m.applyApprovalsMode(msg)
 
+	case grantedRootsMsg:
+		// A readback for a conversation we have since left is stale: the
+		// roots belong to the session that answered, and the row must show
+		// the current one's.
+		if msg.Session != m.session {
+			break
+		}
+		if msg.Err != nil {
+			m.contextNote = t(m.loc, "roots.loadFailed", msg.Err.Error())
+			break
+		}
+		m.grantedRoots = msg.Roots
+		m.addBlock(blockMeta, rootsReport(m.loc, m.cwd, m.grantedRoots))
+		m.syncViewport(true)
+
+	case rootChangeMsg:
+		if msg.Session != m.session {
+			break
+		}
+		if msg.Err != nil {
+			// core refuses with the reason (relative, missing, the primary
+			// workspace, "/") and leaves the previous set in place, so the
+			// note is the whole story and the row keeps the old count.
+			m.addBlock(blockError, t(m.loc, "roots.changeFailed", msg.Err.Error()))
+			m.syncViewport(true)
+			break
+		}
+		m.grantedRoots = msg.Roots
+		switch msg.Action {
+		case "add":
+			m.addBlock(blockMeta, t(m.loc, "roots.added", displayPath(msg.Path, 0)))
+		default:
+			m.addBlock(blockMeta, t(m.loc, "roots.removed", displayPath(msg.Path, 0)))
+		}
+		m.syncViewport(true)
+
+	case branchMsg:
+		// A branch read for a directory we have since left is dropped: the
+		// answer would name another workspace's branch.
+		if msg.Dir != m.cwd {
+			break
+		}
+		// A failure is not a note: no repo and no git are ordinary states
+		// that simply omit the branch from the row.
+		if msg.Err == nil {
+			m.branch = msg.Branch
+		}
+
 	case connectedMsg:
 		m.connected = true
 		m.addBlock(blockMeta, t(m.loc, "note.connected", m.natsURL, m.session))
@@ -1835,6 +1888,16 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.promptTokens = msg.Conversation.PromptTokens
 		if msg.Conversation.Cwd != "" {
 			m.cwd = msg.Conversation.Cwd
+		}
+		// The workspace readback (workspace.go): granted roots come from the
+		// conversation header, the branch from a local git read of the primary
+		// workspace. Both are display state, refreshed per conversation; the
+		// authoritative set never leaves core. The header's list carries the
+		// primary workspace too, so it goes through the same filter as the
+		// session-status readback.
+		m.grantedRoots = grantedRoots(msg.Conversation.GrantedRoots, msg.Conversation.Cwd)
+		if msg.Conversation.Cwd != "" {
+			cmds = append(cmds, loadBranchCmd(msg.Conversation.Cwd, m.remoteInstance))
 		}
 		// No header yet: the first turn pins the launch directory as the
 		// conversation workspace (see sendTurn). An existing header means
@@ -3604,10 +3667,24 @@ func (m model) inputRule(label string) string {
 }
 
 // bottomLine is the single bottom row: the conversation workspace (the
-// session's cwd), the context gauge, the session usage chip (↑/↓ tokens
-// and cache hit rate) and the transient note — each after a vertical bar.
+// session's cwd) with its branch and granted-root count, the context gauge,
+// the session usage chip (↑/↓ tokens and cache hit rate) and the transient
+// note — each after a vertical bar.
+//
+// Width is spent in that order: the workspace is the anchor a grant is
+// audited against, so it survives longest; the branch and "+N" are qualifiers
+// on it and shed first (the /roots readback always has the full detail).
 func (m model) bottomLine() string {
 	line := displayPath(m.cwd, max(12, m.width/2))
+	// The branch names where the work sits. Only for a local workspace: on a
+	// remote instance cwd is a path on another machine, so a local git read
+	// would name an unrelated repo's branch (workspace.go).
+	if chip := m.branchChip(); chip != "" {
+		line += " " + chip
+	}
+	if chip := m.rootsChip(); chip != "" {
+		line += " " + chip
+	}
 	if ctx := contextStatusText(m.loc, m.runtime, m.contextUsed); ctx != "" {
 		if line != "" {
 			line += "  │  "

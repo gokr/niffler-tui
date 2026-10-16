@@ -233,6 +233,15 @@ Local commands are handled by the TUI and are never sent to the model:
   program-shaped calls too, which the per-tool `a` deliberately does not — so
   the widest grant needs the extra keypress. `a` keeps its narrower meaning
   (always allow *this* tool for this session).
+- `/roots [add|remove <dir>]` — the conversation's working set: a bare
+  `/roots` reports the primary workspace (immutable, pinned when the
+  conversation is born) and every root granted on top of it; `add` and
+  `remove` change the grants, and the bottom row carries the branch plus a
+  `+N` count so a grant is visible where the workspace already is. A grant
+  widens what tools accept and what the write fence admits, so it stays until
+  removed — it is not an OS sandbox. `~` is expanded and a relative path
+  resolves against the conversation workspace, since core requires an
+  absolute, existing directory. `/roots add ~/git/other-clone`
 - `/components [all|direct|discovered|undiscovered]` — what this conversation
   can actually call, per component, with each tool's exposure state
 - `/discover <component>|tool=NAME` — expose a component's tools (or one named
