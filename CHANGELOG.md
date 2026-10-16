@@ -19,8 +19,9 @@ falling back to local.
   identity mismatches refuse, and there is no local fallback.
 - Owned SSH and Multipass transport with an identity probe. SSH uses normal
   configuration/known_hosts with agent forwarding disabled; Multipass uses
-  `exec` plus a Python 3 socket bridge, without keys or host mounts. No remote
-  service is started or stopped.
+  `exec` plus the worker's native `cli relay <port>`, without keys, host mounts
+  or public listeners. Requires an updated worker CLI; no Python runtime or
+  transferred helper is needed. No remote service is started or stopped.
 - `/niffler [NAME|next]` switches between pinned instances by re-exec; `next`
   skips implicit local, and returning to implicit local requires quitting and a
   plain launch.

@@ -6,6 +6,7 @@ import (
 	"net"
 	"os"
 	"os/exec"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -29,9 +30,21 @@ func TestInstanceRelayCommands(t *testing.T) {
 	p.SSH = ""
 	p.Multipass = "worker"
 	cmd, err = instanceRelayCommand(context.Background(), p, "nats://127.0.0.1:4222")
-	if err != nil || cmd.Args[1] != "exec" {
-		t.Fatalf("%v %v", cmd, err)
+	if err != nil {
+		t.Fatal(err)
 	}
+	want := []string{"multipass", "exec", "worker", "--", p.Expect.Root + "/var/bin/cli", "relay", "4222"}
+	if !reflect.DeepEqual(cmd.Args, want) {
+		t.Fatalf("relay argv = %q, want %q", cmd.Args, want)
+	}
+	root := p.Expect.Root
+	for _, invalid := range []string{"", "relative", "/home/ubuntu/has space", "/home/ubuntu/$(id)", "/home/ubuntu/x;id", "/home/ubuntu/x\n"} {
+		p.Expect.Root = invalid
+		if _, err := instanceRelayCommand(context.Background(), p, "nats://127.0.0.1:4222"); err == nil {
+			t.Fatalf("invalid relay root accepted: %q", invalid)
+		}
+	}
+	p.Expect.Root = root
 	if _, err = instanceRelayCommand(context.Background(), p, "nats://0.0.0.0:4222"); err == nil {
 		t.Fatal("public relay accepted")
 	}

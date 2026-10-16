@@ -11,7 +11,7 @@ an LLM's tool context.
 
 ## Fleet startup (experimental)
 
-Import a private provisioning receipt from the harness's `scripts/fleet.py`,
+Import a private provisioning receipt from the harness's native Nim `fleet` component,
 then probe or launch that named instance:
 
 ```bash
@@ -23,8 +23,12 @@ then probe or launch that named instance:
 Import probes the live catalog before saving a 0600 client-local registry at
 `$XDG_CONFIG_HOME/niffler/instances.json` (default `~/.config/niffler/`). SSH
 uses normal configuration/known_hosts with agent forwarding disabled; Multipass
-uses `exec` plus a Python 3 socket bridge, without keys or host mounts. No remote
-service is started or stopped. Missing targets and identity mismatches refuse;
+uses `exec` plus the worker's native `<receipt-root>/var/bin/cli relay <port>`,
+without keys, host mounts or a public listener. Rebuild/update the worker's
+harness first: its CLI must support `relay` (POSIX, loopback-only); a missing or
+outdated CLI refuses with no fallback. No Python runtime or transferred helper
+is needed. No remote service is started or stopped. Missing targets and identity
+mismatches refuse;
 there is no local fallback. Use the matching harness wrapper to ensure remote
 options bypass its local autostart. Plain launches remain unchanged.
 

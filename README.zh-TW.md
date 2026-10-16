@@ -12,7 +12,7 @@ tool-call、assistant 與 completion 事件。
 
 ## Fleet startup (experimental)
 
-可從 harness 的 `scripts/fleet.py` 匯入私有部署回執，隨後探測或啟動實例：
+可從 harness 的原生 Nim `fleet` 組件匯入私有部署回執，隨後探測或啟動實例：
 
 ```bash
 ./bin/niffler-tui --instance worker --instance-import /path/to/worker.json
@@ -23,7 +23,10 @@ tool-call、assistant 與 completion 事件。
 匯入先驗證線上 catalog，再將 0600 設定儲存到
 `$XDG_CONFIG_HOME/niffler/instances.json`（預設 `~/.config/niffler/`）。
 SSH 使用正常設定和 known_hosts，停用 agent 轉送；Multipass 使用 exec 和
-Python 3 socket 橋，不擷取金鑰、不掛載主機。不啟動或停止遠端服務。
+工作節點的原生 `<receipt-root>/var/bin/cli relay <port>`，不擷取金鑰、不掛載
+主機、不開放公共監聽。請先重新建置或更新工作節點的 harness：CLI 必須支援
+`relay`（POSIX，僅限迴路）；缺失或過舊會拒絕，不退回。無需 Python 執行環境
+或傳輸輔助程式。不啟動或停止遠端服務。
 目標缺失或身分不符會拒絕，不退回本地。須配套 harness 包裝器，以避免遠端
 參數觸發本地自動啟動；普通啟動不變。
 

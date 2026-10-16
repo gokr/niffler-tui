@@ -84,29 +84,9 @@ func resolveInstanceEndpoint(ctx context.Context, p instanceProfile) (string, er
 	return endpoint, nil
 }
 
-// Multipass has no port-forward command. Its exec channel runs a tiny stdlib
-// socket bridge, with no SSH key extraction, host mounts or public VM listener.
-const multipassSocketBridge = `import os,socket,sys,threading
-s=socket.create_connection(('127.0.0.1',int(sys.argv[1])),15)
-s.settimeout(None)
-def upstream():
- try:
-  while True:
-   b=os.read(0,65536)
-   if not b: break
-   s.sendall(b)
- except OSError: pass
- try: s.shutdown(socket.SHUT_WR)
- except OSError: pass
-threading.Thread(target=upstream,daemon=True).start()
-try:
- while True:
-  b=s.recv(65536)
-  if not b: break
-  sys.stdout.buffer.write(b);sys.stdout.buffer.flush()
-finally: s.close()
-`
-
+// Multipass has no port-forward command. Use the guest's native CLI relay,
+// built for its own architecture, with no key extraction, mounts or listener.
+// An outdated/missing CLI fails closed; never fall back to another transport.
 func instanceRelayCommand(ctx context.Context, p instanceProfile, endpoint string) (*exec.Cmd, error) {
 	if !loopbackEndpointPattern.MatchString(endpoint) {
 		return nil, fmt.Errorf("invalid relay endpoint")
@@ -125,7 +105,10 @@ func instanceRelayCommand(ctx context.Context, p instanceProfile, endpoint strin
 		if !regexp.MustCompile(`^[A-Za-z][A-Za-z0-9-]*$`).MatchString(p.Multipass) {
 			return nil, fmt.Errorf("invalid VM name")
 		}
-		return exec.CommandContext(ctx, "multipass", "exec", p.Multipass, "--", "python3", "-u", "-c", multipassSocketBridge, port), nil
+		if !remoteRootPattern.MatchString(p.Expect.Root) {
+			return nil, fmt.Errorf("invalid remote root")
+		}
+		return exec.CommandContext(ctx, "multipass", "exec", p.Multipass, "--", p.Expect.Root+"/var/bin/cli", "relay", port), nil
 	}
 	return nil, fmt.Errorf("no relay transport")
 }
