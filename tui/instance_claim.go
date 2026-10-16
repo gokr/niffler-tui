@@ -74,16 +74,23 @@ func reserveInstance(ctx context.Context, p instanceProfile) (*instanceClaim, er
 	if err != nil {
 		return nil, err
 	}
+	workspace := p.Workspace
+	if workspace == "" {
+		workspace = p.Expect.Root
+	}
+	return reserveInstanceTransport(tr, instanceStateKey(p), workspace)
+}
+
+func reserveLocalInstance(ctx context.Context, url, workspace string) (*instanceClaim, error) {
+	return reserveInstanceTransport(&instanceTransport{URL: url}, url, workspace)
+}
+
+func reserveInstanceTransport(tr *instanceTransport, scope, workspace string) (*instanceClaim, error) {
 	nc, err := nats.Connect(tr.URL, nats.Timeout(10*time.Second), nats.NoReconnect())
 	if err != nil {
 		tr.Close()
 		return nil, err
 	}
-	workspace := p.Workspace
-	if workspace == "" {
-		workspace = p.Expect.Root
-	}
-	scope := instanceStateKey(p)
 	session := loadLastSession(scope, workspace)
 	if session == "" {
 		session = newSessionID()

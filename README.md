@@ -28,27 +28,63 @@ without keys, host mounts or a public listener. Rebuild/update the worker's
 harness first: its CLI must support `relay` (POSIX, loopback-only); a missing or
 outdated CLI refuses with no fallback. No Python runtime or transferred helper
 is needed. No remote service is started or stopped. Missing targets and identity
-mismatches refuse;
-there is no local fallback. Use the matching harness wrapper to ensure remote
-options bypass its local autostart. Plain launches remain unchanged.
+mismatches refuse; there is no local fallback. Use the matching harness wrapper
+to ensure remote options bypass its local autostart. Plain launches remain
+unchanged.
+
+### Switching between instances
+
+One client holds a live connection per instance you have visited, and switching
+is **in-process**: no re-exec, and work on the instance you leave keeps running.
+
+| Input | Effect |
+|---|---|
+| `Alt+N` / `Alt+Shift+N` | Next / previous instance (wraps) |
+| `/niffler` | List instances with their state |
+| `/niffler NAME` | Switch to NAME (registration is required first) |
+| `/niffler next` / `previous` | Same rotation from a command |
+
+Each instance keeps its own conversation, workspace, draft, scroll position and
+connection; nothing is shared between them, and a session ID on one instance is
+never assumed to mean anything on another. The bottom row names the active
+instance and shows every visited one with its state:
+
+```
+● local   ○ worker ✓2   Alt+N next · Alt+Shift+N prev · /niffler
+```
+
+`●` marks the instance on screen, `✓N` counts conversations that finished while
+you were elsewhere, `!approval` marks one waiting on a human, and `…`/`⚠` mean
+still connecting / disconnected. `/niffler local` returns to this machine — the
+answering core is checked against the local root rather than trusted, so a
+return can never attach to a stranger's bus. Approvals on an instance you are
+not viewing are shown but never answered for you.
+
+### Completion notices
+
+A turn that finishes on another instance raises that instance's unread badge;
+opening the conversation clears it. Reads are client-local and separate from
+the agent's own notice acknowledgement, so opening a finished conversation
+does not consume anything the model still needs and does not start a turn.
+Several completions in one conversation collapse to a single unread marker.
+
+Live pushes cover the steady state; on connect and after a reconnect the client
+pages the harness's durable completion snapshot, so a finish that happened while
+the client was away is not lost. A killed turn or a failed transcript write may
+leave no receipt at all: absence means unknown, never success.
+
+### Remote specifics
 
 Remote workspace defaults to the receipt root, not the laptop's cwd. Saved last
-session/restart state uses the stable instance ID, not the forwarding port.
-Local path completion and transcript file opening are disabled remotely;
-attachments still refer to explicitly selected local files. This slice provides
-explicit startup selection and `/niffler NAME`/`next` re-exec switching between
-remote targets (`next` skips implicit local). Each new forwarding connection
-re-resolves the remote endpoint and verifies the pinned catalog identity before
-forwarding SDK traffic, including reconnects. A mismatch closes that lane; no
-fallback occurs. This uses a separate probe connection, not authentication against
-a malicious endpoint swap. Background approvals are not implemented yet.
-A switch verifies the target, then reserves its conversation there (`ui`
-register + claim, renewed in the background) before this client releases its
-current UI. The reservation travels to the re-executed client through a private
-`NIF_TUI_INSTANCE_CLAIM` environment handoff, is re-verified before the old
-claim is released, and is released again if the exec fails. A refused claim
-leaves the current instance untouched; a reservation lost before
-the handoff exits loudly instead of opening an empty conversation.
+session/restart state uses the stable instance ID, not the forwarding port, so a
+new tunnel port does not orphan history. Local path completion and transcript
+file opening are disabled remotely; attachments still refer to explicitly
+selected local files. Each forwarding connection re-resolves the remote endpoint
+and verifies the pinned catalog identity before forwarding SDK traffic,
+including reconnects; a mismatch closes that lane with no fallback. That uses a
+separate probe connection, not authentication against a malicious endpoint
+swap. `/restart` now keeps you on the instance you were on. Background approvals
+are not implemented yet.
 
 ## Build
 

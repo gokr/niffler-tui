@@ -417,6 +417,8 @@ type model struct {
 	instanceState         string
 	instanceName          string
 	switchInstance        string
+	fleetManaged          bool
+	fleetCancel           context.CancelFunc
 	instanceSwitchPending bool
 	switchClaim           *instanceClaim
 	remoteInstance        bool
@@ -3937,6 +3939,7 @@ func persistSession(natsURL, workspace, id string) {
 
 func main() {
 	originalArgs := append([]string(nil), os.Args...)
+	localDir := initialCwd()
 	// The saved last session is keyed by bus URL + launch directory: two
 	// harnesses (each with its own store) never resume each other's
 	// conversations, and starting in a different project starts that
@@ -4038,11 +4041,6 @@ func main() {
 		*session = newSessionID()
 	}
 
-	if err := os.Setenv("NIF_NATS_URL", natsURL); err != nil {
-		fmt.Fprintln(os.Stderr, "niffler-tui: set bus URL:", err)
-		os.Exit(1)
-	}
-
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	// The SDK announces connections through slog; terminal output outside the
@@ -4066,136 +4064,9 @@ func main() {
 	}
 	uiName := "tui-" + newUIID()
 
-	comp := sdk.New(uiName, componentVersion)
+	comp := sdk.NewWithURL(uiName, componentVersion, natsURL)
 	comp.Client = true
-	// The wire tap for ev.session.> sees every conversation's frames; one
-	// busy conversation can flood at hundreds of frames per second. The gate
-	// drops frames for sessions this TUI neither displays nor parents and
-	// coalesces the rest's token frames, so the UI queue and the NATS
-	// client's subscription buffer keep up (no slow-consumer drops).
 	gate := newSessionEventGate(*session)
-	var program *tea.Program
-	comp.On("ev.session.>", func(_ *sdk.Component, subject string, payload json.RawMessage) {
-		// Subjects are per-conversation (ev.session.<sessionId>.<kind>); the
-		// gate filters on the subject's session token before the payload is
-		// parsed. A two-token subject (legacy ev.session.<kind>) falls back
-		// to the payload's sessionId.
-		parts := strings.Split(subject, ".")
-		haveSubjectSession := len(parts) >= 3
-		if haveSubjectSession && !gate.interested(parts[2]) {
-			return
-		}
-		var event sessionEvent
-		if err := json.Unmarshal(payload, &event); err != nil || program == nil {
-			return
-		}
-		if !haveSubjectSession && !gate.interested(event.SessionID) {
-			return
-		}
-		kind := parts[len(parts)-1]
-		if kind == "token" {
-			gate.addToken(event)
-			return
-		}
-		// Structural events flush the session's token tail first so the
-		// merged frame lands ahead of them (per-subject wire order holds).
-		if tail := gate.flushSession(event.SessionID); tail != nil {
-			program.Send(sessionEventMsg{kind: "token", event: *tail})
-		}
-		program.Send(sessionEventMsg{kind: kind, event: event})
-	})
-	// Bound the queue rate: merged token events reach the UI on a fixed
-	// cadence instead of per wire frame.
-	go func() {
-		ticker := time.NewTicker(sessionTokenFlushEvery)
-		defer ticker.Stop()
-		for range ticker.C {
-			if program == nil {
-				continue
-			}
-			for _, ev := range gate.flushAll() {
-				program.Send(sessionEventMsg{kind: "token", event: ev})
-			}
-		}
-	}()
-	comp.On("ev.provider.>", func(_ *sdk.Component, subject string, payload json.RawMessage) {
-		if program == nil {
-			return
-		}
-		changed := false
-		if subject == "ev.provider.switch" {
-			var event struct {
-				Nickname string `json:"nickname"`
-				Previous string `json:"previous"`
-			}
-			if json.Unmarshal(payload, &event) == nil && event.Nickname != event.Previous {
-				changed = true
-			}
-		}
-		program.Send(providerBusEventMsg{Changed: changed})
-	})
-	comp.On("ev.models.updated", func(_ *sdk.Component, _ string, _ json.RawMessage) {
-		if program != nil {
-			program.Send(modelsCatalogUpdatedMsg{})
-		}
-	})
-	comp.On("ev.agent.started", func(_ *sdk.Component, _ string, payload json.RawMessage) {
-		if program == nil {
-			return
-		}
-		var event agentEventMsg
-		if json.Unmarshal(payload, &event) == nil {
-			program.Send(event)
-		}
-	})
-	comp.On("ev.agent.notice", func(_ *sdk.Component, _ string, payload json.RawMessage) {
-		if program == nil {
-			return
-		}
-		var event agentEventMsg
-		if json.Unmarshal(payload, &event) == nil {
-			program.Send(event)
-		}
-	})
-	// Catalog changes (components registering/departing) refresh the slash
-	// registry: core checkpoints the merged table to the store before this
-	// event goes out, so a store-first reload is consistent.
-	comp.On("ev.catalog.updated", func(_ *sdk.Component, _ string, _ json.RawMessage) {
-		if program != nil {
-			program.Send(catalogUpdatedMsg{})
-		}
-	})
-	// Human approval gate: directed requests arrive on this UI's own
-	// subject (core derives it from the call envelope's caller — the unique
-	// "tui-<hex>" name makes it private to this terminal), broadcast
-	// requests are direct calls or fallbacks.
-	comp.On("svc.approval."+uiName+".request", func(_ *sdk.Component, _ string, payload json.RawMessage) {
-		if program == nil {
-			return
-		}
-		if req, ok := parseApprovalPayload(payload); ok {
-			program.Send(approvalEventMsg{req: req, directed: true})
-		}
-	})
-	comp.On("ev.approval.request", func(_ *sdk.Component, _ string, payload json.RawMessage) {
-		if program == nil {
-			return
-		}
-		if req, ok := parseApprovalPayload(payload); ok {
-			program.Send(approvalEventMsg{req: req, directed: false})
-		}
-	})
-	comp.On("ev.approval.resolved", func(_ *sdk.Component, _ string, payload json.RawMessage) {
-		if program == nil {
-			return
-		}
-		var p struct {
-			ID string `json:"id"`
-		}
-		if err := json.Unmarshal(payload, &p); err == nil && p.ID != "" {
-			program.Send(approvalResolvedMsg{id: p.ID})
-		}
-	})
 
 	m := newModel(ctx, comp, *session, natsURL)
 	m.gate = gate
@@ -4212,66 +4083,40 @@ func main() {
 		m.remoteInstance = true
 		m.cwd = launchDir
 	}
-	program = tea.NewProgram(m)
+	// The initial instance's ledger scope: an explicit remote launch uses its
+	// stable identity key, the implicit local launch the URL-independent
+	// "local" key, so a restarted core's new port never forks unread state.
+	initialScope := localScope
+	if m.instanceName != "local" {
+		if stateScope != "" {
+			initialScope = stateScope
+		} else {
+			initialScope = "instance:" + m.instanceName
+		}
+	}
+	fleet := newFleet(m, localDir, initialScope)
+	program := tea.NewProgram(fleet)
+	fleet.send = program.Send
+	bindInstanceEvents(ctx, comp, gate, uiName, func(msg tea.Msg) { program.Send(fleetMsg{name: m.instanceName, generation: 1, msg: msg}) })
 	final, err := program.Run()
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "niffler-tui:", err)
-		comp.Close()
-		os.Exit(1)
 	}
-	if fm, ok := final.(model); ok {
-		// A reservation without a switch answer (unreachable today) still has to
-		// go back: it is a live claim on the target's conversation.
-		if fm.switchClaim != nil && fm.switchInstance == "" {
-			fm.switchClaim.Close()
-		}
-		if fm.switchInstance != "" {
-			reservation := fm.switchClaim
-			if reservation == nil {
-				fmt.Fprintln(os.Stderr, "instance switch failed: no target reservation")
-				comp.Close()
-				return
-			}
-			// Last check before the point of no return: the reservation was
-			// confirmed when it was taken and must still be livable now. A lost
-			// target is not silently replaced with an empty conversation.
-			if err := verifyInstanceClaim(reservation.transport.URL, reservation.handoff); err != nil {
-				fmt.Fprintln(os.Stderr, "instance switch claim lost:", err)
-				reservation.Close()
-				comp.Close()
-				return
-			}
-			// The current UI goes back now — every path from here on either hands
-			// the reservation over or rolls it back, so no window is left without
-			// one of the two.
-			releaseUI(fm.comp, fm.uiID)
-			comp.Close()
-			if transport != nil {
-				transport.Close()
-			}
-			err := relaunchInstance(originalArgs, fm.switchInstance, reservation.handoff)
-			// Only a relaunch that never started may release the reservation: a
-			// successful exec never returns, so from then on the successor holds
-			// the same ui id and releasing here would void the claim it adopted.
-			reservation.Close()
-			fmt.Fprintln(os.Stderr, "instance relaunch failed:", err)
-			return
-		}
-		// /restart hands the restart to whoever launched us: the installed
-		// wrapper loops on this exit code and re-runs the binary from disk, so
-		// the fresh process picks up a rebuilt install. Run() returns the final
-		// model, which carries the flag set by the command.
-		if fm.restart {
-			// The successor inherits this identity through the handoff record
-			// localRestart wrote, so the registration must stay warm: releasing
-			// it here would make the successor a stranger that core refuses the
-			// very conversation the handoff is carrying over.
-			if transport != nil {
-				transport.Close()
-			}
-			os.Exit(restartExitCode)
-		}
-		releaseUI(fm.comp, fm.uiID)
+	fm := fleet.models[fleet.active]
+	if f, ok := final.(*fleetModel); ok {
+		fm = f.models[f.active]
 	}
-	comp.Close()
+	fleet.close(fm.restart)
+	if fm.restart {
+		executable, e := os.Executable()
+		if e == nil {
+			args := instanceSwitchArgs(originalArgs, fm.instanceName)
+			if fm.instanceName == "local" {
+				args = instanceLocalArgs(originalArgs)
+			}
+			args[0] = executable
+			e = instanceExec(executable, args, os.Environ())
+		}
+		fmt.Fprintln(os.Stderr, "restart failed:", e)
+	}
 }

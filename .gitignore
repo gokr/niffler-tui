@@ -5,3 +5,7 @@
 
 # disposable runtime state (test and gate logs, smoke configs)
 var/
+
+# local workspace for developing against a harness feature branch
+go.work
+go.work.sum

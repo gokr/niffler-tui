@@ -22,9 +22,20 @@ falling back to local.
   `exec` plus the worker's native `cli relay <port>`, without keys, host mounts
   or public listeners. Requires an updated worker CLI; no Python runtime or
   transferred helper is needed. No remote service is started or stopped.
-- `/niffler [NAME|next]` switches between pinned instances by re-exec; `next`
-  skips implicit local, and returning to implicit local requires quitting and a
-  plain launch.
+- `/niffler [NAME|next|previous]` and `Alt+N` / `Alt+Shift+N` rotate between
+  pinned instances **in-process**: each visited instance keeps a live connection,
+  its own conversation, workspace, draft and scroll position, and work on the
+  instance you leave keeps running. `/niffler local` returns to this machine
+  after checking the answering core against the local root. The bottom row shows
+  the active instance plus every visited one with connection state, unread
+  `✓N` completions and `!approval` attention. A selected instance is never
+  replaced by a silent local fallback.
+- Unread completion badges for turns that finish on another instance, cleared
+  only by opening the conversation. Reads are client-local and independent of
+  the agent's notice acknowledgement; `activity_list` plus `ev.activity`
+  reconcile completions missed while the client was away, and a connection
+  reattach (short or long) triggers one durable rescan. Absence of a receipt
+  (killed turn, failed transcript write) is reported as unknown, never success.
 - `/agent [name|none]` chooses the agent definition a new conversation is born
   with — the persona it speaks as plus the toolset, model, thinking and budgets
   that freeze with it. A bare `/agent` opens a picker showing each definition's

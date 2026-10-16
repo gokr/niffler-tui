@@ -14,6 +14,14 @@ type instanceSwitchMsg struct {
 }
 
 func localNiffler(m model, cmd slashCommand, argument string) (tea.Model, tea.Cmd) {
+	if m.fleetManaged {
+		// The fleet wrapper owns switching: an empty argument asks it to
+		// render the ring (local plus every registered instance), and a name
+		// is resolved there. The re-exec path below belongs to a plain
+		// single-instance client.
+		return m, func() tea.Msg { return fleetSwitchRequest{name: strings.TrimSpace(argument)} }
+	}
+
 	// A switch owns the UI until it answers: a second one would race the same
 	// claim, and a quit with a reservation nobody handed over.
 	if m.instanceSwitchPending || m.switchInstance != "" {
@@ -33,7 +41,7 @@ func localNiffler(m model, cmd slashCommand, argument string) (tea.Model, tea.Cm
 	}
 	name := strings.TrimSpace(argument)
 	if name == "" {
-		lines := []string{"Instances (use /niffler NAME or /niffler next):"}
+		lines := []string{"Instances (use /niffler NAME, next or previous; Alt+N / Alt+Shift+N):", "  local — local harness"}
 		for _, n := range registry.Order {
 			p := registry.Instances[n]
 			marker := "  "
