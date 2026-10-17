@@ -181,6 +181,11 @@ and a left click toggles the card under the cursor (brief→medium→full for
 that card). Mouse tracking is **on by default**: the wheel scrolls the
 transcript, while plain left-button drag selects and copies text using
 application-owned selection. Both therefore work at the same time.
+Releasing the button is the copy — there is no separate `Cmd+C` step. The
+text goes out over OSC 52 and, when the client runs locally (no SSH
+session), also through the platform clipboard tool (`pbcopy`, `wl-copy`,
+`xclip` or `xsel`), so terminals that ignore OSC 52, such as Apple's
+Terminal and GNOME Terminal, still fill the clipboard.
 Two modifier gestures ride the same selection. **Ctrl+click** opens what
 the pointer is on: a URL in the browser, or a file path — optionally with
 a grep-style `:line` suffix, which is dropped — in the platform's default
@@ -251,8 +256,8 @@ Local commands are handled by the TUI and are never sent to the model:
 - `/name [name]` — set this conversation's name (the header title,
   replacing the auto-truncated first-message one); a bare `/name` shows the
   stored name
-- `/copy` — put the last assistant reply on the clipboard (OSC 52, the same
-  path drag selection uses)
+- `/copy` — put the last assistant reply on the clipboard (the same path
+  drag selection uses)
 - `/fav [add|rm <n>|<n>]` — favorite provider/model combinations, stored as
   one ordered store document (kind `modelfavorite`); `<n>` applies an entry
   to this conversation, and `Ctrl+X` rotates to the next favorite in order
