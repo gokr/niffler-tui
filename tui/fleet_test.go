@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"reflect"
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
@@ -88,6 +89,23 @@ func TestFleetFailedSwitchLeavesActive(t *testing.T) {
 		t.Fatal("failed claim changed current instance")
 	}
 }
+func TestFleetClipboardCommandsReachTerminal(t *testing.T) {
+	for _, cmd := range []tea.Cmd{tea.SetClipboard("selected text"), tea.SetPrimaryClipboard("selected text")} {
+		want := cmd()
+		got := scopeCmd("worker", 7, cmd)()
+		if !reflect.DeepEqual(got, want) {
+			t.Fatalf("terminal clipboard message wrapped: got %T, want %T", got, want)
+		}
+		batch := scopeCmd("worker", 7, tea.Batch(cmd, func() tea.Msg { return connectedMsg{} }))().(tea.BatchMsg)
+		if got := batch[0](); !reflect.DeepEqual(got, want) {
+			t.Fatalf("batched clipboard message wrapped: %T", got)
+		}
+		if _, ok := batch[1]().(fleetMsg); !ok {
+			t.Fatal("application message escaped instance scope")
+		}
+	}
+}
+
 func TestFleetScopesNestedBatches(t *testing.T) {
 	cmd := scopeCmd("worker", 7, tea.Batch(func() tea.Msg { return connectedMsg{} }, tea.Batch(func() tea.Msg { return connectStoppedMsg{} })))
 	batch, ok := cmd().(tea.BatchMsg)

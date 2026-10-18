@@ -200,6 +200,15 @@ func scopeCmd(name string, generation uint64, cmd tea.Cmd) tea.Cmd {
 		case tea.QuitMsg:
 			return msg
 		}
+		// Terminal commands return private Bubble Tea messages, which the host
+		// must receive directly (not wrapped as an instance's model event).
+		// Derive their types from the public commands rather than naming SDK
+		// internals. Clipboard writes are global terminal effects.
+		typ := reflect.TypeOf(msg)
+		if typ == reflect.TypeOf(tea.SetClipboard("")()) ||
+			typ == reflect.TypeOf(tea.SetPrimaryClipboard("")()) {
+			return msg
+		}
 		v := reflect.ValueOf(msg)
 		if v.Kind() == reflect.Slice && v.Type().Elem() == reflect.TypeOf(tea.Cmd(nil)) {
 			out := reflect.MakeSlice(v.Type(), v.Len(), v.Len())
