@@ -42,7 +42,37 @@ func (t *instanceTransport) Close() {
 var remoteRootPattern = regexp.MustCompile(`^/[A-Za-z0-9_./-]+$`)
 var loopbackEndpointPattern = regexp.MustCompile(`^nats://127\.0\.0\.1:[0-9]+$`)
 
+// guestCommand preserves binary stdio locally and quotes every argv word when
+// crossing SSH's remote-shell boundary. Host credentials never enter the guest.
+func instanceGuestCommand(ctx context.Context, p instanceProfile, argv []string) (*exec.Cmd, error) {
+	registry := instanceRegistry{Version: 1, Order: []string{"guest"}, Instances: map[string]instanceProfile{"guest": p}}
+	if err := registry.validate(); err != nil {
+		return nil, err
+	}
+	var args []string
+	if p.Incus != "" {
+		args = []string{"incus", "--force-local", "--project", "default", "exec", p.Incus, "--mode=non-interactive", "--", "runuser", "-u", "ubuntu", "--", "env", "HOME=/home/ubuntu", "USER=ubuntu", "LOGNAME=ubuntu"}
+	} else if p.Multipass != "" {
+		args = []string{"multipass", "exec", p.Multipass, "--"}
+	} else {
+		return nil, fmt.Errorf("no guest transport")
+	}
+	args = append(args, argv...)
+	if p.Host == "" {
+		return exec.CommandContext(ctx, args[0], args[1:]...), nil
+	}
+	words := make([]string, len(args))
+	for i, arg := range args {
+		words[i] = "'" + strings.ReplaceAll(arg, "'", "'\"'\"'") + "'"
+	}
+	return exec.CommandContext(ctx, "ssh", "-T", "-o", "BatchMode=yes", "-o", "ForwardAgent=no", "-o", "ConnectTimeout=15", "-o", "ServerAliveInterval=15", "-o", "ServerAliveCountMax=3", "--", p.Host, strings.Join(words, " ")), nil
+}
+
 func instanceRemoteCommand(ctx context.Context, p instanceProfile, script string) (*exec.Cmd, error) {
+	registry := instanceRegistry{Version: 1, Order: []string{"peer"}, Instances: map[string]instanceProfile{"peer": p}}
+	if err := registry.validate(); err != nil {
+		return nil, err
+	}
 	if p.SSH != "" {
 		if !instanceTargetPattern.MatchString(p.SSH) {
 			return nil, fmt.Errorf("invalid SSH target")
@@ -51,11 +81,11 @@ func instanceRemoteCommand(ctx context.Context, p instanceProfile, script string
 		cmd.Stdin = strings.NewReader(script)
 		return cmd, nil
 	}
-	if p.Multipass != "" {
-		if !regexp.MustCompile(`^[A-Za-z][A-Za-z0-9-]*$`).MatchString(p.Multipass) {
-			return nil, fmt.Errorf("invalid VM name")
+	if p.Multipass != "" || p.Incus != "" {
+		cmd, err := instanceGuestCommand(ctx, p, []string{"bash", "-s"})
+		if err != nil {
+			return nil, err
 		}
-		cmd := exec.CommandContext(ctx, "multipass", "exec", p.Multipass, "--", "bash", "-s")
 		cmd.Stdin = strings.NewReader(script)
 		return cmd, nil
 	}
@@ -88,6 +118,10 @@ func resolveInstanceEndpoint(ctx context.Context, p instanceProfile) (string, er
 // built for its own architecture, with no key extraction, mounts or listener.
 // An outdated/missing CLI fails closed; never fall back to another transport.
 func instanceRelayCommand(ctx context.Context, p instanceProfile, endpoint string) (*exec.Cmd, error) {
+	registry := instanceRegistry{Version: 1, Order: []string{"peer"}, Instances: map[string]instanceProfile{"peer": p}}
+	if err := registry.validate(); err != nil {
+		return nil, err
+	}
 	if !loopbackEndpointPattern.MatchString(endpoint) {
 		return nil, fmt.Errorf("invalid relay endpoint")
 	}
@@ -101,14 +135,11 @@ func instanceRelayCommand(ctx context.Context, p instanceProfile, endpoint strin
 		}
 		return exec.CommandContext(ctx, "ssh", "-T", "-o", "BatchMode=yes", "-o", "ForwardAgent=no", "-o", "ConnectTimeout=15", "-o", "ServerAliveInterval=15", "-o", "ServerAliveCountMax=3", "-W", "127.0.0.1:"+port, "--", p.SSH), nil
 	}
-	if p.Multipass != "" {
-		if !regexp.MustCompile(`^[A-Za-z][A-Za-z0-9-]*$`).MatchString(p.Multipass) {
-			return nil, fmt.Errorf("invalid VM name")
-		}
+	if p.Multipass != "" || p.Incus != "" {
 		if !remoteRootPattern.MatchString(p.Expect.Root) {
 			return nil, fmt.Errorf("invalid remote root")
 		}
-		return exec.CommandContext(ctx, "multipass", "exec", p.Multipass, "--", p.Expect.Root+"/var/bin/cli", "relay", port), nil
+		return instanceGuestCommand(ctx, p, []string{p.Expect.Root + "/var/bin/cli", "relay", port})
 	}
 	return nil, fmt.Errorf("no relay transport")
 }

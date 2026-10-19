@@ -30,6 +30,14 @@ SSH 使用正常配置和 known_hosts，禁用 agent 转发；Multipass 使用 e
 目标缺失或身份不符会拒绝，不回退本地。需配套 harness 包装器，以避免远端
 参数触发本地自动启动；普通启动不变。
 
+Incus 回执（`transport: "incus"`）通过 `incus exec` 和原生 relay，以客体普通
+用户 `ubuntu` 连接，无需客体 SSH。Incus 根目录固定为 `/home/ubuntu/niffler`。
+Incus 命令明确选择本地 daemon 和 `default` 项目，忽略客户端默认远端/项目。
+Incus 和 Multipass 回执可包含 `host: "gokr@wowbagger.krampe.se"`，通过 SSH
+在该主机上执行命令，并逐参数进行 shell 引用；本地客体省略 `host`。
+无需公开管理 API 或 NATS 监听，不转发 agent，也不复制客体密钥。
+部署和更新属于需批准的 harness fleet 操作，不是 TUI 启动的副作用。
+
 ### Switching between instances
 
 一个客户端会为每个访问过的实例保持一条活动连接，切换在**进程内**完成：

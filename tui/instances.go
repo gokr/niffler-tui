@@ -26,6 +26,8 @@ type instanceProfile struct {
 	URL       string              `json:"url,omitempty"`
 	SSH       string              `json:"ssh,omitempty"`
 	Multipass string              `json:"multipass,omitempty"`
+	Incus     string              `json:"incus,omitempty"`
+	Host      string              `json:"host,omitempty"`
 	Workspace string              `json:"workspace,omitempty"`
 	Expect    instanceExpectation `json:"expect"`
 }
@@ -63,10 +65,16 @@ func (r instanceRegistry) validate() error {
 		}
 		seen[name] = true
 		count := 0
-		for _, target := range []string{p.URL, p.SSH, p.Multipass} {
+		for _, target := range []string{p.URL, p.SSH, p.Multipass, p.Incus} {
 			if target != "" {
 				count++
 			}
+		}
+		if p.Host != "" && (!instanceTargetPattern.MatchString(p.Host) || (p.Multipass == "" && p.Incus == "")) {
+			return fmt.Errorf("host requires a guest transport and valid SSH target")
+		}
+		if p.Incus != "" && (!regexp.MustCompile(`^[A-Za-z][A-Za-z0-9-]*$`).MatchString(p.Incus) || p.Expect.Root != "/home/ubuntu/niffler") {
+			return fmt.Errorf("Incus needs a valid container name and /home/ubuntu/niffler root")
 		}
 		if name == "local" && count == 0 {
 			continue
@@ -179,6 +187,7 @@ func profileFromReceipt(data []byte, got harnessIdentity) (instanceProfile, erro
 	var receipt struct {
 		Version   int                 `json:"version"`
 		Transport string              `json:"transport"`
+		Host      string              `json:"host,omitempty"`
 		Target    string              `json:"target"`
 		Root      string              `json:"root"`
 		Expect    instanceExpectation `json:"expect"`
@@ -186,12 +195,14 @@ func profileFromReceipt(data []byte, got harnessIdentity) (instanceProfile, erro
 	if err := json.Unmarshal(data, &receipt); err != nil {
 		return instanceProfile{}, err
 	}
-	p := instanceProfile{Workspace: receipt.Root, Expect: receipt.Expect}
+	p := instanceProfile{Workspace: receipt.Root, Expect: receipt.Expect, Host: receipt.Host}
 	switch receipt.Transport {
 	case "ssh":
 		p.SSH = receipt.Target
 	case "multipass":
 		p.Multipass = receipt.Target
+	case "incus":
+		p.Incus = receipt.Target
 	default:
 		return p, fmt.Errorf("unknown receipt transport")
 	}

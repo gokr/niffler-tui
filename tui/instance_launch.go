@@ -61,7 +61,7 @@ func selectInstance(ctx context.Context, name string) (instanceProfile, *instanc
 	if !ok {
 		return p, nil, fmt.Errorf("unknown instance %q", name)
 	}
-	if name == "local" && p.URL == "" && p.SSH == "" && p.Multipass == "" {
+	if name == "local" && p.URL == "" && p.SSH == "" && p.Multipass == "" && p.Incus == "" {
 		return p, nil, fmt.Errorf("implicit local profile: launch without --instance")
 	}
 	transport, _, err := openInstanceTransport(ctx, p)

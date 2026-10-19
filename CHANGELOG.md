@@ -6,6 +6,10 @@ project aims for [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+- Native Incus receipt import and ordinary-user stdio relay; optional SSH `host`
+  routing for Incus and Multipass, without guest SSH or public management APIs.
+  Existing local Multipass and direct SSH routes remain supported.
+
 Fleet support (experimental): the client can be pinned to provisioned remote
 instances and switch between them, always by verification and never by
 falling back to local.

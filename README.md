@@ -32,6 +32,16 @@ mismatches refuse; there is no local fallback. Use the matching harness wrapper
 to ensure remote options bypass its local autostart. Plain launches remain
 unchanged.
 
+Incus receipts (`transport: "incus"`) connect through `incus exec` and the
+native relay as the guest's ordinary `ubuntu` user, never through guest SSH.
+The Incus root is `/home/ubuntu/niffler`; commands explicitly select the local
+daemon and `default` project, ignoring mutable client remote/project defaults. Incus and Multipass receipts may include
+`host: "gokr@wowbagger.krampe.se"`: management commands then execute through SSH
+on that host, with every command argument shell-quoted. Omit `host` for local
+guests. No management API or NATS listener needs public exposure. SSH keys and
+known_hosts belong to the client; no agent forwarding or copied guest keys.
+Bootstrap/update are approved harness fleet operations, not TUI startup effects.
+
 ### Switching between instances
 
 One client holds a live connection per instance you have visited, and switching
