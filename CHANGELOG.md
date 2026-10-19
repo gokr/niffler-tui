@@ -6,6 +6,9 @@ project aims for [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+- Replace supported Multipass transport with native Lima provisioning/relay; preserve SSH and Incus. Old Multipass profiles explicitly require new verified Lima receipts. Digest-pinned Ubuntu images, no host mounts or credential forwarding; real Lima smoke pending authorization.
+
+
 - Native Incus receipt import and ordinary-user stdio relay; optional SSH `host`
   routing for Incus and Multipass, without guest SSH or public management APIs.
   Existing local Multipass and direct SSH routes remain supported.

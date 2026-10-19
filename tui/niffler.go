@@ -58,7 +58,7 @@ func localNiffler(m model, cmd slashCommand, argument string) (tea.Model, tea.Cm
 		order := []string{}
 		for _, candidate := range registry.Order {
 			p := registry.Instances[candidate]
-			if p.URL != "" || p.SSH != "" || p.Multipass != "" || p.Incus != "" {
+			if p.URL != "" || p.SSH != "" || p.Lima != "" || p.Incus != "" {
 				order = append(order, candidate)
 			}
 		}
@@ -76,7 +76,7 @@ func localNiffler(m model, cmd slashCommand, argument string) (tea.Model, tea.Cm
 		m.syncViewport(true)
 		return m, nil
 	}
-	if name == "local" && p.URL == "" && p.SSH == "" && p.Multipass == "" && p.Incus == "" {
+	if name == "local" && p.URL == "" && p.SSH == "" && p.Lima == "" && p.Incus == "" {
 		m.addBlock(blockError, "Return to local by quitting and launching without --instance; local autostart is not part of remote switching.")
 		m.syncViewport(true)
 		return m, nil

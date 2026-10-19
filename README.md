@@ -22,8 +22,8 @@ then probe or launch that named instance:
 
 Import probes the live catalog before saving a 0600 client-local registry at
 `$XDG_CONFIG_HOME/niffler/instances.json` (default `~/.config/niffler/`). SSH
-uses normal configuration/known_hosts with agent forwarding disabled; Multipass
-uses `exec` plus the worker's native `<receipt-root>/var/bin/cli relay <port>`,
+uses normal configuration/known_hosts with agent forwarding disabled; Lima
+uses native `limactl shell --workdir=/home/ubuntu` plus the worker's native `<receipt-root>/var/bin/cli relay <port>`,
 without keys, host mounts or a public listener. Rebuild/update the worker's
 harness first: its CLI must support `relay` (POSIX, loopback-only); a missing or
 outdated CLI refuses with no fallback. No Python runtime or transferred helper
@@ -35,7 +35,7 @@ unchanged.
 Incus receipts (`transport: "incus"`) connect through `incus exec` and the
 native relay as the guest's ordinary `ubuntu` user, never through guest SSH.
 The Incus root is `/home/ubuntu/niffler`; commands explicitly select the local
-daemon and `default` project, ignoring mutable client remote/project defaults. Incus and Multipass receipts may include
+daemon and `default` project, ignoring mutable client remote/project defaults. Incus and Lima receipts may include
 `host: "gokr@wowbagger.krampe.se"`: management commands then execute through SSH
 on that host, with every command argument shell-quoted. Omit `host` for local
 guests. No management API or NATS listener needs public exposure. SSH keys and
@@ -515,3 +515,7 @@ built by plugin installation but started manually from the user's terminal:
 
 Interactive components are not supervised or restarted by Niffler. Quit any
 running TUI before updating or removing the package.
+
+### Lima migration
+
+`lima` profiles use native `limactl shell --workdir=/home/ubuntu NAME` and the guest CLI stdio relay; root is `/home/ubuntu/niffler`. Optional SSH host routing, direct SSH and Incus remain supported. Old Multipass receipts and registry `multipass` fields explicitly refuse: provision a new Lima guest and import its verified receipt; never rename old routes or copy identity. Fleet pins Ubuntu digests, disables mounts/credential forwarding/automatic port forwarding, and enables guest persistent user service. Real Lima smoke remains pending separate authorization.

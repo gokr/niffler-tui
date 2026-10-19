@@ -52,8 +52,8 @@ func instanceGuestCommand(ctx context.Context, p instanceProfile, argv []string)
 	var args []string
 	if p.Incus != "" {
 		args = []string{"incus", "--force-local", "--project", "default", "exec", p.Incus, "--mode=non-interactive", "--", "runuser", "-u", "ubuntu", "--", "env", "HOME=/home/ubuntu", "USER=ubuntu", "LOGNAME=ubuntu"}
-	} else if p.Multipass != "" {
-		args = []string{"multipass", "exec", p.Multipass, "--"}
+	} else if p.Lima != "" {
+		args = []string{"limactl", "shell", "--workdir=/home/ubuntu", p.Lima}
 	} else {
 		return nil, fmt.Errorf("no guest transport")
 	}
@@ -81,7 +81,7 @@ func instanceRemoteCommand(ctx context.Context, p instanceProfile, script string
 		cmd.Stdin = strings.NewReader(script)
 		return cmd, nil
 	}
-	if p.Multipass != "" || p.Incus != "" {
+	if p.Lima != "" || p.Incus != "" {
 		cmd, err := instanceGuestCommand(ctx, p, []string{"bash", "-s"})
 		if err != nil {
 			return nil, err
@@ -114,7 +114,7 @@ func resolveInstanceEndpoint(ctx context.Context, p instanceProfile) (string, er
 	return endpoint, nil
 }
 
-// Multipass has no port-forward command. Use the guest's native CLI relay,
+// Guest transports use a private stdio lane instead of automatic port forwarding. Use the guest's native CLI relay,
 // built for its own architecture, with no key extraction, mounts or listener.
 // An outdated/missing CLI fails closed; never fall back to another transport.
 func instanceRelayCommand(ctx context.Context, p instanceProfile, endpoint string) (*exec.Cmd, error) {
@@ -135,7 +135,7 @@ func instanceRelayCommand(ctx context.Context, p instanceProfile, endpoint strin
 		}
 		return exec.CommandContext(ctx, "ssh", "-T", "-o", "BatchMode=yes", "-o", "ForwardAgent=no", "-o", "ConnectTimeout=15", "-o", "ServerAliveInterval=15", "-o", "ServerAliveCountMax=3", "-W", "127.0.0.1:"+port, "--", p.SSH), nil
 	}
-	if p.Multipass != "" || p.Incus != "" {
+	if p.Lima != "" || p.Incus != "" {
 		if !remoteRootPattern.MatchString(p.Expect.Root) {
 			return nil, fmt.Errorf("invalid remote root")
 		}

@@ -12,7 +12,7 @@ import (
 )
 
 func TestGuestRoutes(t *testing.T) {
-	for _, kind := range []string{"incus", "multipass"} {
+	for _, kind := range []string{"incus", "lima"} {
 		for _, host := range []string{"", "gokr@wowbagger.krampe.se"} {
 			t.Run(kind+host, func(t *testing.T) {
 				p := testInstance()
@@ -21,7 +21,7 @@ func TestGuestRoutes(t *testing.T) {
 				if kind == "incus" {
 					p.Incus = "niffler1"
 				} else {
-					p.Multipass = "niffler1"
+					p.Lima = "niffler1"
 				}
 				cmd, err := instanceRemoteCommand(context.Background(), p, "printf ready\n")
 				if err != nil {
@@ -31,7 +31,7 @@ func TestGuestRoutes(t *testing.T) {
 				if string(data) != "printf ready\n" {
 					t.Fatal(string(data))
 				}
-				want := []string{kind, "exec", "niffler1", "--"}
+				want := []string{"limactl", "shell", "--workdir=/home/ubuntu", "niffler1"}
 				if kind == "incus" {
 					want = []string{"incus", "--force-local", "--project", "default", "exec", "niffler1", "--mode=non-interactive", "--", "runuser", "-u", "ubuntu", "--", "env", "HOME=/home/ubuntu", "USER=ubuntu", "LOGNAME=ubuntu"}
 				}
@@ -67,7 +67,7 @@ func TestGuestRoutes(t *testing.T) {
 				}
 				receipt, _ := json.Marshal(map[string]any{"version": 1, "transport": kind, "target": "niffler1", "host": host, "root": p.Expect.Root, "expect": p.Expect})
 				got, err := profileFromReceipt(receipt, harnessIdentity{InstanceID: p.Expect.ID})
-				if err != nil || got.Host != host || got.Incus != p.Incus || got.Multipass != p.Multipass {
+				if err != nil || got.Host != host || got.Incus != p.Incus || got.Lima != p.Lima {
 					t.Fatalf("%+v %v", got, err)
 				}
 				path := filepath.Join(t.TempDir(), "instances.json")
@@ -95,7 +95,7 @@ func TestGuestRouteRefusals(t *testing.T) {
 		func(p *instanceProfile) { p.Incus = "-bad" },
 		func(p *instanceProfile) { p.Incus = "x;id" },
 		func(p *instanceProfile) { p.Expect.Root = "/root/niffler" },
-		func(p *instanceProfile) { p.Multipass = "other" },
+		func(p *instanceProfile) { p.Lima = "other" },
 		func(p *instanceProfile) { p.SSH = "other" },
 		func(p *instanceProfile) { p.Incus = ""; p.Host = "host" },
 	} {

@@ -25,11 +25,24 @@ type instanceExpectation struct {
 type instanceProfile struct {
 	URL       string              `json:"url,omitempty"`
 	SSH       string              `json:"ssh,omitempty"`
-	Multipass string              `json:"multipass,omitempty"`
+	Lima      string              `json:"lima,omitempty"`
 	Incus     string              `json:"incus,omitempty"`
 	Host      string              `json:"host,omitempty"`
 	Workspace string              `json:"workspace,omitempty"`
 	Expect    instanceExpectation `json:"expect"`
+}
+
+// UnmarshalJSON rejects legacy routing authority even when another route exists.
+func (p *instanceProfile) UnmarshalJSON(data []byte) error {
+	type alias instanceProfile
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(data, &fields); err != nil {
+		return err
+	}
+	if _, exists := fields["multipass"]; exists {
+		return fmt.Errorf("Multipass profiles are no longer supported; provision Lima and import a new verified receipt; do not rename the field")
+	}
+	return json.Unmarshal(data, (*alias)(p))
 }
 
 type instanceRegistry struct {
@@ -65,13 +78,16 @@ func (r instanceRegistry) validate() error {
 		}
 		seen[name] = true
 		count := 0
-		for _, target := range []string{p.URL, p.SSH, p.Multipass, p.Incus} {
+		for _, target := range []string{p.URL, p.SSH, p.Lima, p.Incus} {
 			if target != "" {
 				count++
 			}
 		}
-		if p.Host != "" && (!instanceTargetPattern.MatchString(p.Host) || (p.Multipass == "" && p.Incus == "")) {
+		if p.Host != "" && (!instanceTargetPattern.MatchString(p.Host) || (p.Lima == "" && p.Incus == "")) {
 			return fmt.Errorf("host requires a guest transport and valid SSH target")
+		}
+		if (p.Incus != "" || p.Lima != "") && p.Expect.Root != "/home/ubuntu/niffler" {
+			return fmt.Errorf("guest root must be /home/ubuntu/niffler")
 		}
 		if p.Incus != "" && (!regexp.MustCompile(`^[A-Za-z][A-Za-z0-9-]*$`).MatchString(p.Incus) || p.Expect.Root != "/home/ubuntu/niffler") {
 			return fmt.Errorf("Incus needs a valid container name and /home/ubuntu/niffler root")
@@ -94,8 +110,8 @@ func (r instanceRegistry) validate() error {
 		if p.SSH != "" && !instanceTargetPattern.MatchString(p.SSH) {
 			return fmt.Errorf("invalid SSH target")
 		}
-		if p.Multipass != "" && !regexp.MustCompile(`^[A-Za-z][A-Za-z0-9-]*$`).MatchString(p.Multipass) {
-			return fmt.Errorf("invalid Multipass target")
+		if p.Lima != "" && !regexp.MustCompile(`^[A-Za-z][A-Za-z0-9-]*$`).MatchString(p.Lima) {
+			return fmt.Errorf("invalid Lima target")
 		}
 		if p.URL != "" {
 			u, err := url.Parse(p.URL)
@@ -200,7 +216,9 @@ func profileFromReceipt(data []byte, got harnessIdentity) (instanceProfile, erro
 	case "ssh":
 		p.SSH = receipt.Target
 	case "multipass":
-		p.Multipass = receipt.Target
+		return p, fmt.Errorf("Multipass receipts are no longer supported; provision Lima and import a new verified receipt; never rename the transport")
+	case "lima":
+		p.Lima = receipt.Target
 	case "incus":
 		p.Incus = receipt.Target
 	default:
