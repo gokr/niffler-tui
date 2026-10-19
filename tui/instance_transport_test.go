@@ -28,12 +28,12 @@ func TestInstanceRelayCommands(t *testing.T) {
 		t.Fatal(args)
 	}
 	p.SSH = ""
-	p.Multipass = "worker"
+	p.Lima = "worker"
 	cmd, err = instanceRelayCommand(context.Background(), p, "nats://127.0.0.1:4222")
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"multipass", "exec", "worker", "--", p.Expect.Root + "/var/bin/cli", "relay", "4222"}
+	want := []string{"limactl", "shell", "--workdir=/home/ubuntu", "worker", p.Expect.Root + "/var/bin/cli", "relay", "4222"}
 	if !reflect.DeepEqual(cmd.Args, want) {
 		t.Fatalf("relay argv = %q, want %q", cmd.Args, want)
 	}
@@ -48,7 +48,7 @@ func TestInstanceRelayCommands(t *testing.T) {
 	if _, err = instanceRelayCommand(context.Background(), p, "nats://0.0.0.0:4222"); err == nil {
 		t.Fatal("public relay accepted")
 	}
-	p.Multipass = "-bad"
+	p.Lima = "-bad"
 	if _, err = instanceRelayCommand(context.Background(), p, "nats://127.0.0.1:4222"); err == nil {
 		t.Fatal("option injection")
 	}
@@ -80,12 +80,12 @@ func TestInstanceRelayCopiesAndReaps(t *testing.T) {
 }
 
 // Explicit opt-in only: uses an already-running VM, never provisions or stops it.
-func TestLiveMultipassTransport(t *testing.T) {
-	vm := os.Getenv("NIF_TEST_MULTIPASS")
+func TestLiveLimaTransport(t *testing.T) {
+	vm := os.Getenv("NIF_TEST_LIMA")
 	if vm == "" {
-		t.Skip("set NIF_TEST_MULTIPASS for approved read-only VM probe")
+		t.Skip("set NIF_TEST_LIMA for approved read-only VM probe")
 	}
-	p := instanceProfile{Multipass: vm, Expect: instanceExpectation{ID: os.Getenv("NIF_TEST_INSTANCE_ID"), Root: "/home/ubuntu/niffler"}}
+	p := instanceProfile{Lima: vm, Expect: instanceExpectation{ID: os.Getenv("NIF_TEST_INSTANCE_ID"), Root: "/home/ubuntu/niffler"}}
 	transport, id, err := openInstanceTransport(context.Background(), p)
 	if err != nil {
 		t.Fatal(err)

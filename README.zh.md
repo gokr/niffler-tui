@@ -22,7 +22,7 @@ tool-call、assistant 与 completion 事件。
 
 导入先验证在线 catalog，再将 0600 配置保存到
 `$XDG_CONFIG_HOME/niffler/instances.json`（默认 `~/.config/niffler/`）。
-SSH 使用正常配置和 known_hosts，禁用 agent 转发；Multipass 使用 exec 和
+SSH 使用正常配置和 known_hosts，禁用 agent 转发；Lima 使用原生 `limactl shell --workdir=/home/ubuntu` 和
 工作节点的原生 `<receipt-root>/var/bin/cli relay <port>`，不提取密钥、不挂载
 主机、不开放公共监听。请先重新构建或更新工作节点的 harness：CLI 必须支持
 `relay`（POSIX，仅限回环）；缺失或过旧会拒绝，不回退。无需 Python 运行时
@@ -33,7 +33,7 @@ SSH 使用正常配置和 known_hosts，禁用 agent 转发；Multipass 使用 e
 Incus 回执（`transport: "incus"`）通过 `incus exec` 和原生 relay，以客体普通
 用户 `ubuntu` 连接，无需客体 SSH。Incus 根目录固定为 `/home/ubuntu/niffler`。
 Incus 命令明确选择本地 daemon 和 `default` 项目，忽略客户端默认远端/项目。
-Incus 和 Multipass 回执可包含 `host: "gokr@wowbagger.krampe.se"`，通过 SSH
+Incus 和 Lima 回执可包含 `host: "gokr@wowbagger.krampe.se"`，通过 SSH
 在该主机上执行命令，并逐参数进行 shell 引用；本地客体省略 `host`。
 无需公开管理 API 或 NATS 监听，不转发 agent，也不复制客体密钥。
 部署和更新属于需批准的 harness fleet 操作，不是 TUI 启动的副作用。
@@ -373,3 +373,7 @@ Markdown 样式跟随 `GLAMOUR_STYLE` 环境变量（默认 `dark`；见 Glamour
 
 交互式组件不受 Niffler 监督或重启。更新或移除该包之前请退出正在运行
 的 TUI。
+
+### Lima migration
+
+`lima` 使用原生 `limactl shell --workdir=/home/ubuntu NAME` 與 guest CLI stdio relay，root 固定 `/home/ubuntu/niffler`。支援可選 SSH host、直接 SSH 與 Incus。舊 Multipass 回執或 registry `multipass` 欄位明確拒絕；建立新 Lima guest 並匯入新驗證回執，勿更名舊路由或複製 instance-id。Fleet 固定 Ubuntu digest、停用主機掛載與憑證轉送及自動 port forwarding，啟用 guest 持久 user service。真實 Lima smoke 仍需另行人工授權。

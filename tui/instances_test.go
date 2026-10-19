@@ -37,7 +37,7 @@ func TestInstanceRegistryRefusals(t *testing.T) {
 	cases := map[string]func(*instanceRegistry){
 		"duplicate":      func(r *instanceRegistry) { r.Order = append(r.Order, "worker") },
 		"missing pin":    func(r *instanceRegistry) { p := r.Instances["worker"]; p.Expect.ID = ""; r.Instances["worker"] = p },
-		"two transports": func(r *instanceRegistry) { p := r.Instances["worker"]; p.Multipass = "vm"; r.Instances["worker"] = p },
+		"two transports": func(r *instanceRegistry) { p := r.Instances["worker"]; p.Lima = "vm"; r.Instances["worker"] = p },
 		"relative workspace": func(r *instanceRegistry) {
 			p := r.Instances["worker"]
 			p.Workspace = "local"
@@ -96,9 +96,9 @@ func TestInstanceIdentityAndStateIsolation(t *testing.T) {
 
 func TestImportProvisioningReceiptRequiresLiveIdentity(t *testing.T) {
 	p := testInstance()
-	data, _ := json.Marshal(map[string]any{"version": 1, "transport": "multipass", "target": "worker", "root": p.Expect.Root, "expect": p.Expect})
+	data, _ := json.Marshal(map[string]any{"version": 1, "transport": "lima", "target": "worker", "root": p.Expect.Root, "expect": p.Expect})
 	imported, err := profileFromReceipt(data, harnessIdentity{InstanceID: p.Expect.ID})
-	if err != nil || imported.Multipass != "worker" || imported.Workspace != p.Expect.Root {
+	if err != nil || imported.Lima != "worker" || imported.Workspace != p.Expect.Root {
 		t.Fatalf("import: %+v %v", imported, err)
 	}
 	if _, err = profileFromReceipt(data, harnessIdentity{InstanceID: strings.Repeat("b", 32)}); err == nil {

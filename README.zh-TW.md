@@ -22,7 +22,7 @@ tool-call、assistant 與 completion 事件。
 
 匯入先驗證線上 catalog，再將 0600 設定儲存到
 `$XDG_CONFIG_HOME/niffler/instances.json`（預設 `~/.config/niffler/`）。
-SSH 使用正常設定和 known_hosts，停用 agent 轉送；Multipass 使用 exec 和
+SSH 使用正常設定和 known_hosts，停用 agent 轉送；Lima 使用原生 `limactl shell --workdir=/home/ubuntu` 和
 工作節點的原生 `<receipt-root>/var/bin/cli relay <port>`，不擷取金鑰、不掛載
 主機、不開放公共監聽。請先重新建置或更新工作節點的 harness：CLI 必須支援
 `relay`（POSIX，僅限迴路）；缺失或過舊會拒絕，不退回。無需 Python 執行環境
@@ -33,7 +33,7 @@ SSH 使用正常設定和 known_hosts，停用 agent 轉送；Multipass 使用 e
 Incus 回執（`transport: "incus"`）透過 `incus exec` 和原生 relay，以客體普通
 使用者 `ubuntu` 連線，無需客體 SSH。Incus 根目錄固定為 `/home/ubuntu/niffler`。
 Incus 命令明確選擇本機 daemon 和 `default` 專案，忽略用戶端預設遠端/專案。
-Incus 和 Multipass 回執可包含 `host: "gokr@wowbagger.krampe.se"`，透過 SSH
+Incus 和 Lima 回執可包含 `host: "gokr@wowbagger.krampe.se"`，透過 SSH
 在該主機執行命令，並逐參數進行 shell 引用；本機客體省略 `host`。
 無需公開管理 API 或 NATS 監聽，不轉送 agent，也不複製客體金鑰。
 部署和更新屬於需核准的 harness fleet 操作，不是 TUI 啟動的副作用。
@@ -378,3 +378,7 @@ token 不會強制把它拉回底部。
 
 [Discord](https://discord.gg/ThJFEAJUAk) · 授權：MIT，見
 [LICENSE](LICENSE)。
+
+### Lima migration
+
+`lima` 使用原生 `limactl shell --workdir=/home/ubuntu NAME` 與 guest CLI stdio relay，root 固定 `/home/ubuntu/niffler`。支援可選 SSH host、直接 SSH 與 Incus。舊 Multipass 回執或 registry `multipass` 欄位明確拒絕；建立新 Lima guest 並匯入新驗證回執，勿更名舊路由或複製 instance-id。Fleet 固定 Ubuntu digest、停用主機掛載與憑證轉送及自動 port forwarding，啟用 guest 持久 user service。真實 Lima smoke 仍需另行人工授權。
