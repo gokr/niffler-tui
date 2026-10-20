@@ -101,10 +101,9 @@ func (m *model) finishMouseSelection(msg tea.MouseReleaseMsg) (tea.Cmd, bool) {
 	if text == "" {
 		return nil, true
 	}
-	// OSC 52 works through the terminal (including remote sessions when the
-	// terminal/tmux permits it). Set both the regular and primary clipboards
-	// so drag selection behaves naturally on every supported platform.
-	cmds := []tea.Cmd{tea.SetClipboard(text), tea.SetPrimaryClipboard(text)}
+	// Both clipboards over OSC 52, plus the platform clipboard for a local
+	// session whose terminal ignores OSC 52 (clipboard.go).
+	cmds := []tea.Cmd{copyToClipboard(text)}
 	// alt+drag collects the selection as a snippet on top of the copy.
 	if m.selection.mod&tea.ModAlt != 0 {
 		cmds = append(cmds, m.saveSnippetCmd(text))
