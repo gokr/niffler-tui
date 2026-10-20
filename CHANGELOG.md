@@ -6,18 +6,32 @@ project aims for [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
-- Replace supported Multipass transport with native Lima provisioning/relay; preserve SSH and Incus. Old Multipass profiles explicitly require new verified Lima receipts. Digest-pinned Ubuntu images, no host mounts or credential forwarding; real Lima smoke pending authorization.
+## [0.7.0] — 2026-10-20
 
+Lima replaces Multipass as the VM transport, and Incus joins it. A harness that
+now refuses Multipass receipts needs this client: the previous release would
+still offer a route the harness refuses.
 
-- Native Incus receipt import and ordinary-user stdio relay; optional SSH `host`
-  routing for Incus and Multipass, without guest SSH or public management APIs.
-  Existing local Multipass and direct SSH routes remain supported.
+### Changed
+
+- **Multipass is no longer a supported route.** Registry `multipass` fields and
+  old receipts refuse explicitly, with migration guidance: provision a new Lima
+  guest and import its verified receipt. There is no silent reinterpretation and
+  no falling back to local.
+
+### Added
+
+- **Lima transport**: native `limactl shell --workdir=/home/ubuntu NAME` plus the
+  guest CLI stdio relay; root is `/home/ubuntu/niffler`. Fleet pins Ubuntu image
+  digests and disables host mounts, credential propagation, agent/X11 forwarding
+  and automatic port forwarding.
+- **Incus transport**: receipt import and ordinary-user stdio relay for
+  unprivileged Incus system containers, plus optional SSH `host` routing for
+  Incus. Direct SSH remains supported.
 
 Fleet support (experimental): the client can be pinned to provisioned remote
 instances and switch between them, always by verification and never by
 falling back to local.
-
-### Added
 
 - Client-local fleet registry with pinned identity validation.
   `--instance-import` probes the live catalog before saving a 0600 registry at
