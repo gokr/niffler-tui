@@ -13,7 +13,7 @@ import (
 // files) and no aliases loaded.
 func aliasTestModel(t *testing.T) model {
 	t.Helper()
-	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	t.Setenv("HOME", t.TempDir())
 	m := newTestModel()
 	m.connected = true
 	m.aliases = map[string]aliasEntry{}
@@ -255,7 +255,7 @@ func TestAliasCompletion(t *testing.T) {
 }
 
 func TestAliasFileTolerance(t *testing.T) {
-	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	t.Setenv("HOME", t.TempDir())
 
 	// Missing file: no aliases, no error.
 	if got := loadAliases(); len(got) != 0 {
@@ -300,7 +300,7 @@ func TestAliasSaveFailureIsNonFatal(t *testing.T) {
 	if err := os.WriteFile(blocker, []byte("x"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("XDG_STATE_HOME", blocker)
+	t.Setenv("HOME", blocker)
 
 	m := newTestModel()
 	m.connected = true
@@ -490,7 +490,7 @@ func TestAliasToolRegistered(t *testing.T) {
 }
 
 func TestAliasFileObjectForms(t *testing.T) {
-	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	t.Setenv("HOME", t.TempDir())
 	path := aliasFilePath()
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		t.Fatal(err)

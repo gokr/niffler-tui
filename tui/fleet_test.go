@@ -12,7 +12,7 @@ import (
 func testFleet(t *testing.T) *fleetModel {
 	// Each test gets its own client-local ledger: unread state must never leak
 	// between tests (or into the developer's real ~/.config).
-	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("HOME", t.TempDir())
 	a := newTestModel()
 	a.instanceName = "local"
 	a.session = "same"
@@ -42,7 +42,7 @@ func TestFleetRoutesByInstanceNotSession(t *testing.T) {
 	}
 }
 func TestFleetSelectionRetainsDraftAndWork(t *testing.T) {
-	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("HOME", t.TempDir())
 	f := testFleet(t)
 	a := f.models["local"]
 	a.busy = true
@@ -65,7 +65,7 @@ func TestFleetSelectionRetainsDraftAndWork(t *testing.T) {
 // Rotation must walk the ring the user sees (local plus visited instances),
 // including an instance whose name is no longer in the registry listing.
 func TestFleetRotationCoversVisitedInstances(t *testing.T) {
-	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("HOME", t.TempDir())
 	f := testFleet(t)
 	f.order = []string{"local", "worker"}
 	f.switchTo("next")

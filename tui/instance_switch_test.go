@@ -35,7 +35,7 @@ func TestFailedInstanceSwitchKeepsCurrentSession(t *testing.T) {
 }
 
 func TestSuccessfulSwitchPersistsOldSession(t *testing.T) {
-	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	t.Setenv("HOME", t.TempDir())
 	m := newTestModel()
 	m.instanceState = "instance:old"
 	m.launchDir = "/remote"

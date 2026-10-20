@@ -13,7 +13,7 @@ import (
 )
 
 func TestHandoffRoundtripIsConsumedOnce(t *testing.T) {
-	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	t.Setenv("HOME", t.TempDir())
 	const url = "nats://127.0.0.1:4222"
 
 	writeHandoff(url, "cwd-x", "tui-6f1a9c02b7d4", "conv-carried")
@@ -28,7 +28,7 @@ func TestHandoffRoundtripIsConsumedOnce(t *testing.T) {
 }
 
 func TestHandoffIsKeyedByHarnessAndWorkspace(t *testing.T) {
-	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	t.Setenv("HOME", t.TempDir())
 	const url = "nats://127.0.0.1:4222"
 
 	writeHandoff(url, "cwd-a", "tui-1a2b3c4d5e6f", "conv-a")
@@ -46,7 +46,7 @@ func TestHandoffIsKeyedByHarnessAndWorkspace(t *testing.T) {
 }
 
 func TestHandoffStaleness(t *testing.T) {
-	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	t.Setenv("HOME", t.TempDir())
 	const url = "nats://127.0.0.1:4222"
 
 	writeHandoff(url, "cwd-x", "tui-deadbeef0001", "conv-old")
@@ -63,7 +63,7 @@ func TestHandoffStaleness(t *testing.T) {
 }
 
 func TestHandoffSanitizesRecordedIDs(t *testing.T) {
-	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	t.Setenv("HOME", t.TempDir())
 	const url = "nats://127.0.0.1:4222"
 
 	writeHandoff(url, "cwd-x", "../../etc/passwd", "weird/../session")
@@ -77,7 +77,7 @@ func TestHandoffSanitizesRecordedIDs(t *testing.T) {
 }
 
 func TestHandoffIgnoresMissingAndCorruptRecords(t *testing.T) {
-	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	t.Setenv("HOME", t.TempDir())
 	const url = "nats://127.0.0.1:4222"
 
 	if ui, session := consumeHandoff(url, "cwd-x", time.Now()); ui != "" || session != "" {
@@ -99,7 +99,7 @@ func TestHandoffIgnoresMissingAndCorruptRecords(t *testing.T) {
 }
 
 func TestWriteHandoffWithoutIdentityIsNoOp(t *testing.T) {
-	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	t.Setenv("HOME", t.TempDir())
 
 	writeHandoff("nats://127.0.0.1:4222", "cwd-x", "", "conv-x")
 	if ui, _ := consumeHandoff("nats://127.0.0.1:4222", "cwd-x", time.Now()); ui != "" {

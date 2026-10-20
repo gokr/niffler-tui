@@ -21,7 +21,7 @@ then probe or launch that named instance:
 ```
 
 Import probes the live catalog before saving a 0600 client-local registry at
-`$XDG_CONFIG_HOME/niffler/instances.json` (default `~/.config/niffler/`). SSH
+`~/.niffler/instances.json` on Linux and macOS. SSH
 uses normal configuration/known_hosts with agent forwarding disabled; Lima
 uses native `limactl shell --workdir=/home/ubuntu` plus the worker's native `<receipt-root>/var/bin/cli relay <port>`,
 without keys, host mounts or a public listener. Rebuild/update the worker's
@@ -495,10 +495,18 @@ the viewport never scans more than the window. Set `NIF_TUI_SCROLLBACK` to
 the number of lines to keep, or `0` for unlimited. The full transcript
 always remains in the session store.
 
-History is persisted per session as JSONL under
-`$XDG_STATE_HOME/niffler-tui/history-<session>.jsonl` (or
-`~/.local/state/niffler-tui/`), capped at 200 entries. Delete the file to
-clear it.
+All client-local preferences and state live under `~/.niffler/` on Linux and
+macOS: `theme`, `locale`, `aliases`, `instances.json`, `activity.json`, keyed
+`session-*`/`handoff-*` files, and `history-<session>.jsonl` (capped at 200
+entries; delete a history file to clear it). No SQLite database is introduced.
+
+Files migrate on first use from the previous platform config directory's
+`niffler/` and `$XDG_STATE_HOME/niffler-tui/` (default
+`~/.local/state/niffler-tui/`). Existing destination files win; migrated files
+are private (0600), and successfully migrated sources are removed. Close older
+TUI versions before upgrading: they still write the old locations. XDG variables
+are consulted only to locate legacy files, not to select the new destination.
+Harness store data and skill directories are unchanged.
 
 The Markdown style follows the `GLAMOUR_STYLE` environment variable (default
 `dark`; see Glamour's styles, e.g. `light`, `ascii`, `dracula`,

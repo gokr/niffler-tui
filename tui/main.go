@@ -3891,20 +3891,12 @@ func resolveNATSURL() string {
 // never resume each other's conversations, and starting niffler-tui in a
 // different project does not resume the previous project's conversation.
 func sessionFilePath(natsURL, workspace string) string {
-	dir := strings.TrimSpace(os.Getenv("XDG_STATE_HOME"))
-	if dir == "" {
-		home, err := os.UserHomeDir()
-		if err != nil {
-			return ""
-		}
-		dir = filepath.Join(home, ".local", "state")
-	}
 	name := "session"
 	if natsURL != "" || workspace != "" {
 		sum := sha256.Sum256([]byte(natsURL + "\x00" + workspace))
 		name = fmt.Sprintf("session-%x", sum[:6])
 	}
-	return filepath.Join(dir, "niffler-tui", name)
+	return statePath(name)
 }
 
 // loadLastSession returns the conversation the TUI was last switched to for

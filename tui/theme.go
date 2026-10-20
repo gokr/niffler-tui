@@ -728,15 +728,7 @@ func applyTheme(name string) bool {
 // themeFilePath is the single-line persistence file for the /theme choice
 // (same state dir as the locale choice; empty when unavailable).
 func themeFilePath() string {
-	dir := strings.TrimSpace(os.Getenv("XDG_STATE_HOME"))
-	if dir == "" {
-		home, err := os.UserHomeDir()
-		if err != nil {
-			return ""
-		}
-		dir = filepath.Join(home, ".local", "state")
-	}
-	return filepath.Join(dir, "niffler-tui", "theme")
+	return statePath("theme")
 }
 
 // detectTheme resolves the startup theme: an explicit /theme choice, then

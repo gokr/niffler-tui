@@ -50,8 +50,7 @@ func handoffFilePath(natsURL, workspace string) string {
 	if session == "" {
 		return ""
 	}
-	return filepath.Join(filepath.Dir(session),
-		"handoff"+strings.TrimPrefix(filepath.Base(session), "session"))
+	return statePath("handoff" + strings.TrimPrefix(filepath.Base(session), "session"))
 }
 
 // writeHandoff records this client's registry identity for the successor a

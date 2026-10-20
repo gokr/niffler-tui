@@ -48,7 +48,7 @@ func TestRestartArmsQuitFlag(t *testing.T) {
 // old to release at all — leaves it refused the conversation and opening an
 // empty one instead.
 func TestRestartHandsOverIdentity(t *testing.T) {
-	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	t.Setenv("HOME", t.TempDir())
 	const url = "nats://127.0.0.1:4222"
 
 	m := newTestModel()
@@ -73,7 +73,7 @@ func TestRestartHandsOverIdentity(t *testing.T) {
 // TestOnlyRestartHandsOverIdentity keeps the handoff to the restart path: a
 // normal command must not leave an identity for the next start to adopt.
 func TestOnlyRestartHandsOverIdentity(t *testing.T) {
-	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	t.Setenv("HOME", t.TempDir())
 	m := newTestModel()
 	m.natsURL = "nats://127.0.0.1:4222"
 	m.launchDir = "cwd-restart"

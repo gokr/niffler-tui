@@ -105,11 +105,7 @@ func (l *activityLedger) unread(scope string) []fleetActivity {
 	return result
 }
 func activityLedgerPath() (string, error) {
-	dir, err := os.UserConfigDir()
-	if err != nil {
-		return "", err
-	}
-	return filepath.Join(dir, "niffler", "activity.json"), nil
+	return clientPath("activity.json", true)
 }
 func loadActivityLedger(path string) (*activityLedger, error) {
 	l := newActivityLedger()

@@ -19,6 +19,7 @@
         "tui/backend.go",
         "tui/context_status.go",
         "tui/clickopen.go",
+        "tui/clientpaths.go",
         "tui/clipboard.go",
         "tui/controls.go",
         "tui/diagnostics.go",

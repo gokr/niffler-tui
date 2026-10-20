@@ -17,14 +17,16 @@ func TestMain(m *testing.M) {
 	if err != nil {
 		os.Exit(m.Run())
 	}
-	_ = os.Setenv("XDG_STATE_HOME", dir)
+	_ = os.Setenv("HOME", dir)
+	_ = os.Setenv("XDG_STATE_HOME", filepath.Join(dir, "legacy-state"))
+	_ = os.Setenv("XDG_CONFIG_HOME", filepath.Join(dir, "legacy-config"))
 	code := m.Run()
 	_ = os.RemoveAll(dir)
 	os.Exit(code)
 }
 
 func TestLastSessionPersistRoundtrip(t *testing.T) {
-	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	t.Setenv("HOME", t.TempDir())
 	const url = "nats://127.0.0.1:4222"
 
 	if got := loadLastSession(url, "cwd-x"); got != "" {
@@ -52,13 +54,13 @@ func TestLastSessionPersistRoundtrip(t *testing.T) {
 	}
 
 	// The file lives in the shared state dir next to theme/locale.
-	if dir := filepath.Dir(path); !strings.HasSuffix(dir, filepath.Join("niffler-tui")) {
+	if dir := filepath.Dir(path); !strings.HasSuffix(dir, filepath.Join(".niffler")) {
 		t.Fatalf("session file dir = %q", dir)
 	}
 }
 
 func TestSwitchSessionPersistsLastSession(t *testing.T) {
-	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	t.Setenv("HOME", t.TempDir())
 	m := newTestModel()
 	m.natsURL = "nats://persist-test:4222"
 

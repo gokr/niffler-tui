@@ -173,8 +173,8 @@ func serveUiFixture(t *testing.T, f *uiFixture) string {
 // exists for: verification, then a target reservation, and only then the quit
 // that lets main() release the current UI and hand the claim to the successor.
 func TestInstanceSwitchReservesTargetBeforeQuitting(t *testing.T) {
-	t.Setenv("XDG_STATE_HOME", t.TempDir())
-	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("HOME", t.TempDir())
 	fixture := newUiFixture()
 	endpoint := serveUiFixture(t, fixture)
 
@@ -228,8 +228,8 @@ func TestInstanceSwitchReservesTargetBeforeQuitting(t *testing.T) {
 // claim must leave the current UI untouched (no quit, no switch) and must not
 // leave a half-registered client behind in the target's registry.
 func TestInstanceSwitchReleasesReservationWhenRefused(t *testing.T) {
-	t.Setenv("XDG_STATE_HOME", t.TempDir())
-	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("HOME", t.TempDir())
 	fixture := newUiFixture()
 	fixture.refused["taken"] = true
 	endpoint := serveUiFixture(t, fixture)
@@ -265,7 +265,7 @@ func TestInstanceSwitchReleasesReservationWhenRefused(t *testing.T) {
 // TestInstanceClaimHandoffRoundTrip: the successor's inheritance is one-shot,
 // keyed to the exact target, and sanitized like every other recorded id.
 func TestInstanceClaimHandoffRoundTrip(t *testing.T) {
-	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	t.Setenv("HOME", t.TempDir())
 	const scope = "instance:abc"
 
 	os.Setenv(instanceClaimEnv, `{"scope":"instance:abc","workspace":"/worker","ui":"tui-111122223333","session":"conv-1"}`)
@@ -319,7 +319,7 @@ func TestInstanceClaimEnvironmentReplacesSession(t *testing.T) {
 // (release retries, a slow successor), and core's lease is 20s — the
 // reservation must keep renewing itself until the handoff lands.
 func TestInstanceClaimRenewalKeepsTargetReserved(t *testing.T) {
-	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	t.Setenv("HOME", t.TempDir())
 	fixture := newUiFixture()
 	endpoint := serveUiFixture(t, fixture)
 	old := instanceClaimRenewEvery
@@ -361,8 +361,8 @@ func TestInstanceClaimRenewalKeepsTargetReserved(t *testing.T) {
 // until it answers, so a second /niffler cannot start an overlapping
 // reservation (and cannot quit the UI with a claim nobody hands on).
 func TestNifflerSwitchIgnoresRepeatedCommand(t *testing.T) {
-	t.Setenv("XDG_STATE_HOME", t.TempDir())
-	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("HOME", t.TempDir())
 	p := instanceProfile{URL: "nats://127.0.0.1:1", Workspace: "/worker", Expect: instanceExpectation{ID: strings.Repeat("a", 32), Root: "/worker"}}
 	writeTestRegistry(t, "worker", p)
 
@@ -404,7 +404,7 @@ func writeTestRegistry(t *testing.T, name string, p instanceProfile) {
 // claim, the display number and one live lease instead of racing the old one
 // for the conversation.
 func TestReservationSharesItsLeaseWithTheSuccessor(t *testing.T) {
-	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	t.Setenv("HOME", t.TempDir())
 	fixture := newUiFixture()
 	endpoint := serveUiFixture(t, fixture)
 

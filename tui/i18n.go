@@ -1343,15 +1343,7 @@ func validLocale(s string) (Locale, bool) {
 // localeFilePath is the single-line persistence file for the /locale
 // choice (same state dir as history, empty when unavailable).
 func localeFilePath() string {
-	dir := strings.TrimSpace(os.Getenv("XDG_STATE_HOME"))
-	if dir == "" {
-		home, err := os.UserHomeDir()
-		if err != nil {
-			return ""
-		}
-		dir = filepath.Join(home, ".local", "state")
-	}
-	return filepath.Join(dir, "niffler-tui", "locale")
+	return statePath("locale")
 }
 
 // detectLocale resolves the startup locale: an explicit /locale choice,

@@ -56,11 +56,7 @@ var instanceIDPattern = regexp.MustCompile(`^[0-9a-f]{32}$`)
 var instanceTargetPattern = regexp.MustCompile(`^[A-Za-z0-9_][A-Za-z0-9_.@-]*$`)
 
 func instanceRegistryPath() (string, error) {
-	dir, err := os.UserConfigDir()
-	if err != nil {
-		return "", err
-	}
-	return filepath.Join(dir, "niffler", "instances.json"), nil
+	return clientPath("instances.json", true)
 }
 
 func (r instanceRegistry) validate() error {

@@ -6,6 +6,13 @@ project aims for [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+
+- Consolidate client-local preferences, aliases, instance registry, activity,
+  history, session and restart-handoff files under `~/.niffler/` on Linux and
+  macOS. Migrate legacy XDG/platform files on first use without overwriting
+  existing destinations; successful migrations remove the old source. No SQLite.
+
 ## [0.7.0] — 2026-10-20
 
 Lima replaces Multipass as the VM transport, and Incus joins it. A harness that

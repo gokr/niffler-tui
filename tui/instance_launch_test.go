@@ -17,7 +17,7 @@ func TestParseInstanceOptions(t *testing.T) {
 }
 
 func TestRemoteSessionSwitchKeepsRemoteWorkspaceAndState(t *testing.T) {
-	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	t.Setenv("HOME", t.TempDir())
 	m := newTestModel()
 	m.remoteInstance = true
 	m.instanceState = "instance:stable"

@@ -103,7 +103,7 @@ func TestApplyThemeSwitchesStyles(t *testing.T) {
 // TestThemeDetectionAndPersistence covers the /theme persistence contract:
 // file first, then NIF_TUI_THEME, then default; corrupt names fall through.
 func TestThemeDetectionAndPersistence(t *testing.T) {
-	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	t.Setenv("HOME", t.TempDir())
 	os.Unsetenv("NIF_TUI_THEME")
 
 	if got := detectTheme(); got != ThemeDefault {
@@ -147,7 +147,7 @@ func TestThemeDetectionAndPersistence(t *testing.T) {
 // its error path.
 func TestThemeCommand(t *testing.T) {
 	restoreDefaultTheme(t)
-	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	t.Setenv("HOME", t.TempDir())
 	os.Unsetenv("NIF_TUI_THEME")
 
 	m := newTestModel()
@@ -182,7 +182,7 @@ func TestThemeCommand(t *testing.T) {
 // open, select, enter — the theme applies, persists, and returns to chat.
 func TestThemeSelectorAppliesAndPersists(t *testing.T) {
 	restoreDefaultTheme(t)
-	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	t.Setenv("HOME", t.TempDir())
 	os.Unsetenv("NIF_TUI_THEME")
 
 	m := newTestModel()

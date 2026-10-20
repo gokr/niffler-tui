@@ -91,15 +91,7 @@ func aliasSubcommands() []slashSubcommand {
 // same per-user state dir as the theme/locale/session files, but global —
 // aliases are not tied to a harness or workspace (empty when unavailable).
 func aliasFilePath() string {
-	dir := strings.TrimSpace(os.Getenv("XDG_STATE_HOME"))
-	if dir == "" {
-		home, err := os.UserHomeDir()
-		if err != nil {
-			return ""
-		}
-		dir = filepath.Join(home, ".local", "state")
-	}
-	return filepath.Join(dir, "niffler-tui", "aliases")
+	return statePath("aliases")
 }
 
 // loadAliases reads the alias file. Best effort and total: a missing,

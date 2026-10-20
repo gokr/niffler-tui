@@ -25,17 +25,7 @@ func sanitizeSessionID(id string) string {
 // (JSONL, one sent message per line). Empty when the user state directory
 // is unavailable.
 func historyFilePath(session string) string {
-	// Go has no os.UserStateDir; resolve $XDG_STATE_HOME ourselves with the
-	// conventional fallback.
-	dir := strings.TrimSpace(os.Getenv("XDG_STATE_HOME"))
-	if dir == "" {
-		home, err := os.UserHomeDir()
-		if err != nil {
-			return ""
-		}
-		dir = filepath.Join(home, ".local", "state")
-	}
-	return filepath.Join(dir, "niffler-tui", "history-"+sanitizeSessionID(session)+".jsonl")
+	return statePath("history-" + sanitizeSessionID(session) + ".jsonl")
 }
 
 // readHistoryLines reads a history file into trimmed non-empty lines. The
