@@ -468,7 +468,16 @@ then probe or launch that named instance:
 ```
 
 Import probes the live catalog before saving a 0600 client-local registry at
-`~/.niffler/instances.json` on Linux and macOS. SSH
+`~/.niffler/instances.json` on Linux and macOS; the harness's own fleet registry
+(`fleet_instances`, store kind `fleetinstance`) is then authoritative for the
+route and the pinned identity of every peer, and the local file supplies only
+the bootstrap route to the first harness plus client-only fields such as a
+workspace override. A peer registered or re-installed on the harness appears in
+the picker without touching this client's file; a stored route that contradicts
+a local pin for the same name is renamed rather than allowed to take the name
+over, and an unreadable registry entry is shown as a warning instead of
+breaking the picker. Without a reachable fleet component the client keeps
+working from its local entries and says so. SSH
 uses normal configuration/known_hosts with agent forwarding disabled; Lima
 uses native `limactl shell --workdir=/home/ubuntu` plus the worker's native `<receipt-root>/var/bin/cli relay <port>`,
 without keys, host mounts or a public listener. Rebuild/update the worker's

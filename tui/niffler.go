@@ -27,17 +27,14 @@ func localNiffler(m model, cmd slashCommand, argument string) (tea.Model, tea.Cm
 	if m.instanceSwitchPending || m.switchInstance != "" {
 		return m, nil
 	}
-	path, err := instanceRegistryPath()
+	registry, warning, err := loadInstanceRegistryMerged(m.comp)
 	if err != nil {
 		m.addBlock(blockError, err.Error())
 		m.syncViewport(true)
 		return m, nil
 	}
-	registry, err := loadInstanceRegistry(path)
-	if err != nil {
-		m.addBlock(blockError, err.Error())
-		m.syncViewport(true)
-		return m, nil
+	if warning != "" {
+		m.addBlock(blockNotice, warning)
 	}
 	name := strings.TrimSpace(argument)
 	if name == "" {

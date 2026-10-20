@@ -6,6 +6,13 @@ project aims for [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+- Instance routes now come from the harness's fleet registry (`fleet_instances`):
+  the local `~/.niffler/instances.json` supplies the bootstrap route and
+  client-only fields, while stored routes and identity pins win for a matching
+  identity. Registered peers appear without editing client files; identity
+  collisions are renamed, never allowed to hijack a local pin.
+
+
 ### Fixed
 
 - A switch to an unreachable instance now says what failed instead of `EOF`.

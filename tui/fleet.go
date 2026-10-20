@@ -364,7 +364,11 @@ func (f *fleetModel) isViewed(name, session string) bool {
 // reach, with the unread and attention markers the status line uses, plus the
 // hint for a name that is not registered yet.
 func (f *fleetModel) listInstances() {
-	registry, err := loadInstanceRegistryPath()
+	var comp *sdk.Component
+	if active, ok := f.models[f.active]; ok {
+		comp = active.comp
+	}
+	registry, warning, err := loadInstanceRegistryMerged(comp)
 	names := append([]string{}, f.ordering()...)
 	if err == nil {
 		for _, name := range registry.Order {
@@ -385,6 +389,8 @@ func (f *fleetModel) listInstances() {
 	}
 	if err != nil {
 		lines = append(lines, "  registry unavailable: "+err.Error())
+	} else if warning != "" {
+		lines = append(lines, "  "+warning)
 	}
 	m := f.models[f.active]
 	m.addBlock(blockMeta, strings.Join(lines, "\n"))
@@ -392,23 +398,15 @@ func (f *fleetModel) listInstances() {
 	f.models[f.active] = m
 }
 
-func loadInstanceRegistryPath() (instanceRegistry, error) {
-	path, err := instanceRegistryPath()
-	if err != nil {
-		return instanceRegistry{}, err
-	}
-	return loadInstanceRegistry(path)
-}
-
 func (f *fleetModel) switchTo(name string) tea.Cmd {
 	if f.pending != "" {
 		return nil
 	}
-	path, err := instanceRegistryPath()
-	var registry instanceRegistry
-	if err == nil {
-		registry, err = loadInstanceRegistry(path)
+	var active *sdk.Component
+	if current, ok := f.models[f.active]; ok {
+		active = current.comp
 	}
+	registry, _, err := loadInstanceRegistryMerged(active)
 	if err != nil {
 		return func() tea.Msg { return fleetReadyMsg{err: err} }
 	}

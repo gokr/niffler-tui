@@ -193,7 +193,7 @@ Niffler builder 不使用此 go.mod，而是创建隔离模块，replacement 指
 ./bin/niffler-tui --instance worker
 ```
 
-导入先验证实时目录，再保存 0600 的 `~/.niffler/instances.json`（Linux/macOS）。SSH 使用正常配置和 known_hosts，禁用 agent 转发。Lima 使用 `limactl shell --workdir=/home/ubuntu` 和 worker 原生 `<receipt-root>/var/bin/cli relay <port>`，无需密钥、主机挂载或公开监听端口。
+导入先验证实时目录，再保存 0600 的 `~/.niffler/instances.json`（Linux/macOS）。SSH 使用正常配置和 known_hosts，禁用 agent 转发。Lima 使用 `limactl shell --workdir=/home/ubuntu` 和 worker 原生 `<receipt-root>/var/bin/cli relay <port>`，无需密钥、主机挂载或公开监听端口。导出的路由与身份标识以 harness 的 fleet 注册表（`fleet_instances`，store kind `fleetinstance`）为准；本地 `instances.json` 只提供连上第一个 harness 的引导路由和客户端专有字段（例如工作区覆盖）。在 harness 上注册或重装的 peer 会直接出现在选择器中，无需修改客户端文件；同一名称但身份不同的存储条目会被改名而不是顶掉本地 pin，无法解析的条目以警告显示而不会让选择器失效。没有可用的 fleet 组件时，客户端继续使用本地条目并明确提示。
 
 先重建/更新 worker 框架：其 CLI 必须支持 relay（POSIX、仅 loopback），缺失或过旧明确拒绝，不回退。无需 Python 或传送辅助程序。不启动/停止远程服务；目标缺失或身份不匹配明确拒绝，不回退本地。使用匹配框架启动器，确保远程选项绕过本地自动启动；普通启动不变。
 
