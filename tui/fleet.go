@@ -475,7 +475,7 @@ func (f *fleetModel) switchTo(name string) tea.Cmd {
 			target := resolveLocalTarget()
 			identity, err := probeInstanceURL(target.url)
 			if err != nil {
-				return fail(fmt.Errorf("local harness unreachable (%s): %w", target.url, err))
+				return fail(unreachableError("the local bus "+target.url, err, nil))
 			}
 			if err := checkLocalTarget(target, identity); err != nil {
 				return fail(err)

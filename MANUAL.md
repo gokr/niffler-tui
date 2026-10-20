@@ -547,6 +547,21 @@ separate probe connection, not authentication against a malicious endpoint
 swap. `/restart` now keeps you on the instance you were on. Background approvals
 are not implemented yet.
 
+When a target cannot be reached, the client says which part failed instead of
+reporting the closed socket: a bare `EOF` is what a dead forwarding lane looks
+like from here, never the cause. A refusal names the target, keeps the transport
+error, and adds the relay's own diagnosis, for example
+
+```
+Instance switch refused: no harness answering at worker: the guest's advertised
+bus (127.0.0.1:4222) answered no catalog probe: EOF; relay to the guest failed:
+cli relay: Connection refused — is its harness running?
+```
+
+An identity mismatch is reported as itself, since it is more precise than the
+lane it closed. A target harness is never started for you: run it there, ideally
+as a resident user service (see Niffler's manual, "Persistent server lifecycle").
+
 
 ## Architecture
 

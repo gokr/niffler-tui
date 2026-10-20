@@ -6,6 +6,16 @@ project aims for [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+- A switch to an unreachable instance now says what failed instead of `EOF`.
+  The forwarding relay's own diagnosis (a refused guest bus, an SSH failure, a
+  missing guest CLI, an unreadable `var/nats-url`) is captured from the child's
+  stderr and folded into the refusal, so a target whose harness simply is not
+  running reads as `no harness answering at worker: … cli relay: Connection
+  refused — is its harness running?` rather than a bare `EOF`. An identity
+  mismatch is still reported as itself.
+
 ### Changed
 
 - Consolidate client-local preferences, aliases, instance registry, activity,

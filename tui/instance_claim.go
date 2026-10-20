@@ -88,8 +88,11 @@ func reserveLocalInstance(ctx context.Context, url, workspace string) (*instance
 func reserveInstanceTransport(tr *instanceTransport, scope, workspace string) (*instanceClaim, error) {
 	nc, err := nats.Connect(tr.URL, nats.Timeout(10*time.Second), nats.NoReconnect())
 	if err != nil {
+		// Same wording as the attach path: a target whose harness stopped
+		// between the probe and this claim is still a target with no harness.
+		notes := tr.diagnoses()
 		tr.Close()
-		return nil, err
+		return nil, unreachableError(targetName(tr.label, tr.URL), err, notes)
 	}
 	session := loadLastSession(scope, workspace)
 	if session == "" {

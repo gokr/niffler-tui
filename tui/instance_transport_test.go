@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"io"
 	"net"
 	"os"
@@ -60,7 +61,7 @@ func TestInstanceRelayCopiesAndReaps(t *testing.T) {
 	client, server := net.Pipe()
 	done := make(chan struct{})
 	cmd := exec.CommandContext(ctx, "cat")
-	go func() { relayInstanceSocket(ctx, server, cmd); close(done) }()
+	go func() { relayInstanceSocket(ctx, server, cmd, nil); close(done) }()
 	client.SetDeadline(time.Now().Add(3 * time.Second))
 	go func() { _, _ = client.Write([]byte("hello")) }()
 	data := make([]byte, 5)
@@ -105,5 +106,89 @@ func TestLiveLimaTransport(t *testing.T) {
 	if tr, _, err := openInstanceTransport(context.Background(), p); err == nil {
 		tr.Close()
 		t.Fatal("identity drift accepted")
+	}
+}
+
+// A refused guest dial is reported by the relay child on stderr, never by the
+// socket the client holds: without it a switch to a stopped harness can only
+// say "EOF".
+func TestRelayReportsChildDiagnosis(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	client, server := net.Pipe()
+	defer client.Close()
+	cmd := exec.CommandContext(ctx, "bash", "-c", "echo 'cli relay: Connection refused' >&2; exit 1")
+	var notes []string
+	done := make(chan struct{})
+	go func() {
+		relayInstanceSocket(ctx, server, cmd, func(note string) { notes = append(notes, note) })
+		close(done)
+	}()
+	go func() { _, _ = io.Copy(io.Discard, client) }()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("relay did not reap")
+	}
+	if len(notes) != 1 || !strings.Contains(notes[0], "cli relay: Connection refused") {
+		t.Fatalf("notes = %q", notes)
+	}
+}
+
+// A target whose harness is stopped: the guest bus is not listening, the relay
+// child says so on stderr, and the client only sees a closed lane. The switch
+// error must carry that cause, because "EOF" alone tells a human nothing.
+func TestDeadTargetIsExplained(t *testing.T) {
+	oldLookup, oldLaunch := instanceEndpointLookup, instanceRelayLaunch
+	defer func() { instanceEndpointLookup, instanceRelayLaunch = oldLookup, oldLaunch }()
+	instanceEndpointLookup = func(context.Context, instanceProfile) (string, error) {
+		return "nats://127.0.0.1:1", nil // nothing is listening there
+	}
+	instanceRelayLaunch = func(ctx context.Context, _ instanceProfile, _ string) (*exec.Cmd, error) {
+		return exec.CommandContext(ctx, "bash", "-c", "echo 'cli relay: Connection refused' >&2; exit 1"), nil
+	}
+	_, _, err := openInstanceTransport(context.Background(), testInstance())
+	if err == nil {
+		t.Fatal("dead target accepted")
+	}
+	for _, want := range []string{"no harness answering at worker", "cli relay: Connection refused", "is its harness running?"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("%q lacks %q", err, want)
+		}
+	}
+}
+
+// An identity refusal is precise on its own: reporting it as an unreachable
+// target would send a human looking for a stopped harness instead.
+func TestIdentityRefusalIsNotReportedAsUnreachable(t *testing.T) {
+	endpoint, id := catalogFixture(t)
+	id.Store(strings.Repeat("b", 32)) // the bus now serves a replaced instance
+	p := instanceProfile{URL: endpoint, Expect: instanceExpectation{ID: strings.Repeat("a", 32), Root: "/worker", Name: "worker"}}
+	_, _, err := openInstanceTransport(context.Background(), p)
+	if err == nil || !strings.Contains(err.Error(), "instance identity mismatch") {
+		t.Fatalf("identity drift reported as %v", err)
+	}
+	if strings.Contains(err.Error(), "no harness answering") {
+		t.Fatalf("identity drift reported as unreachable: %v", err)
+	}
+}
+
+// A target whose relay cannot even reach its own bus endpoint (stopped Incus
+// container, revoked SSH route) must name that failure rather than the closed
+// socket it causes.
+func TestUnreadableGuestEndpointIsExplained(t *testing.T) {
+	oldLookup := instanceEndpointLookup
+	defer func() { instanceEndpointLookup = oldLookup }()
+	instanceEndpointLookup = func(context.Context, instanceProfile) (string, error) {
+		return "", errors.New("ssh: connect to host wowbagger port 22: Connection refused")
+	}
+	_, _, err := openInstanceTransport(context.Background(), testInstance())
+	if err == nil {
+		t.Fatal("unreachable guest accepted")
+	}
+	for _, want := range []string{"var/nats-url", "ssh: connect to host"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("%q lacks %q", err, want)
+		}
 	}
 }
