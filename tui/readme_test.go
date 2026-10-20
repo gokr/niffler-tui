@@ -7,15 +7,13 @@ import (
 )
 
 // readmeCommandRe matches a local-command bullet: "- `/name …` — …" (the
-// declared usage follows the name inside the same code span). The READMEs
-// document the commands as a hand-written list in three languages, which is
-// exactly the list that had fallen behind (/mcp, /components, /discover,
-// /profile were all missing), so it is checked against the registry.
+// declared usage follows the name inside the same code span). The full
+// reference lives in MANUAL.md; introductory READMEs intentionally show only
+// everyday controls. Check the reference against the registry to prevent drift.
 var readmeCommandRe = regexp.MustCompile("(?m)^- `/([a-zA-Z?]+)[^`]*`")
 
-// TestReadmeCommandList keeps the three README command lists in step with the
-// registry: every canonical built-in documented, and nothing documented that
-// is not a command.
+// TestReadmeCommandList keeps the manual's command list in step with the
+// registry: every canonical built-in documented, with no invented commands.
 func TestReadmeCommandList(t *testing.T) {
 	var want []string
 	for _, cmd := range builtinSlashCommands() {
@@ -23,7 +21,7 @@ func TestReadmeCommandList(t *testing.T) {
 			want = append(want, cmd.Name)
 		}
 	}
-	for _, file := range []string{"../README.md", "../README.zh.md", "../README.zh-TW.md"} {
+	for _, file := range []string{"../MANUAL.md", "../MANUAL.zh.md", "../MANUAL.zh-TW.md"} {
 		raw, err := os.ReadFile(file)
 		if err != nil {
 			t.Fatal(err)

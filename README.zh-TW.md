@@ -1,388 +1,67 @@
 # niffler-tui
 
-[English](README.md) · [简体中文](README.zh.md) · 繁體中文 · [Discord](https://discord.gg/ThJFEAJUAk)
+[English](README.md) · [简体中文](README.zh.md) · [繁體中文](README.zh-TW.md) · [Discord](https://discord.gg/ThJFEAJUAk)
 
-> 🤖 AI 自動翻譯，可能落後於英文版；以 [English](README.md) 為準。
+> 🤖 AI 自動翻譯；以 [English](README.md) 為準。
 
-Niffler 的 Bubble Tea 終端機客戶端。和桌面 UI 一樣，它是個匯流排客戶端：
-經 `svc.core.call` 驅動 `session` 呼叫，並渲染 `ev.session.*` 的 token、
-tool-call、assistant 與 completion 事件。
+[Niffler](https://github.com/gokr/niffler) 的終端聊天客戶端。Niffler 是能夠自我擴充的程式開發代理框架。在終端中與代理對話、查看工具執行過程，並繼續之前的會話。
 
-該組件以零工具註冊。執行它不會給任何 LLM 的工具上下文新增東西。
+- 串流 Markdown 回覆、推理內容和可摺疊工具卡片。
+- 會話歷史、可搜尋的會話清單及提供者/模型選擇器。
+- 檔案附件、選取複製和核准提示。
+- 多種主題，以及英語、簡體中文和繁體中文介面。
 
-## Fleet startup (experimental)
+## Get started
 
-可從 harness 的原生 Nim `fleet` 元件匯入私有佈署回執，隨後探測或啟動實例：
+在 **Niffler 框架儲存庫**中安裝客戶端和啟動器：
 
 ```bash
-./bin/niffler-tui --instance worker --instance-import /path/to/worker.json
-./bin/niffler-tui --instance-probe worker
-./bin/niffler-tui --instance worker
+make install WITH_TUI=1
 ```
 
-匯入先驗證線上 catalog，再將 0600 設定儲存到
-`$XDG_CONFIG_HOME/niffler/instances.json`（預設 `~/.config/niffler/`）。
-SSH 使用正常設定和 known_hosts，停用 agent 轉送；Lima 使用原生 `limactl shell --workdir=/home/ubuntu` 和
-工作節點的原生 `<receipt-root>/var/bin/cli relay <port>`，不擷取金鑰、不掛載
-主機、不開放公共監聽。請先重新建置或更新工作節點的 harness：CLI 必須支援
-`relay`（POSIX，僅限迴路）；缺失或過舊會拒絕，不退回。無需 Python 執行環境
-或傳輸輔助程式。不啟動或停止遠端服務。
-目標缺失或身分不符會拒絕，不退回本地。須配套 harness 包裝器，以避免遠端
-參數觸發本地自動啟動；普通啟動不變。
+在 Niffler 中設定模型提供者，然後在真正的終端中進入需要代理操作的專案：
 
-Incus 回執（`transport: "incus"`）透過 `incus exec` 和原生 relay，以客體普通
-使用者 `ubuntu` 連線，無需客體 SSH。Incus 根目錄固定為 `/home/ubuntu/niffler`。
-Incus 命令明確選擇本機 daemon 和 `default` 專案，忽略用戶端預設遠端/專案。
-Incus 和 Lima 回執可包含 `host: "gokr@wowbagger.krampe.se"`，透過 SSH
-在該主機執行命令，並逐參數進行 shell 引用；本機客體省略 `host`。
-無需公開管理 API 或 NATS 監聽，不轉送 agent，也不複製客體金鑰。
-部署和更新屬於需核准的 harness fleet 操作，不是 TUI 啟動的副作用。
+```bash
+cd /path/to/your/project
+niffler-tui
+```
 
-### Switching between instances
+安裝的啟動器會在需要時啟動本機框架。輸入請求，按 `Enter` 傳送。目前目錄成為新會話的工作區；如有該框架/工作區的已儲存會話，會自動恢復。
+使用 `/new` 建立新會話，或用 `/session` 瀏覽歷史會話。
 
-一個用戶端會為每個造訪過的實例保持一條活動連線，切換在**行程內**完成：
-不重新執行行程，你離開的實例上的工作繼續執行。
+尚未設定提供者？使用 `/connect` 填寫連線資訊，或用 `/provider` 選擇已有提供者或訂閱登入。`/model` 為目前會話選擇模型。連線表單中的憑證會被遮蔽，不寫入聊天歷史。
 
-| 輸入 | 作用 |
+## Everyday controls
+
+| 按鍵 / 命令 | 操作 |
 |---|---|
-| `Alt+N` / `Alt+Shift+N` | 下一個 / 上一個實例（循環） |
-| `/niffler` | 列出實例及其狀態 |
-| `/niffler NAME` | 切換到 NAME（需先註冊） |
-| `/niffler next` / `previous` | 同樣的循環切換 |
+| `Enter` | 傳送；忙碌時引導目前回合 |
+| `Alt+Enter` / `Ctrl+J` | 換行 |
+| `Tab` | 補全命令與參數 |
+| `Up` / `Down`、`Ctrl+R` | 回顧或搜尋輸入歷史 |
+| `PgUp` / `PgDn` | 捲動會話 |
+| `Ctrl+T` / `Ctrl+E` | 調整推理 / 工具卡片詳細程度 |
+| `Esc`，再按 `Esc` | 確認停止目前回合 |
+| `/new`、`/session` | 建立或切換會話 |
+| `/theme`、`/locale` | 修改主題或語言 |
+| `/help` | 查看內建及外掛命令 |
+| `Ctrl+C` | 結束客戶端 |
 
-每個實例各自保留會話、工作區、草稿、捲動位置和連線，互不共享；一個實例上的
-會話 ID 絕不會被當作另一個實例上的同一會話。底列顯示目前實例和所有造訪過的
-實例及其狀態：
+滑鼠滾輪可捲動；拖曳可選取並複製文字。受保護的代理操作需要核准。結束客戶端不會停止正在執行的代理回合。
 
-```
-● local   ○ worker ✓2   Alt+N next · Alt+Shift+N prev · /niffler
-```
+## Learn more
 
-`●` 表示目前顯示的實例，`✓N` 是你不在時完成的會話數，`!approval` 表示有人在
-等待核准，`…`/`⚠` 表示仍在連線 / 已斷線。`/niffler local` 返回本機 —— 會用
-本地根目錄校驗應答的 core，而不是盲目信任，因此返回絕不會連上陌生的匯流排。
-未在檢視的實例上的核准會顯示，但絕不會替你應答。
+**[Manual](MANUAL.zh-TW.md)**提供完整按鍵和命令參考、設定、shell 跳脫、客戶端狀態遷移、開發說明，以及實驗性的多執行個體/fleet 支援。
 
-### Completion notices
+Linux 和 macOS 上的客戶端偏好及狀態儲存在 `~/.niffler/`；會話記錄儲存在框架 store 中。詳見 [client state](MANUAL.zh-TW.md#transcript-and-client-state)。
 
-在別的實例上完成的回合會點亮該實例的未讀標記；開啟該會話即清除。已讀狀態
-保存在用戶端本地，與 agent 的 notice 確認相互獨立：開啟已完成的會話既不會
-消耗模型仍需要的東西，也不會觸發新回合。同一會話的多次完成會合併為一個未讀
-標記。
+## Build from source
 
-即時推送覆蓋常態；在連線時和每次重連之後，用戶端會分頁讀取 harness 的持久
-完成快照，因此用戶端不在時發生的完成不會遺失。被終止的回合或寫入失敗可能
-完全沒有回執：缺失表示未知，絕不表示成功。
-
-### Remote specifics
-
-遠端工作區預設回執根目錄，不使用本機 cwd。上次會話和重啟狀態使用穩定實例
-ID，不使用轉送埠，因此新的通道埠不會遺失歷史。遠端停用本機路徑補全和
-記錄檔開啟；附件仍由明確選擇的本地檔案提供。每次新建轉送連線（含重連）都
-重新解析端點並驗證固定 catalog 身分；不符會關閉該通道，不回退。驗證使用獨立
-探測連線，不能抵禦惡意端點在探測後切換。`/restart` 現在會留在你所在的實例。
-尚無背景核准。
-
-## 建置
-
-期望把本倉庫 checkout 在 Niffler 旁邊，這樣本地 `go.mod` 的 replacement
-能找到 Go SDK：
+透過本機 Go SDK replacement 關聯相符的 Niffler 儲存庫後：
 
 ```bash
-make            # 建置 bin/niffler-tui
-make test       # 跑 TUI 測試套件
-make run        # 建置 + 執行
+make build      # bin/niffler-tui
+make test
 ```
 
-或直接：
-
-```bash
-go build -o bin/niffler-tui ./tui
-```
-
-Niffler 的 builder 不使用這個 `go.mod`；它建立隔離的模組，replacement
-指向它自己的 `sdk/go` 目錄。
-
-## 執行
-
-啟動 Niffler，然後從真實終端機執行客戶端：
-
-```bash
-./bin/niffler-tui
-./bin/niffler-tui -session game
-```
-
-設定：
-
-- `-session <id>` 選擇對話，預設依序取 `NIF_SESSION`、`console`。
-- `NIF_NATS_URL` 選擇匯流排。未設定時，客戶端依序檢查
-  `$NIF_ROOT/var/nats-url`、`./var/nats-url`，最後是
-  `nats://127.0.0.1:4222`。
-- 介面語言依序由 `/locale` 持久化的選擇、`NIF_TUI_LOCALE`
-  （`en`/`zh`/`zh-TW`）、`LANG`/`LC_ALL`（zh_TW/zh_HK → 繁體，其他 zh →
-  簡體）決定，最後回退英文。
-
-按鍵：
-
-- `Enter`：送出目前輸入；回合執行中按 Enter 則「轉向」（steer）——該訊息
-  以 “Steer: …” 行摺入正在執行的回合
-- `Alt+Enter` / `Ctrl+J`：在輸入裡插入換行（多行訊息）
-- `Up` / `Down`：在輸入內移動；在首行/末行時按 readline 方式瀏覽已送出
-  訊息歷史，復原進行中的草稿
-- `Ctrl+R`：反向歷史搜尋；鍵入過濾，再按 `Ctrl+R` 看更早的相符項，
-  `Enter` 接受，`Esc` 取消
-- `Tab` / `Shift+Tab`：補全游標下的斜線指令或參數——輸入上方出現一條
-  暗色候選行，`Tab`/`Shift+Tab` 循環高亮候選，`Esc`（或任意其他鍵）
-  取消，僅有一個候選時直接填入
-- `PgUp` / `PgDn`：翻頁瀏覽紀錄
-- `Ctrl+Up` / `Ctrl+Down`：逐行捲動紀錄
-- `Ctrl+T`：循環思考可見性（`full` → `brief` → `off`）
-- `Ctrl+E`：循環 tool-run 卡片細節（`brief` → `medium` → `full` → `off`）
-- `Ctrl+O`：worker 循環——執行中的背景程序與工作中的子代理，每個 worker
-  一張即時卡片（狀態、時長、正在執行的工具、最後一行輸出）；沒有執行時
-  回答 "nothing is running (bg/agent)"
-- `Shift+Tab`：輪換本對話的 LLM 思考力度（`auto` → `low` → `medium` →
-  `high` → `max`）
-- `Esc`：回合執行中，第一次按下進入 “Stop?” 待命，第二次強制取消目前
-  回合
-- 滑鼠：滾輪捲動紀錄；直接拖曳選取並複製；左鍵點擊切換 tool-run 卡片；
-  ctrl+點擊開啟指標下的網址或檔案路徑；alt+拖曳額外將選取範圍儲存為片段
-- `Ctrl+X`：輪換收藏的提供商/模型組合（`/fav` 管理；回合之間生效，同 `/model`）
-- `Ctrl+C`：結束
-
-同一回合裡連續的工具呼叫摺疊成一張可收起的「tool-run card」。預設的
-`medium` 級別下，每次呼叫按工具類型渲染：bash 顯示 `$ command`、輸出
-尾端幾行以及 `...（之前 N 行，ctrl+e 展開）` 標記和退出狀態 + 耗時；edit
-顯示舊/新文字的紅綠 diff 與 `+A -R` 行數；read/write 顯示檔案開頭並提示
-摺疊行數；其他工具回退為名稱、參數和結果開頭。`brief` 把每張卡片壓縮為
-一行摘要（✓/⚠ 符號、呼叫次數、名稱），適合長工具序列；`full` 不再摺疊
-展開每次呼叫的輸出；`off` 完全隱藏。`Ctrl+E` 循環各級別，左鍵點擊切換游標
-下的卡片（該卡片 brief→medium→full）。滑鼠追蹤**預設開啟**：滾輪捲動紀錄，
-直接按住左鍵拖曳會由應用選取並複製文字，兩者可同時使用。
-放開按鍵即完成複製，無需再按 `Cmd+C`。文字經 OSC 52 送出；用戶端在本機執行
-（非 SSH 工作階段）時還會透過平台剪貼簿工具（`pbcopy`、`wl-copy`、`xclip` 或
-`xsel`）寫入，因此忽略 OSC 52 的終端機（如 Apple 的 Terminal 與 GNOME
-Terminal）同樣能填入剪貼簿。
-兩個修飾鍵手勢複用同一套選取機制。**ctrl+點擊**會開啟指標下的內容：網址
-交給瀏覽器；檔案路徑交給系統預設處理器（可帶 grep 風格的 `:line` 後綴，
-會被剝掉），並按對話工作目錄、啟動目錄和 harness 根目錄依次解析
-（`NIF_TUI_OPEN` 可整體取代開啟器，如 `NIF_TUI_OPEN='kitty nvim'`）。
-**alt+拖曳**在複製之外額外把選取範圍儲存為一個*片段*（snippet）。片段存放
-在 store 中（kind `snippet`），帶有收集時的對話與時間戳；`/snippets`
-列出收藏，模型也可以透過 store 自己的工具讀取同樣的文件，因此對話雙方
-之後都能取回片段。兩個手勢都需要終端機回報滑鼠修飾鍵（SGR 滑鼠編碼——
-與拖曳選取所需的 xterm 相容終端機相同）。`/mouse off`
-仍可切換到終端機原生選取，但應用會收不到滾輪事件，紀錄改用
-`PgUp`/`PgDn`/`Ctrl+Up` 捲動，滾輪退化為普通終端機捲動。
-
-### 思考
-
-模型推理以灰色斜體顯示在每條 assistant 回覆上方，按回合放置在紀錄中。
-推理也會經過 markdown 渲染（披上思考色調）：正文保持暗色斜體，而推理中
-的圍欄程式碼區塊保留語法高亮。`Ctrl+T` 循環顯示量：`full`（全部）、`brief`
-（每個區塊一行暗色 `▸ thinking…`）、`off`（完全隱藏）。推理在顯示時被壓縮：
-修剪邊緣換行，內部空行串最多摺疊為一個空行，段落間隔保留，又不會堆成
-一片空白。
-
-`Shift+Tab` 輪換本對話的 LLM 思考*力度*——`auto`（供應商預設）→ `low` →
-`medium` → `high` → `max`。該選擇與模型覆寫一樣按對話持久化，在回合之間
-生效，僅在設定時以 `reasoning_effort` 轉發給 LLM，因此不支援思考力度的
-供應商永遠不會見到它。各供應商的級別並非統一標度——例如 DeepSeek 將
-`minimal`/`low` 對映為 `low`、`medium`/`xhigh` 對映為 `high`、`max`
-對映為 `max`——因此 `max` 是供應商暴露、高於 `high` 的唯一一檔。目前
-選擇顯示在標頭的 `effort:auto|low|medium|high|max` 中。
-
-本地指令由 TUI 處理，絕不發給模型：
-
-- `/provider` —— 可搜尋的全域供應商選擇器（e：編輯，d：移除）；也提供
-  環境回退、供應商設定與訂閱登入（ChatGPT Plus/Pro 支援瀏覽器或裝置碼，
-  Claude Pro/Max 支援瀏覽器）。OAuth 流程會開啟授權 URL，輪詢直到
-  Niffler 的 provider 元件存入權杖，本機回呼連接埠不可用時可貼上
-  授權碼/重新導向 URL；esc 取消
-- `/model` —— 可搜尋的目前供應商模型目錄；選中立即持久化為本對話的
-  覆寫（無需推理呼叫）
-- `/connect` —— 遮罩的供應商連線表單，使用 models.dev 範本或自訂
-  OpenAI 相容端點
-- `/mcp [add|edit|on|off|refresh|search]` —— 管理外部 MCP 伺服器；不帶參數的
-  `/mcp` 開啟伺服器瀏覽器
-- `/lsp [add|edit|remove]` — 管理語言伺服器登錄表（設定即支援：為 .go 註冊 gopls 後，lsp 工具即獲得診斷與精確導航）；裸 `/lsp` 開啟伺服器瀏覽器
-- `/processes` — 檢視並管理背景程序（透過 bash 的 run_in_background 或
-  process_start 啟動的開發伺服器、監視器）：有程序執行時狀態列顯示 `bg N`
-  徽標；enter 檢視輸出尾部（不影響模型的增量讀取游標）；d 二次確認後終止
-- `/status` —— 詳細的有效供應商/模型/上下文來源與用量
-- `/info [id]` —— 基於 store 訊息文件的對話統計：各角色訊息數、每個工具的呼叫
-  次數與結果大小（總量、中位數、最大值，附最大的幾條及預覽）、token 用量合計，
-  以及 discover/invoke 的使用分佈。預設統計目前對話；給 id 可檢視其他對話
-  （tab 補全），子代理會顯示其父對話
-- `/name [名稱]` —— 設定本對話的名稱（標頭標題，取代自動截斷的首則訊息標題）；
-  不帶參數顯示已存的名稱
-- `/copy` —— 把最後一則助手回覆複製到剪貼簿（與拖曳選取同一通道）
-- `/fav [add|rm <n>|<n>]` —— 收藏提供商/模型組合，存為一個有序的 store 文件
-  （kind `modelfavorite`）；`<n>` 把某條套用到本對話，`Ctrl+X` 按順序輪換到
-  下一條（循環；回合之間生效，同 `/model`）
-- `/doctor [deep]` —— 以 Markdown 表格顯示健康檢查；`deep` 執行即時探測
-- `/export [path]` —— 匯出目前傳給供應商的 JSON（美化縮排）；不帶路徑時在對話中顯示（會截斷），帶路徑時相對於對話工作目錄寫入檔案
-- `/compact` —— 立即執行可替換的壓縮器（不產生 LLM 回合）：較早的歷史會被取代為經驗證的檢查點，長對話可在觸發自動壓力階梯前主動壓縮；壓縮器拒絕時會明確回報，絕不會無聲降級為有損裁剪
-- `/approvals [ask|auto]` —— 本對話的核准閘門：`auto` 對所有 `x-harness.approval` 工具免詢問放行（每次放行都會明確記錄，無聲放行正是閘門要防止的）；`ask` 恢復詢問，不帶參數時回報目前模式。閘門彈窗中的 `A` 鍵可在彈窗出現時設定同樣的模式：兩段確認（先 `A`，再按 `A` 確認，與停止和終止的確認方式一致），並連同該對話已在佇列中的請求一併放行。它也涵蓋程式形態的呼叫（這是按工具放行的 `a` 刻意不做的）——因此最寬的放行需要多一次按鍵。`a` 的含義保持不變（本對話一律允許「該」工具）
-- `/workspace [路徑]` —— 本對話的工作位置，也是客戶端替你固定的那一項的控制器：在某個目錄啟動時，首個回合會把它固定為對話工作區。不帶參數的 `/workspace` 會回報路徑、git 分支、該檢出是否為**關聯工作樹**（LINKED worktree，而非主檢出）以及主檢出路徑，還有已授予根目錄的數量。帶路徑參數會**重新固定**工作區——僅在對話仍處於初始狀態（pristine）時允許，因為一旦執行過回合，工作區即不可變：恢復必須按原始回合的方式解析上下文與路徑，系統提示也據此凍結。超過該點後 core 會拒絕並說明原因，此時應新建對話。與 `/roots` 的區別：這裡說的是主根（相對路徑的解析基準），而 `/roots` 是在其之上授予*額外*根目錄。底列會在分支旁用 `⧉` 標記關聯工作樹。
-- `/roots [add|remove <目錄>]` —— 本對話的工作集：直接輸入 `/roots` 會回報主工作區（不可變，在對話誕生時固定）以及在其之上授予的每個根目錄；`add` 與 `remove` 用來變更授予；底列會顯示分支以及 `+N` 計數，讓授予就顯示在工作區本來就在的位置。授予會擴大工具接受範圍與寫入圍欄的准入範圍，因此會一直保留到你移除為止——它不是作業系統層級沙箱。`~` 會被展開，相對路徑按對話工作區解析（core 要求絕對且存在的目錄）：`/roots add ~/git/另一個檢出`
-- `/components [all|direct|discovered|undiscovered]` —— 本對話實際可呼叫的工具，
-  按元件列出，並顯示每個工具的曝光狀態
-- `/discover <元件>|tool=名稱` —— 將某個元件的工具（或指定的單一工具）曝光給
-  本對話，讓模型可以直接呼叫它們
-- `/recall <詞…>` —— 搜尋本對話的全部歷史（經由 `context_recall` 的排序
-  全文檢索通道，包括已被修剪或壓縮掉的片段），顯示帶上訊息 id 的有界單行命中。
-- `/snippets [show|ins|del <n>]` —— alt+拖曳收集的片段列表（1 = 最新）。
-  `show` 顯示全文，`ins` 插入輸入框，`del` 刪除一條。片段以 store 文件
-  （kind `snippet`）存放，模型也能透過 store 的工具取回它們
-- `/agent [名稱|none]` —— 新對話出生時的 agent 定義：它說話所用的 persona、起始工具集，
-  以及隨之凍結的模型、思考深度和預算。`none` 清除選擇，不帶參數的 `/agent` 打開選擇器，
-  顯示每個定義的組成。與 `/toolset` 一樣是客戶端狀態：選擇只對之後新建的對話生效，
-  絕不改寫已存在的對話（harness 會拒絕——身份在出生時固定）。當前選擇顯示在標題列
-- `/skills [名稱]` —— 瀏覽 harness 上已安裝的技能並載入其中一個。不帶參數的 `/skills` 開啟選單，列出每個技能的來源（`project`/`bundled`/`home`/`config`）與描述；本對話已載入的技能會標上 `● ` 並排在前面，讓「已在上下文中」可見而不是靠記憶。選取即載入，`/skills <名稱>` 則不經選單直接載入。清單來自 skills 元件的 `skill_list`，載入走的是模型同一個 `skill_load`，因此大小上限與探索/遮蔽規則只有一處實作——此命令取代元件自帶的原始 JSON 清單，後者既不能顯示已載入狀態，也不提供載入方式。
-- `/toolset [名稱|default]` —— 套用於新對話的工具設定；`default` 清除它，
-  不帶參數的 `/toolset` 開啟選擇器，列出已儲存的設定，標出目前選擇與每個
-  設定解析出的工具數。選擇器中的 `＋ New profile…` 開啟表單，在儲存前
-  對照即時目錄校驗每個選擇器：裸選擇器命名元件，單一工具寫作
-  `component.tool`（如 `edit.read`，而非 `read`），`-tool` 表示排除。
-  這裡沒有安全邊界——設定只為在其被選取期間新建的對話裁剪或新增工具。
-- `/new [id]` —— 開始一個新對話
-- `/session` —— 對話瀏覽器；切換或復原對話，或開始新對話。在過濾框中輸入會
-  對 harness 的 store 執行**伺服器端搜尋**（`search`，gokr/niffler#77）——依
-  id 與標題在資料存放處比對對話，而不是把全部對話下載到瀏覽器再過濾；若
-  store 沒有該工具（舊版 harness），則退回對已載入清單做本地過濾
-- `/locale [en|zh|zh-TW]` —— 切換介面語言（持久化到使用者狀態目錄）
-- `/theme [name]` —— 切換介面配色主題（持久化）；不帶參數的 `/theme` 開啟
-  選擇器，移動選取即可即時預覽。除編譯內建的 ANSI 預設主題外，另附十七套配色，
-  含適合白底終端機的淺色主題（`light`、`sepia`、`solarized-light`、`github-light`、
-  `rose-pine-dawn`），以及 `solarized-dark`、`gruvbox-dark`、`nord`、`dracula`、
-  `tokyo-night`、`catppuccin-mocha`、`monokai`、`one-dark`、`github-dark`、
-  `rose-pine`、`kanagawa`、`everforest`。`NIF_TUI_THEME` 可覆蓋啟動預設值
-- `/mouse [on|off]` —— 滑鼠追蹤（預設開：滾輪、點擊和直接拖曳選取可
-  同時使用；關閉後使用終端機原生選取，但應用收不到滾輪）
-- `/cards [on|off]` —— 用主題的卡片底色渲染工具執行區塊，使其讀作一個
-  整體（僅本次執行的顯示開關）
-- `/niffler [NAME|next]` — 列出或重新執行切換固定身分的遠端實例；驗證失敗則留在原處。返回隱式本地實例須退出後普通啟動。
-- `/restart` —— 以保留的結束代碼結束，讓已安裝的 `niffler-tui` 包裝腳本重新執行
-  二進位，從而在更新後載入新組建的安裝；不透過包裝腳本執行時則直接結束。
-  你所在的對話和此客戶端的身份（其 `Niffler N` 標籤）會移交到繼任程序，
-  即使舊程序從未釋放該對話，繼任者也會復原它
-- `/quit` —— 結束用戶端，與 ctrl+c 相同；用戶端身份正常釋放（不寫重新啟動
-  移交記錄），仍在執行的回合會繼續在其對話執行器中執行，下次連接時從儲存復原
-- `/alias <名稱> <提示…>` —— 定義提示快捷鍵：輸入 `/名稱`（其後可附加文字，會
-  接到已儲存的提示之後）會將該提示以普通回合送出。改用
-  `/alias add <名稱> cli call <工具> '<json>'` 可定義呼叫別名，直接呼叫某個工具，
-  其中 `$1`…`$9` 會代入呼叫時提供的參數。不帶參數的 `/alias` 或
-  `/alias list` 列出已定義別名，`/alias rm <名稱>` 刪除；定義持久化到使用者狀態
-  目錄，支援 Tab 補全並出現在 `/help` 中。內建指令名不可被佔用
-- `/help` —— 指令摘要，由已註冊的指令表產生，因此始終列出每個內建指令
-  （以及每個外掛指令）
-
-Tab 補全適用於指令名，以及指令宣告的參數值（內聯候選，或經宣告的來源
-工具惰性取得）。未知指令會提示相近的指令名。
-
-### Shell 跳脫
-
-兩個 shell 前綴會在你自己的 shell 中執行指令——`$SHELL -c`，在對話的
-工作目錄下，使用本行程的環境並設定 `NIF_TUI=1`——並把輸出以暗色區塊顯示在
-紀錄中。它們是使用者自己的命令列，因此無需連線、不觸發核准閘門（核准閘門
-針對*模型*的工具呼叫，而非你的按鍵），也不經過 harness；不支援互動式
-程式（`vim`、`less`、`ssh` 等），因為指令沒有連接終端機。在遠端
-`NIF_NATS_URL` 下，指令執行於 TUI 所在的機器，而非 harness 的機器。
-
-- `!<指令>` — 輸出只留在本機，等同於在另一個終端機輸入
-  （`!git status`、`!make test`）。
-- `?<指令>` — 執行同一個指令，接著把輸出作為一輪對話送給模型：
-  `?git status` 在本機執行並就結果提問。若已有回合在執行，輸出會改為注入
-  該回合；若指令執行期間切換了對話，該提示會被丟棄（輸出仍可見，可以
-  再次提問）。
-
-輸出上限為 8 KB，超出時明確標註 `… N bytes truncated`；逾時會終止掛住的
-指令。單獨的 `!` 或 `?` 視為一般提示詞；除此之外前綴一律優先於正文：
-以 `!` 或 `?` 開頭的行一律視為跳脫，因此要交給模型的句子不要以此開頭。
-
-`?` 也適用於本機指令本身：`?/status`、`?/doctor deep`、`?/recall <詞>`、
-`?/info`、`?/components` 等會與 `/指令` 完全相同地執行該指令，接著把它的
-輸出送給模型（同樣有上限）。這是詢問指令輸出的唯一方式——各指令上的 `ask`
-參數（`/status ask`、`/recall … ask`、`/doctor … ask`）已移除。會開啟選擇器
-或表單的指令（`/session`、`/theme`、`/profile`）沒有可詢問的輸出，會拒絕該
-前綴；`!` 也絕不會執行斜線指令。
-
-選擇器用 `/` 過濾、方向鍵移動、`Enter` 選中、`Esc` 返回聊天。供應商
-表單會遮罩 API key 欄位；表單中的憑證不會寫入已送出訊息歷史或紀錄。
-提交的行（提示詞與斜線指令同樣）都會進入按對話的輸入歷史，因此
-上箭頭和 ctrl+r 也能找回 `/status`、`/mcp search ...` 等指令。
-
-標頭顯示對話 id、`think:`/`tool:`/`effort:` 狀態區塊，以及有效的供應商
-與模型，外加內容占用條。內容佔用在可用時使用模型上報的總 token 數，
-經 Niffler 的對話元資料跨對話復原存續，並在與 core 相同的 75% 警告 /
-90% 裁剪閾值處變色。同一行還會顯示對話累計 token 用量（`↑ 輸入 ↓ 輸出`）與
-prompt 快取命中率（復原對話時從對話標頭資訊載入）。供應商選擇改變
-Niffler 的全域預設；模型選擇僅限目前對話。
-
-輸入區上下各有分隔線；暫時回合狀態（spinner 與 `working`、停止中、兩次
-esc 停止提示）會以 Pi 風格嵌入上方分隔線開頭幾個字元處。底部只有一行，
-顯示對話工作目錄和暫時提示——指令與按鍵說明已移到 `/help` 和 Tab 補全。
-
-## 外掛斜線指令
-
-組件可以宣告式擴充 TUI，無需任何 UI 程式碼：組件照常註冊工具，並在
-註冊資訊中新增 `slash` 段（`{name, description, tool, params[]}`，參數
-可帶補全來源；見 Niffler 倉庫的 `docs/WIRE.md`）。core 校驗該規格，把
-合併後的指令表寫入 store 檢查點，並在每次變更時廣播
-`ev.catalog.updated`；TUI 先讀 store，再即時跟隨該事件。
-
-執行已註冊指令時，TUI 按宣告的參數解析指令行（位置參數、`name=value`、
-裸布林旗標、預設值）並呼叫目標工具；結果顯示為紀錄中的 meta 區塊。內建
-指令遮蔽同名註冊，指令隨其組件退出而自動消失。
-
-Assistant 回覆渲染為 Markdown（標題、粗體、斜體、列表、表格，以及經
-Glamour 語法高亮的程式碼塊）。token 串流期間，塊以純文字顯示，輸出暫停
-後升級為帶樣式的 Markdown，避免每個 token 都做一次昂貴的完整 Markdown
-渲染。
-
-啟動時以及每次切換對話後（`/session`、`/new` 或瀏覽器中的項目），輸出
-區域會根據對話儲存的訊息重建——使用者與 Assistant 回合、推理內容、含參數
-與結果的工具卡片分組、回合錯誤，以及折疊執行時通知的暗色 `▸` 機器列
-（子代理完成、背景程序結束，或自主喚醒回合的提示）——因此先前的對話可見
-且可捲動查看，而不再是一片空白。這些通知列也會即時到達：父對話因子代理
-完成而被喚醒時，會顯示結算通知及隨後的回覆，無需人工詢問。狀態列在子代理
-工作時顯示 `agent N (時長)`，在背景程序執行時顯示 `bg N` 徽標。
-
-視埠只保留有限的捲動視窗（預設最近 3000 行渲染結果，更早的訊息處以標記
-提示），這是串流渲染開銷不隨對話增長的關鍵：已完成的區塊會被快取，只有
-串流尾端重新渲染，token 重繪會被合併，視埠掃描量不超過視窗。可用
-`NIF_TUI_SCROLLBACK` 設定保留行數，`0` 表示不限制。完整對話始終保存在
-對話儲存中。
-
-歷史按對話以 JSONL 持久化在
-`$XDG_STATE_HOME/niffler-tui/history-<session>.jsonl`（或
-`~/.local/state/niffler-tui/`），上限 200 條。刪除該檔案即清空。
-
-Markdown 樣式跟隨 `GLAMOUR_STYLE` 環境變數（預設 `dark`；見 Glamour
-的樣式，如 `light`、`ascii`、`dracula`、`tokyo-night`）。
-
-備用螢幕讓視埠與輸入在 token 串流期間保持穩定。紀錄向上捲動後，新的
-token 不會強制把它拉回底部。
-
-## 外掛狀態
-
-`niffler.json` 把該組件標記為 `"interactive": true`：它應由外掛安裝
-建置，但由使用者在自己的終端機裡手動啟動：
-
-```bash
-./var/bin/cli install gokr/niffler-tui
-./var/bin/tui -session game
-```
-
-互動式組件不受 Niffler 監督或重啟。更新或移除該套件之前請結束正在執行
-的 TUI。
-
-## 社群
-
-[Discord](https://discord.gg/ThJFEAJUAk) · 授權：MIT，見
-[LICENSE](LICENSE)。
-
-### Lima migration
-
-`lima` 使用原生 `limactl shell --workdir=/home/ubuntu NAME` 與 guest CLI stdio relay，root 固定 `/home/ubuntu/niffler`。支援可選 SSH host、直接 SSH 與 Incus。舊 Multipass 回執或 registry `multipass` 欄位明確拒絕；建立新 Lima guest 並匯入新驗證回執，勿更名舊路由或複製 instance-id。Fleet 固定 Ubuntu digest、停用主機掛載與憑證轉送及自動 port forwarding，啟用 guest 持久 user service。真實 Lima smoke 仍需另行人工授權。
+先啟動框架，再從終端執行 `./bin/niffler-tui`。僅建置二進位檔案不會安裝自動啟動/重啟啟動器。參見 [Build](MANUAL.zh-TW.md#build) 和 [plugin installation](MANUAL.zh-TW.md#plugin-status)。
