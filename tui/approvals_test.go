@@ -14,6 +14,11 @@ func approveAllKey() tea.KeyPressMsg {
 	return tea.KeyPressMsg{Code: 'A', Text: "A"}
 }
 
+// approveKey is a bare "a" (remember this tool for the session).
+func approveKey() tea.KeyPressMsg {
+	return tea.KeyPressMsg{Code: 'a', Text: "a"}
+}
+
 func TestApproveAllKeyGrantsEveryToolInConversation(t *testing.T) {
 	m := newTestModel()
 	m.applyApprovalEvent(approvalEventMsg{
@@ -72,6 +77,54 @@ func TestApproveAllIgnoredWithoutSession(t *testing.T) {
 	}
 	if len(m.autoAll) != 0 {
 		t.Fatalf("approve-all recorded without a session: %v", m.autoAll)
+	}
+}
+
+// A session-less request cannot key a persisted grant, so "a"/"A" do
+// nothing on it. They must say so: a key that is consumed with no visible
+// effect reads as broken next to enter, which has no such precondition.
+func TestInertApprovalKeysExplainThemselves(tst *testing.T) {
+	m := newTestModel()
+	m.applyApprovalEvent(approvalEventMsg{req: approvalRequest{id: "c1", tool: "bash"}})
+
+	if _, consumed := m.approvalKey(approveKey()); !consumed {
+		tst.Fatal("a not consumed; it must be taken and explained")
+	}
+	if want := t(m.loc, "approval.noSession"); m.approvalNotice != want {
+		tst.Fatalf("a gave no notice: %q", m.approvalNotice)
+	}
+	if !strings.Contains(m.approvalBox(), t(m.loc, "approval.noSession")) {
+		tst.Fatal("notice not rendered in the modal")
+	}
+
+	// The up-front hint must not promise a/A either.
+	m.approvalNotice = ""
+	if !strings.Contains(m.approvalBox(), t(m.loc, "approval.hintNoSession")) {
+		tst.Fatal("session-less request still advertises a/A in the hint")
+	}
+
+	// A: arms, then explains instead of granting.
+	m.approvalKey(approveAllKey())
+	m.approvalKey(approveAllKey())
+	if want := t(m.loc, "approval.noSessionAll"); m.approvalNotice != want {
+		tst.Fatalf("A gave no notice: %q", m.approvalNotice)
+	}
+	if len(m.approvals) != 1 {
+		tst.Fatalf("session-less request answered by A: %+v", m.approvals)
+	}
+}
+
+// With a session, the keys work as before and clear any stale notice.
+func TestApprovalKeysWorkWithSession(tst *testing.T) {
+	m := newTestModel()
+	m.applyApprovalEvent(approvalEventMsg{req: approvalRequest{id: "c1", tool: "bash", sessionID: "sess-1"}})
+	m.approvalNotice = t(m.loc, "approval.noSession") // stale from a prior prompt
+	m.approvalKey(approveKey())
+	if len(m.approvals) != 0 {
+		tst.Fatalf("a did not answer a session request: %+v", m.approvals)
+	}
+	if m.approvalNotice != "" {
+		tst.Fatalf("stale notice survived: %q", m.approvalNotice)
 	}
 }
 

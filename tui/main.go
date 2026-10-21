@@ -651,6 +651,13 @@ type model struct {
 	// then A again to confirm). Cleared by any other key, a new request or a
 	// verdict, so an arm never outlives the prompt it was raised for.
 	approveAllArmed bool
+	// approvalNotice explains why a key did nothing: "a"/"A" can only
+	// remember a grant for a conversation, and a request raised outside a
+	// session (a direct harness call, or a nested call whose runner is not
+	// driving this client) carries no sessionId to key that grant by. Without
+	// this the keystroke was swallowed silently, which reads as a dead key
+	// next to Enter, which always works. Cleared on the next key press.
+	approvalNotice string
 
 	// mouse toggles terminal mouse tracking (default on). When on, the wheel
 	// scrolls the transcript, clicks expand tool cards, and plain left-button

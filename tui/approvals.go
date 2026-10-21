@@ -341,6 +341,18 @@ func (m *model) approvalBox() string {
 	if m.approveAllArmed {
 		hint = t(m.loc, "approval.armed")
 	}
+	// A session-less request cannot be remembered, so the hint must not
+	// promise that "a"/"A" will do anything. Cheaper to say it up front
+	// than to let the key silently do nothing.
+	if req.sessionID == "" {
+		hint = t(m.loc, "approval.hintNoSession")
+		if m.approveAllArmed {
+			hint = t(m.loc, "approval.noSessionAll")
+		}
+	}
+	if m.approvalNotice != "" {
+		hint = m.approvalNotice
+	}
 	return approvalBoxStyle.Width(width).Render(b.String()) + "\n" +
 		metaStyle.Render(hint)
 }
@@ -358,6 +370,11 @@ func (m *model) approvalKey(msg tea.KeyPressMsg) (tea.Cmd, bool) {
 		return nil, false
 	}
 	key := msg.String()
+	// A key that does nothing must say so rather than vanish: "a"/"A" are
+	// gated on a session (the grant is persisted per conversation), so on a
+	// session-less request they are inert. Swallowing them made the modal
+	// look broken next to Enter, which has no such precondition.
+	m.approvalNotice = ""
 	if key == "A" || key == "shift+a" {
 		if !m.approveAllArmed {
 			m.approveAllArmed = true
@@ -367,6 +384,7 @@ func (m *model) approvalKey(msg tea.KeyPressMsg) (tea.Cmd, bool) {
 			return m.answerApprovalAll(), true
 		}
 		m.approveAllArmed = false
+		m.approvalNotice = t(m.loc, "approval.noSessionAll")
 		return nil, true
 	}
 	// Any other key disarms a pending arm, so it can never outlive the
@@ -381,6 +399,7 @@ func (m *model) approvalKey(msg tea.KeyPressMsg) (tea.Cmd, bool) {
 		if m.approvals[0].sessionID != "" {
 			return m.answerApproval(true, true), true
 		}
+		m.approvalNotice = t(m.loc, "approval.noSession")
 		return nil, true
 	}
 	return nil, false
