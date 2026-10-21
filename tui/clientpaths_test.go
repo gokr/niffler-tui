@@ -26,7 +26,6 @@ func TestClientPathsMigration(t *testing.T) {
 		{"aliases", filepath.Join(state, "niffler-tui"), false},
 		{"history-conv.jsonl", filepath.Join(state, "niffler-tui"), false},
 		{"session", filepath.Join(state, "niffler-tui"), false},
-		{"instances.json", filepath.Join(legacyConfig, "niffler"), true},
 		{"activity.json", filepath.Join(legacyConfig, "niffler"), true},
 	} {
 		old := filepath.Join(item.dir, item.name)

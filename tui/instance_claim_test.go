@@ -17,6 +17,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	sdk "niffler.dev/sdk"
 )
 
 // uiFixture is a catalog + ui registry stand-in: enough of core's surface for
@@ -179,7 +181,7 @@ func TestInstanceSwitchReservesTargetBeforeQuitting(t *testing.T) {
 	endpoint := serveUiFixture(t, fixture)
 
 	p := instanceProfile{URL: endpoint, Workspace: "/worker", Expect: instanceExpectation{ID: strings.Repeat("a", 32), Root: "/worker"}}
-	writeTestRegistry(t, "worker", p)
+	withRegistryPeer(t, "worker", p)
 	t.Cleanup(func() { os.Unsetenv(instanceClaimEnv) })
 
 	m := newTestModel()
@@ -235,7 +237,7 @@ func TestInstanceSwitchReleasesReservationWhenRefused(t *testing.T) {
 	endpoint := serveUiFixture(t, fixture)
 
 	p := instanceProfile{URL: endpoint, Workspace: "/worker", Expect: instanceExpectation{ID: strings.Repeat("a", 32), Root: "/worker"}}
-	writeTestRegistry(t, "worker", p)
+	withRegistryPeer(t, "worker", p)
 	t.Cleanup(func() { os.Unsetenv(instanceClaimEnv) })
 
 	m := newTestModel()
@@ -364,7 +366,7 @@ func TestNifflerSwitchIgnoresRepeatedCommand(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("HOME", t.TempDir())
 	p := instanceProfile{URL: "nats://127.0.0.1:1", Workspace: "/worker", Expect: instanceExpectation{ID: strings.Repeat("a", 32), Root: "/worker"}}
-	writeTestRegistry(t, "worker", p)
+	withRegistryPeer(t, "worker", p)
 
 	m := newTestModel()
 	m.ctx = context.Background()
@@ -377,23 +379,6 @@ func TestNifflerSwitchIgnoresRepeatedCommand(t *testing.T) {
 	updated, cmd := got.executeLocalCommand("/niffler worker")
 	if cmd != nil || !updated.(model).instanceSwitchPending {
 		t.Fatal("a second switch started while one was in flight")
-	}
-}
-
-func writeTestRegistry(t *testing.T, name string, p instanceProfile) {
-	t.Helper()
-	path, err := instanceRegistryPath()
-	if err != nil {
-		t.Fatal(err)
-	}
-	r, err := loadInstanceRegistry(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	r.Order = append(r.Order, name)
-	r.Instances[name] = p
-	if err = saveInstanceRegistry(path, r); err != nil {
-		t.Fatal(err)
 	}
 }
 
@@ -446,4 +431,15 @@ func TestReservationSharesItsLeaseWithTheSuccessor(t *testing.T) {
 	if len(fixture.sessions) != 0 || len(fixture.number) != 0 {
 		t.Fatalf("rollback leaked: %v %v", fixture.sessions, fixture.number)
 	}
+}
+
+// withRegistryPeer supplies one named peer through the registry seam. Routes
+// live on the harness now, so a test must not fabricate a client-side file.
+func withRegistryPeer(t *testing.T, name string, p instanceProfile) {
+	t.Helper()
+	previous := registryLookup
+	registryLookup = func(*sdk.Component) registrySnapshot {
+		return registrySnapshot{peers: []namedProfile{{name: name, profile: p}}}
+	}
+	t.Cleanup(func() { registryLookup = previous })
 }

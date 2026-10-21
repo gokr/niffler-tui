@@ -2,10 +2,8 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"io"
 	"os/exec"
-	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -65,21 +63,22 @@ func TestGuestRoutes(t *testing.T) {
 						t.Fatalf("relay %q %v", parsed, parseErr)
 					}
 				}
-				receipt, _ := json.Marshal(map[string]any{"version": 1, "transport": kind, "target": "niffler1", "host": host, "root": p.Expect.Root, "expect": p.Expect})
-				got, err := profileFromReceipt(receipt, harnessIdentity{InstanceID: p.Expect.ID})
-				if err != nil || got.Host != host || got.Incus != p.Incus || got.Lima != p.Lima {
+				// A harness registry entry maps onto the client's route shape and
+				// must validate the same way a launch-time route does.
+				got, err := profileFromSummary(fleetInstanceSummary{
+					InstanceID: p.Expect.ID, Name: p.Expect.Name, Root: p.Expect.Root,
+					Transport: kind, Target: "niffler1", Host: host})
+				if err != nil || got.Host != host {
 					t.Fatalf("%+v %v", got, err)
 				}
-				path := filepath.Join(t.TempDir(), "instances.json")
-				registry := instanceRegistry{Version: 1, Order: []string{"worker"}, Instances: map[string]instanceProfile{"worker": got}}
-				if err := saveInstanceRegistry(path, registry); err != nil {
-					t.Fatal(err)
+				if kind == "incus" && got.Incus != "niffler1" || kind == "lima" && got.Lima != "niffler1" {
+					t.Fatalf("transport not mapped: %+v", got)
 				}
-				saved, err := loadInstanceRegistry(path)
-				if err != nil || !reflect.DeepEqual(saved.Instances["worker"], got) {
-					t.Fatalf("registry %+v %v", saved, err)
-				}
-				if _, err := profileFromReceipt(receipt, harnessIdentity{InstanceID: strings.Repeat("b", 32)}); err == nil {
+				// An identity mismatch is caught by the profile validator/verify
+				// pair, not by a receipt import that no longer exists.
+				wrong := got
+				wrong.Expect.ID = strings.Repeat("b", 32)
+				if err := verifyInstance(wrong, harnessIdentity{InstanceID: p.Expect.ID}); err == nil {
 					t.Fatal("accepted changed identity")
 				}
 			})

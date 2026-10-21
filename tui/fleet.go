@@ -35,7 +35,19 @@ type fleetReadyMsg struct {
 // reconnect). It is never periodic: the push lane is the steady state.
 type fleetActivityRescanMsg struct{}
 
+// ringSweep is one alt+n / alt+shift+n traversal. Its candidate list is
+// captured when the sweep starts, so a peer that fails cannot trap the ring
+// (the next candidate is tried) and a registry that changes mid-sweep cannot
+// make it revisit an instance it already failed on.
+type ringSweep struct {
+	active    bool
+	direction int
+	tried     map[string]bool
+	order     []string
+}
+
 type fleetModel struct {
+	ring                      ringSweep
 	models                    map[string]model
 	generations               map[string]uint64
 	claims                    map[string]*instanceClaim
@@ -258,6 +270,9 @@ func (f *fleetModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				f.listInstances()
 				return f, nil
 			}
+			// A deliberate selection ends any sweep in progress; only the
+			// ring's own continuation carries a sweep forward.
+			f.ring = ringSweep{}
 			if req.name == "local" {
 				// An explicit return to local is a supported selection now; only
 				// the implicit fallback ownership is gone.
@@ -284,8 +299,22 @@ func (f *fleetModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.addBlock(blockError, "Instance switch refused: "+msg.err.Error())
 			m.syncViewport(true)
 			f.models[f.active] = m
+			// A ring sweep moves on to the next candidate: one unreachable or
+			// misconfigured peer must not strand alt+n on it forever.
+			if f.ring.active {
+				next, exhausted := f.continueRing(msg.name)
+				if exhausted {
+					m := f.models[f.active]
+					m.addBlock(blockMeta, "Instance ring: no further instance reachable; staying on "+f.active)
+					m.syncViewport(true)
+					f.models[f.active] = m
+					return f, nil
+				}
+				return f, f.switchTo(next)
+			}
 			return f, nil
 		}
+		f.ring = ringSweep{}
 		f.models[msg.name] = msg.model
 		f.generations[msg.name] = 1
 		f.claims[msg.name] = msg.claim
@@ -368,34 +397,77 @@ func (f *fleetModel) listInstances() {
 	if active, ok := f.models[f.active]; ok {
 		comp = active.comp
 	}
-	registry, warning, err := loadInstanceRegistryMerged(comp)
+	snapshot := loadRegistrySnapshot(comp)
 	names := append([]string{}, f.ordering()...)
-	if err == nil {
-		for _, name := range registry.Order {
-			known := false
-			for _, existing := range names {
-				if existing == name {
-					known = true
-				}
+	for _, name := range snapshot.peerNames() {
+		known := false
+		for _, existing := range names {
+			if existing == name {
+				known = true
 			}
-			if !known {
-				names = append(names, name)
-			}
+		}
+		if !known {
+			names = append(names, name)
 		}
 	}
 	lines := []string{"Instances (/niffler NAME, next or previous; Alt+N / Alt+Shift+N):"}
 	for _, name := range names {
 		lines = append(lines, "  "+f.instanceLine(name))
 	}
-	if err != nil {
-		lines = append(lines, "  registry unavailable: "+err.Error())
-	} else if warning != "" {
+	for _, warning := range snapshot.warnings {
 		lines = append(lines, "  "+warning)
 	}
 	m := f.models[f.active]
 	m.addBlock(blockMeta, strings.Join(lines, "\n"))
 	m.syncViewport(true)
 	f.models[f.active] = m
+}
+
+// beginRing starts (or continues) a sweep and returns the next untried
+// candidate after the active instance, or "" when every candidate has been
+// tried. The active instance is never a candidate: rotating onto the
+// conversation already on screen is not a switch.
+func (f *fleetModel) beginRing(direction int, order []string) string {
+	if !f.ring.active || f.ring.direction != direction {
+		f.ring = ringSweep{active: true, direction: direction,
+			tried: map[string]bool{}, order: order}
+	}
+	return f.nextRingCandidate()
+}
+
+func (f *fleetModel) nextRingCandidate() string {
+	order := f.ring.order
+	if len(order) == 0 {
+		return ""
+	}
+	start := 0
+	for i, n := range order {
+		if n == f.active {
+			start = i
+		}
+	}
+	for step := 1; step <= len(order); step++ {
+		index := ((start+f.ring.direction*step)%len(order) + len(order)) % len(order)
+		candidate := order[index]
+		if candidate == f.active || f.ring.tried[candidate] {
+			continue
+		}
+		return candidate
+	}
+	return ""
+}
+
+// continueRing advances past a failed candidate. It reports the summary text
+// when the sweep is over — every peer was tried, and the client stays where it
+// was rather than silently moving somewhere unintended.
+func (f *fleetModel) continueRing(failed string) (next string, exhausted bool) {
+	f.ring.tried[failed] = true
+	next = f.nextRingCandidate()
+	if next == "" {
+		f.ring = ringSweep{}
+		return "", true
+	}
+	return next, false
 }
 
 func (f *fleetModel) switchTo(name string) tea.Cmd {
@@ -406,16 +478,13 @@ func (f *fleetModel) switchTo(name string) tea.Cmd {
 	if current, ok := f.models[f.active]; ok {
 		active = current.comp
 	}
-	registry, _, err := loadInstanceRegistryMerged(active)
-	if err != nil {
-		return func() tea.Msg { return fleetReadyMsg{err: err} }
-	}
+	snapshot := loadRegistrySnapshot(active)
 	// Rotation follows the ring the user actually moves through (local plus
 	// every visited instance), falling back to the registry only for instances
 	// never opened in this process. Using the registry order alone would skip a
 	// visited instance the moment the registry listing changes underneath us.
 	order := append([]string{}, f.ordering()...)
-	for _, n := range registry.Order {
+	for _, n := range snapshot.peerNames() {
 		known := false
 		for _, existing := range order {
 			if existing == n {
@@ -427,23 +496,20 @@ func (f *fleetModel) switchTo(name string) tea.Cmd {
 		}
 	}
 	if name == "next" || name == "previous" {
-		i := 0
-		found := false
-		for j, n := range order {
-			if n == f.active {
-				i, found = j, true
-			}
-		}
-		if !found {
-			// The active name is not in the ring (registry edited under us):
-			// start from the top rather than moving off an unknown index.
-			i = 0
-		}
 		delta := 1
 		if name == "previous" {
 			delta = -1
 		}
-		name = order[(i+delta+len(order))%len(order)]
+		name = f.beginRing(delta, order)
+		if name == "" {
+			// Nothing reachable to rotate to: say so instead of doing nothing.
+			f.ring = ringSweep{}
+			m := f.models[f.active]
+			m.addBlock(blockError, "no other instance to switch to")
+			m.syncViewport(true)
+			f.models[f.active] = m
+			return nil
+		}
 	}
 	if name == f.active {
 		return nil
@@ -453,7 +519,7 @@ func (f *fleetModel) switchTo(name string) tea.Cmd {
 		f.markViewed(name)
 		return nil
 	}
-	p, ok := registry.Instances[name]
+	p, ok := snapshot.profile(name)
 	if name == "local" {
 		ok = true
 	}

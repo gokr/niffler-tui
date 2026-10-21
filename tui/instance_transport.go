@@ -159,8 +159,7 @@ var loopbackEndpointPattern = regexp.MustCompile(`^nats://127\.0\.0\.1:[0-9]+$`)
 // guestCommand preserves binary stdio locally and quotes every argv word when
 // crossing SSH's remote-shell boundary. Host credentials never enter the guest.
 func instanceGuestCommand(ctx context.Context, p instanceProfile, argv []string) (*exec.Cmd, error) {
-	registry := instanceRegistry{Version: 1, Order: []string{"guest"}, Instances: map[string]instanceProfile{"guest": p}}
-	if err := registry.validate(); err != nil {
+	if err := validateProfile(p); err != nil {
 		return nil, err
 	}
 	var args []string
@@ -183,8 +182,7 @@ func instanceGuestCommand(ctx context.Context, p instanceProfile, argv []string)
 }
 
 func instanceRemoteCommand(ctx context.Context, p instanceProfile, script string) (*exec.Cmd, error) {
-	registry := instanceRegistry{Version: 1, Order: []string{"peer"}, Instances: map[string]instanceProfile{"peer": p}}
-	if err := registry.validate(); err != nil {
+	if err := validateProfile(p); err != nil {
 		return nil, err
 	}
 	if p.SSH != "" {
@@ -232,8 +230,7 @@ func resolveInstanceEndpoint(ctx context.Context, p instanceProfile) (string, er
 // built for its own architecture, with no key extraction, mounts or listener.
 // An outdated/missing CLI fails closed; never fall back to another transport.
 func instanceRelayCommand(ctx context.Context, p instanceProfile, endpoint string) (*exec.Cmd, error) {
-	registry := instanceRegistry{Version: 1, Order: []string{"peer"}, Instances: map[string]instanceProfile{"peer": p}}
-	if err := registry.validate(); err != nil {
+	if err := validateProfile(p); err != nil {
 		return nil, err
 	}
 	if !loopbackEndpointPattern.MatchString(endpoint) {
@@ -472,8 +469,7 @@ func checkedInstanceRelay(ctx context.Context, conn net.Conn, p instanceProfile,
 
 func openInstanceTransport(parent context.Context, p instanceProfile) (*instanceTransport, harnessIdentity, error) {
 	var identity harnessIdentity
-	r := instanceRegistry{Version: 1, Order: []string{"remote"}, Instances: map[string]instanceProfile{"remote": p}}
-	if err := r.validate(); err != nil {
+	if err := validateProfile(p); err != nil {
 		return nil, identity, err
 	}
 	ctx, cancel := context.WithCancel(parent)

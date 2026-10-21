@@ -144,7 +144,7 @@ Tab 补全命令名，也补全命令声明支持的参数值（内置候选或�
 
 默认视口保留最后 3000 行渲染结果，较早内容隐藏处显示标记。已完成块被缓存，仅重新渲染流式尾部；token 重绘合并，扫描不超过窗口，使长会话成本保持平稳。`NIF_TUI_SCROLLBACK` 设置行数，0 不限；完整记录始终保留在 store。
 
-Linux 和 macOS 的客户端偏好及状态统一位于 `~/.niffler/`：`theme`、`locale`、`aliases`、`instances.json`、`activity.json`、按键值区分的 `session-*`/`handoff-*`，以及上限 200 条的 `history-<session>.jsonl`。删除历史文件即可清空。不引入 SQLite。
+Linux 和 macOS 的客户端偏好及状态统一位于 `~/.niffler/`：`theme`、`locale`、`aliases`、`activity.json`（不再有实例文件：远端路由来自 harness 的 fleet 注册表）、按键值区分的 `session-*`/`handoff-*`，以及上限 200 条的 `history-<session>.jsonl`。删除历史文件即可清空。不引入 SQLite。
 
 首次使用从旧平台配置目录的 `niffler/` 和 `$XDG_STATE_HOME/niffler-tui/`（默认 `~/.local/state/niffler-tui/`）迁移。已有目标优先；迁移文件权限为 0600，成功后删除源文件。升级前关闭旧客户端，它们仍写旧位置。XDG 仅用于寻找旧文件，不决定新目标。框架 store 数据和技能目录不变。
 
@@ -185,17 +185,27 @@ Niffler builder 不使用此 go.mod，而是创建隔离模块，replacement 指
 
 ## Fleet startup (experimental)
 
-从框架原生 Nim `fleet` 组件导入私有部署收据，然后探测或启动具名实例：
+远端实例来自 harness 自身的 fleet 注册表（`fleet_instances`，store kind `fleetinstance`），其中保存了 harness 已验证的路由与身份标识。客户端不再有实例文件：客户端总是有自己的本地 harness，因此首次连接前无需记住任何东西。
+
+已注册的 peer 只需名称：
 
 ```bash
-./bin/niffler-tui --instance worker --instance-import /path/to/worker.json
 ./bin/niffler-tui --instance-probe worker
 ./bin/niffler-tui --instance worker
 ```
 
-导入先验证实时目录，再保存 0600 的 `~/.niffler/instances.json`（Linux/macOS）。SSH 使用正常配置和 known_hosts，禁用 agent 转发。Lima 使用 `limactl shell --workdir=/home/ubuntu` 和 worker 原生 `<receipt-root>/var/bin/cli relay <port>`，无需密钥、主机挂载或公开监听端口。导出的路由与身份标识以 harness 的 fleet 注册表（`fleet_instances`，store kind `fleetinstance`）为准；本地 `instances.json` 只提供连上第一个 harness 的引导路由和客户端专有字段（例如工作区覆盖）。在 harness 上注册或重装的 peer 会直接出现在选择器中，无需修改客户端文件；同一名称但身份不同的存储条目会被改名而不是顶掉本地 pin，无法解析的条目以警告显示而不会让选择器失效。没有可用的 fleet 组件时，客户端继续使用本地条目并明确提示。
+尚未注册的 peer 在本次启动时给出路由：
 
-先重建/更新 worker 框架：其 CLI 必须支持 relay（POSIX、仅 loopback），缺失或过旧明确拒绝，不回退。无需 Python 或传送辅助程序。不启动/停止远程服务；目标缺失或身份不匹配明确拒绝，不回退本地。使用匹配框架启动器，确保远程选项绕过本地自动启动；普通启动不变。
+```bash
+./bin/niffler-tui --instance worker --ssh ubuntu@worker
+./bin/niffler-tui --instance worker --incus worker [--host operator@hypervisor]
+./bin/niffler-tui --instance worker --lima worker
+./bin/niffler-tui --instance worker --bus nats://127.0.0.1:4222
+```
+
+每次启动只能有一个路由，身份由实时目录得知——命令行参数从不声明身份。guest 默认根为 `/home/ubuntu/niffler`；SSH 目标可用 `--instance-root` 覆盖。要在不带参数时看到 peer，请在 harness 上注册它（`fleet_install` 或 `fleet_instance_import`），它会出现在 `/niffler` 与环形切换中。
+
+环形切换按注册表轮转：Alt+N / Alt+Shift+N 会跳过连接失败的 peer，报告并尝试下一个；全部失败时停留在原实例并明确提示。
 
 Incus 收据（`transport: "incus"`）通过 incus exec 和原生 relay 以普通 ubuntu 用户连接，不用 guest SSH。根为 `/home/ubuntu/niffler`，明确选择本地 daemon 和 default 项目，忽略客户端可变默认值。Incus/Lima 可带 `host: "gokr@wowbagger.krampe.se"`，管理命令经该主机 SSH 执行，每个参数都做 shell 引用；省略则本地管理 guest。
 

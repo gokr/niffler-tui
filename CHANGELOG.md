@@ -6,11 +6,15 @@ project aims for [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
-- Instance routes now come from the harness's fleet registry (`fleet_instances`):
-  the local `~/.niffler/instances.json` supplies the bootstrap route and
-  client-only fields, while stored routes and identity pins win for a matching
-  identity. Registered peers appear without editing client files; identity
-  collisions are renamed, never allowed to hijack a local pin.
+- Instance routes now come from the harness's fleet registry (`fleet_instances`,
+  store kind `fleetinstance`). The client-side `~/.niffler/instances.json` file
+  and `--instance-import` are REMOVED: the client always has its local harness,
+  so nothing needs remembering before the first connection. A registered peer is
+  selected by name; an unregistered one is named with its route for that launch
+  (`--ssh`, `--incus`, `--lima`, `--bus`, plus `--host`/`--instance-root`).
+  Identity is always learned from the live catalog, never asserted by flags.
+- Alt+N / Alt+Shift+N skip a peer that fails to connect, reporting it and trying
+  the next candidate; an exhausted ring stays on the current instance.
 
 
 ### Fixed

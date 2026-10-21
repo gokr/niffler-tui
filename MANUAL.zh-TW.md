@@ -144,7 +144,7 @@ Tab 補全命令名，也補全命令宣告支援的引數值（內建候選或�
 
 預設視口保留最後 3000 行渲染結果，較早內容隱藏處顯示標記。已完成塊被快取，僅重新渲染流式尾部；token 重繪合併，掃描不超過視窗，使長會話成本保持平穩。`NIF_TUI_SCROLLBACK` 設定行數，0 不限；完整記錄始終保留在 store。
 
-Linux 和 macOS 的客戶端偏好及狀態統一位於 `~/.niffler/`：`theme`、`locale`、`aliases`、`instances.json`、`activity.json`、按鍵值區分的 `session-*`/`handoff-*`，以及上限 200 條的 `history-<session>.jsonl`。刪除歷史檔案即可清空。不引入 SQLite。
+Linux 和 macOS 的客戶端偏好及狀態統一位於 `~/.niffler/`：`theme`、`locale`、`aliases`、`activity.json`（不再有實例檔案：遠端路由來自 harness 的 fleet 註冊表）、按鍵值區分的 `session-*`/`handoff-*`，以及上限 200 條的 `history-<session>.jsonl`。刪除歷史檔案即可清空。不引入 SQLite。
 
 首次使用從舊平臺配置目錄的 `niffler/` 和 `$XDG_STATE_HOME/niffler-tui/`（預設 `~/.local/state/niffler-tui/`）遷移。已有目標優先；遷移檔案許可權為 0600，成功後刪除原始檔。升級前關閉舊客戶端，它們仍寫舊位置。XDG 僅用於尋找舊檔案，不決定新目標。框架 store 資料和技能目錄不變。
 
@@ -185,17 +185,27 @@ Niffler builder 不使用此 go.mod，而是建立隔離模組，replacement 指
 
 ## Fleet startup (experimental)
 
-從框架原生 Nim `fleet` 元件匯入私有部署收據，然後探測或啟動具名例項：
+遠端實例來自 harness 自身的 fleet 註冊表（`fleet_instances`，store kind `fleetinstance`），其中保存了 harness 已驗證的路由與身分標識。客戶端不再有實例檔案：客戶端總是有自己的本機 harness，因此首次連線前無需記住任何東西。
+
+已註冊的 peer 只需名稱：
 
 ```bash
-./bin/niffler-tui --instance worker --instance-import /path/to/worker.json
 ./bin/niffler-tui --instance-probe worker
 ./bin/niffler-tui --instance worker
 ```
 
-匯入先驗證實時目錄，再儲存 0600 的 `~/.niffler/instances.json`（Linux/macOS）。SSH 使用正常配置和 known_hosts，停用 agent 轉發。Lima 使用 `limactl shell --workdir=/home/ubuntu` 和 worker 原生 `<receipt-root>/var/bin/cli relay <port>`，無需金鑰、主機掛載或公開監聽埠。匯出的路由與身分標識以 harness 的 fleet 註冊表（`fleet_instances`，store kind `fleetinstance`）為準；本機 `instances.json` 只提供連上第一個 harness 的引導路由與客戶端專有欄位（例如工作區覆寫）。在 harness 上註冊或重裝的 peer 會直接出現在選擇器中，無需修改客戶端檔案；同名但身分不同的儲存條目會被改名而不是蓋掉本機 pin，無法解析的條目以警告顯示而不會讓選擇器失效。沒有可用的 fleet 元件時，客戶端繼續使用本機條目並明確提示。
+尚未註冊的 peer 在本次啟動時給出路由：
 
-先重建/更新 worker 框架：其 CLI 必須支援 relay（POSIX、僅 loopback），缺失或過舊明確拒絕，不回退。無需 Python 或傳送輔助程式。不啟動/停止遠端服務；目標缺失或身份不匹配明確拒絕，不回退本地。使用匹配框架啟動器，確保遠端選項繞過本地自動啟動；普通啟動不變。
+```bash
+./bin/niffler-tui --instance worker --ssh ubuntu@worker
+./bin/niffler-tui --instance worker --incus worker [--host operator@hypervisor]
+./bin/niffler-tui --instance worker --lima worker
+./bin/niffler-tui --instance worker --bus nats://127.0.0.1:4222
+```
+
+每次啟動只能有一個路由，身分由即時目錄得知——命令列參數從不宣告身分。guest 預設根為 `/home/ubuntu/niffler`；SSH 目標可用 `--instance-root` 覆寫。要在不帶參數時看到 peer，請在 harness 上註冊它（`fleet_install` 或 `fleet_instance_import`），它會出現在 `/niffler` 與環形切換中。
+
+環形切換依註冊表輪轉：Alt+N / Alt+Shift+N 會跳過連線失敗的 peer，報告並嘗試下一個；全部失敗時停留在原實例並明確提示。
 
 Incus 收據（`transport: "incus"`）透過 incus exec 和原生 relay 以普通 ubuntu 使用者連線，不用 guest SSH。根為 `/home/ubuntu/niffler`，明確選擇本地 daemon 和 default 專案，忽略客戶端可變預設值。Incus/Lima 可帶 `host: "gokr@wowbagger.krampe.se"`，管理命令經該主機 SSH 執行，每個引數都做 shell 引用；省略則本地管理 guest。
 

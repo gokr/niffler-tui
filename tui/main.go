@@ -3958,16 +3958,8 @@ func main() {
 		os.Exit(1)
 	}
 	os.Args = remaining
-	if opts.Import != "" {
-		if err := importInstanceReceipt(context.Background(), opts.Name, opts.Import); err != nil {
-			fmt.Fprintln(os.Stderr, err)
-			os.Exit(1)
-		}
-		fmt.Fprintln(os.Stdout, "Verified instance imported:", opts.Name)
-		return
-	}
-	if opts.Probe != "" {
-		_, tr, err := selectInstance(context.Background(), opts.Probe)
+	if opts.Probe {
+		_, tr, err := selectInstance(context.Background(), opts)
 		if err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			os.Exit(1)
@@ -3987,7 +3979,7 @@ func main() {
 	stateScope := natsURL
 	var transport *instanceTransport
 	if opts.Name != "" {
-		profile, tr, err := selectInstance(context.Background(), opts.Name)
+		profile, tr, err := selectInstance(context.Background(), opts)
 		if err != nil {
 			fmt.Fprintln(os.Stderr, "niffler-tui:", err)
 			os.Exit(1)

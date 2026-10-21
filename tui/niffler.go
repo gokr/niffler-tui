@@ -27,38 +27,27 @@ func localNiffler(m model, cmd slashCommand, argument string) (tea.Model, tea.Cm
 	if m.instanceSwitchPending || m.switchInstance != "" {
 		return m, nil
 	}
-	registry, warning, err := loadInstanceRegistryMerged(m.comp)
-	if err != nil {
-		m.addBlock(blockError, err.Error())
-		m.syncViewport(true)
-		return m, nil
-	}
-	if warning != "" {
-		m.addBlock(blockNotice, warning)
-	}
+	snapshot := loadRegistrySnapshot(m.comp)
 	name := strings.TrimSpace(argument)
 	if name == "" {
 		lines := []string{"Instances (use /niffler NAME, next or previous; Alt+N / Alt+Shift+N):", "  local — local harness"}
-		for _, n := range registry.Order {
-			p := registry.Instances[n]
+		for _, n := range snapshot.peerNames() {
+			p, _ := snapshot.profile(n)
 			marker := "  "
 			if n == m.instanceName {
 				marker = "* "
 			}
 			lines = append(lines, fmt.Sprintf("%s%s — %s", marker, n, p.Expect.Name))
 		}
+		for _, warning := range snapshot.warnings {
+			lines = append(lines, "  "+warning)
+		}
 		m.addBlock(blockMeta, strings.Join(lines, "\n"))
 		m.syncViewport(true)
 		return m, nil
 	}
 	if name == "next" {
-		order := []string{}
-		for _, candidate := range registry.Order {
-			p := registry.Instances[candidate]
-			if p.URL != "" || p.SSH != "" || p.Lima != "" || p.Incus != "" {
-				order = append(order, candidate)
-			}
-		}
+		order := snapshot.peerNames()
 		name = nextInstanceName(order, m.instanceName)
 		if name == "" {
 			return m, nil
@@ -67,16 +56,15 @@ func localNiffler(m model, cmd slashCommand, argument string) (tea.Model, tea.Cm
 	if name == m.instanceName {
 		return m, nil
 	}
-	p, ok := registry.Instances[name]
+	p, ok := snapshot.profile(name)
 	if !ok {
-		m.addBlock(blockError, "Unknown instance: "+name)
+		m.addBlock(blockError, "Unknown instance: "+name+
+			" (register it on the harness with the fleet component, or name a route at launch)")
 		m.syncViewport(true)
 		return m, nil
 	}
-	if name == "local" && p.URL == "" && p.SSH == "" && p.Lima == "" && p.Incus == "" {
-		m.addBlock(blockError, "Return to local by quitting and launching without --instance; local autostart is not part of remote switching.")
-		m.syncViewport(true)
-		return m, nil
+	if name == "local" {
+		return m, func() tea.Msg { return instanceSwitchMsg{name: "local"} }
 	}
 	// Secure the target before main is allowed to release the current UI.
 	m.instanceSwitchPending = true

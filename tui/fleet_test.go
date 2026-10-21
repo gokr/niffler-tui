@@ -124,3 +124,69 @@ func TestFleetScopesNestedBatches(t *testing.T) {
 		t.Fatal("terminal quit swallowed")
 	}
 }
+
+// A failing peer must not trap the ring: alt+n keeps advancing, and once every
+// candidate has failed the client stays put and says so.
+func TestFleetRingAdvancesPastAFailingInstance(t *testing.T) {
+	f := testFleet(t)
+	// Two unreachable peers ahead of the only reachable one.
+	f.order = []string{"local", "broken1", "broken2", "worker"}
+	f.ring = ringSweep{active: true, direction: 1,
+		tried: map[string]bool{}, order: f.order}
+	f.pending = "broken1"
+	f.Update(fleetReadyMsg{name: "broken1", err: errors.New("unreachable")})
+	if !f.ring.active || !f.ring.tried["broken1"] {
+		t.Fatalf("sweep did not record the first failure: %+v", f.ring)
+	}
+	if next := f.nextRingCandidate(); next != "broken2" {
+		t.Fatalf("next candidate = %q, want broken2", next)
+	}
+	f.pending = "broken2"
+	f.Update(fleetReadyMsg{name: "broken2", err: errors.New("unreachable")})
+	// The sweep reaches the reachable peer instead of stopping at the failure.
+	if f.active != "worker" {
+		t.Fatalf("sweep did not land on the reachable instance: %q", f.active)
+	}
+}
+
+func TestFleetRingExhaustsAndStaysPut(t *testing.T) {
+	f := testFleet(t)
+	f.order = []string{"local", "worker"}
+	f.ring = ringSweep{active: true, direction: 1,
+		tried: map[string]bool{"worker": true}, order: f.order}
+	f.pending = "worker"
+	f.Update(fleetReadyMsg{name: "worker", err: errors.New("unreachable")})
+	if f.active != "local" {
+		t.Fatalf("exhausted sweep moved the client: %q", f.active)
+	}
+	if f.ring.active {
+		t.Fatal("sweep stayed active after exhausting every candidate")
+	}
+}
+
+// A deliberate selection ends a sweep, so its failure is reported once instead
+// of silently continuing to rotate.
+func TestFleetExplicitSelectionCancelsTheRing(t *testing.T) {
+	f := testFleet(t)
+	f.order = []string{"local", "worker"}
+	f.ring = ringSweep{active: true, direction: 1,
+		tried: map[string]bool{}, order: []string{"local", "worker"}}
+	// The keyboard/slash path clears the sweep before switching; switchTo is
+	// also the ring's own continuation, so it must not clear it itself.
+	f.Update(fleetMsg{"local", 1, fleetSwitchRequest{name: "worker"}})
+	if f.ring.active {
+		t.Fatal("explicit switch left the ring sweep armed")
+	}
+}
+
+func TestFleetRingNeverSelectsTheActiveInstance(t *testing.T) {
+	f := testFleet(t)
+	candidate := f.beginRing(1, []string{"local"})
+	if candidate != "" {
+		t.Fatalf("ring offered the active instance: %q", candidate)
+	}
+	candidate = f.beginRing(-1, []string{"local", "worker"})
+	if candidate != "worker" {
+		t.Fatalf("previous candidate = %q", candidate)
+	}
+}

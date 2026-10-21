@@ -398,7 +398,8 @@ the number of lines to keep, or `0` for unlimited. The full transcript
 always remains in the session store.
 
 All client-local preferences and state live under `~/.niffler/` on Linux and
-macOS: `theme`, `locale`, `aliases`, `instances.json`, `activity.json`, keyed
+macOS: `theme`, `locale`, `aliases`, `activity.json` (no instance file: remote
+routes come from the harness's fleet registry), keyed
 `session-*`/`handoff-*` files, and `history-<session>.jsonl` (capped at 200
 entries; delete a history file to clear it). No SQLite database is introduced.
 
@@ -458,35 +459,46 @@ with a replacement pointing at its own `sdk/go` directory.
 
 ## Fleet startup (experimental)
 
-Import a private provisioning receipt from the harness's native Nim `fleet` component,
-then probe or launch that named instance:
+Remote instances come from the harness's own fleet registry
+(`fleet_instances`, store kind `fleetinstance`), which holds the route and
+identity pin the harness verified. There is no client-side instance file: the
+client always has its local harness, so nothing has to be remembered before the
+first connection.
+
+A peer that is already registered needs only its name:
 
 ```bash
-./bin/niffler-tui --instance worker --instance-import /path/to/worker.json
 ./bin/niffler-tui --instance-probe worker
 ./bin/niffler-tui --instance worker
 ```
 
-Import probes the live catalog before saving a 0600 client-local registry at
-`~/.niffler/instances.json` on Linux and macOS; the harness's own fleet registry
-(`fleet_instances`, store kind `fleetinstance`) is then authoritative for the
-route and the pinned identity of every peer, and the local file supplies only
-the bootstrap route to the first harness plus client-only fields such as a
-workspace override. A peer registered or re-installed on the harness appears in
-the picker without touching this client's file; a stored route that contradicts
-a local pin for the same name is renamed rather than allowed to take the name
-over, and an unreadable registry entry is shown as a warning instead of
-breaking the picker. Without a reachable fleet component the client keeps
-working from its local entries and says so. SSH
-uses normal configuration/known_hosts with agent forwarding disabled; Lima
-uses native `limactl shell --workdir=/home/ubuntu` plus the worker's native `<receipt-root>/var/bin/cli relay <port>`,
-without keys, host mounts or a public listener. Rebuild/update the worker's
-harness first: its CLI must support `relay` (POSIX, loopback-only); a missing or
-outdated CLI refuses with no fallback. No Python runtime or transferred helper
-is needed. No remote service is started or stopped. Missing targets and identity
-mismatches refuse; there is no local fallback. Use the matching harness wrapper
-to ensure remote options bypass its local autostart. Plain launches remain
-unchanged.
+A peer that is not registered yet is named with its route for that launch:
+
+```bash
+./bin/niffler-tui --instance worker --ssh ubuntu@worker
+./bin/niffler-tui --instance worker --incus worker [--host operator@hypervisor]
+./bin/niffler-tui --instance worker --lima worker
+./bin/niffler-tui --instance worker --bus nats://127.0.0.1:4222
+```
+
+Exactly one route per launch, and the identity it reaches is learned from the
+live catalog — the launch flags never assert an identity. Guests default to
+`/home/ubuntu/niffler`; `--instance-root` overrides it for SSH targets. To make
+a peer appear without flags, register it on the harness (`fleet_install` or
+`fleet_instance_import`) and it shows up in `/niffler` and the ring.
+
+The ring follows the registry: Alt+N / Alt+Shift+N walk the reachable
+instances and skip a peer that fails to connect, reporting it and trying the
+next candidate; when every candidate has failed the client stays where it was
+and says so. SSH uses normal configuration/known_hosts with agent forwarding
+disabled; Lima uses native `limactl shell --workdir=/home/ubuntu` plus the
+worker's native `<root>/var/bin/cli relay <port>`, without keys, host mounts or
+a public listener. Rebuild/update the worker's harness first: its CLI must
+support `relay` (POSIX, loopback-only); a missing or outdated CLI refuses with
+no fallback. No Python runtime or transferred helper is needed. No remote
+service is started or stopped. Missing targets and identity mismatches refuse;
+there is no local fallback. Use the matching harness wrapper to ensure remote
+options bypass its local autostart. Plain launches remain unchanged.
 
 Incus receipts (`transport: "incus"`) connect through `incus exec` and the
 native relay as the guest's ordinary `ubuntu` user, never through guest SSH.
