@@ -587,6 +587,7 @@ type model struct {
 	// sits — the two additions to the row that make a grant auditable and a
 	// worktree visible (workspace.go, /roots).
 	cwd          string
+	cwdPinned    bool // the cwd is a decision, not the harness-root default
 	grantedRoots []string
 	branch       string
 	// worktree marks the workspace as a LINKED git worktree (not the primary
@@ -1108,11 +1109,13 @@ func (m model) sendTurn(content string, atts []attachment) tea.Cmd {
 			args["attachments"] = prepared
 		}
 		// A conversation with no header yet gets this TUI's launch directory
-		// pinned as its (immutable) workspace: starting niffler-tui inside a
-		// project means the conversation works on that project. The retry
-		// below covers the small race where a model-only call created the
-		// header between bootstrap and this turn (its workspace is already
-		// fixed, so cwd would be refused as immutable).
+		// pinned as its workspace: starting niffler-tui inside a project means
+		// the conversation works on that project. The retry below covers the
+		// small race where a model-only call created the header between
+		// bootstrap and this turn — that header carries no chosen workspace
+		// (core only records `cwd` for an explicit request), so the cwd is
+		// still applied rather than refused, and a conversation that already
+		// has turns but was never chosen can also be moved with /workspace.
 		if m.sessionNeedsCreate {
 			args["cwd"] = m.cwd
 			// Birth-only: the agent identity is set when the conversation is
@@ -1350,6 +1353,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if msg.Cwd != "" {
 			m.cwd = msg.Cwd
+			// core answered with a pinned workspace: the repin MOVED it, and a
+			// moved workspace is a decision from now on (the report would
+			// otherwise keep saying "not chosen").
+			m.cwdPinned = true
+			m.sessionNeedsCreate = false
 		}
 		// The git facts belong to the workspace, so a repin invalidates them:
 		// clear first so a stale branch cannot label the new directory while
@@ -1922,6 +1930,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.promptTokens = msg.Conversation.PromptTokens
 		if msg.Conversation.Cwd != "" {
 			m.cwd = msg.Conversation.Cwd
+			m.cwdPinned = msg.Conversation.CwdPinned
 		}
 		// The workspace readback (workspace.go): granted roots come from the
 		// conversation header, the branch from a local git read of the primary

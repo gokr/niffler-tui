@@ -70,6 +70,7 @@ type branchMsg struct {
 type sessionRootsResponse struct {
 	GrantedRoots []string `json:"grantedRoots"`
 	Cwd          string   `json:"cwd"`
+	CwdPinned    bool     `json:"cwdPinned"`
 	Error        string   `json:"error"`
 }
 
@@ -368,9 +369,13 @@ func rootsReport(loc Locale, cwd string, granted []string) string {
 // shape (branch, and whether this is a linked worktree of another checkout),
 // and the granted roots. The worktree line is what the bottom row cannot say —
 // a worktree and a primary checkout look identical as paths.
-func workspaceReport(loc Locale, cwd, branch string, worktree bool, primary string, granted []string) string {
+func workspaceReport(loc Locale, cwd, branch string, worktree bool, primary string, granted []string, pinned bool) string {
 	var b strings.Builder
 	b.WriteString(t(loc, "workspace.current", displayPath(cwd, 0)))
+	if !pinned {
+		b.WriteString("\n")
+		b.WriteString(t(loc, "workspace.default"))
+	}
 	if branch != "" {
 		b.WriteString("\n")
 		if worktree {
@@ -396,11 +401,12 @@ func workspaceReport(loc Locale, cwd, branch string, worktree bool, primary stri
 // the wrong directory" has an answer inside the client rather than requiring a
 // restart.
 //
-// A repin is only possible while the conversation is pristine — core refuses to
-// move a workspace once a turn has run, because resumes must resolve context
-// and paths exactly as the original turn did, and the system prompt is frozen
-// against it. The refusal is surfaced verbatim, and the report below always
-// states which case applies, so the rule is visible before it is hit.
+// A repin is possible while the conversation is pristine (no turn yet) and,
+// once turns exist, only while its workspace was never actually CHOSEN — a
+// header whose cwd is the harness-root default that a control call baked in.
+// After that core refuses, because a resume must resolve context and paths
+// exactly as the original turn did. The refusal is surfaced verbatim, and the
+// report states which case applies, so the rule is visible before it is hit.
 func localWorkspace(m model, cmd slashCommand, argument string) (tea.Model, tea.Cmd) {
 	if !m.connected {
 		m.contextNote = t(m.loc, "note.notConnected")
@@ -409,7 +415,7 @@ func localWorkspace(m model, cmd slashCommand, argument string) (tea.Model, tea.
 	argument = strings.TrimSpace(argument)
 	if argument == "" {
 		m.addBlock(blockMeta, workspaceReport(m.loc, m.cwd, m.branch,
-			m.worktree, m.primary, m.grantedRoots))
+			m.worktree, m.primary, m.grantedRoots, m.cwdPinned))
 		m.syncViewport(true)
 		return m, nil
 	}
@@ -439,7 +445,8 @@ func setWorkspaceCmd(comp *sdk.Component, session, path string) tea.Cmd {
 			return workspaceChangeMsg{Session: session, Path: path,
 				Err: errors.New(response.Error)}
 		}
-		return workspaceChangeMsg{Session: session, Path: path, Cwd: response.Cwd}
+		return workspaceChangeMsg{Session: session, Path: path,
+			Cwd: response.Cwd, Pinned: response.CwdPinned}
 	}
 }
 
@@ -450,5 +457,6 @@ type workspaceChangeMsg struct {
 	Session string
 	Path    string
 	Cwd     string
+	Pinned  bool
 	Err     error
 }

@@ -197,6 +197,11 @@ type conversationState struct {
 	ContextUsed  int
 	PromptTokens int
 	Cwd          string
+	// CwdPinned distinguishes a workspace the human chose (a client launch
+	// directory, a /workspace repin) from the harness-root default a control
+	// call recorded. Only the former is immutable; the latter can still be
+	// pinned, which is why the UI shows the difference (/workspace).
+	CwdPinned bool
 	// GrantedRoots are the extra roots a human granted on top of the
 	// primary workspace. core keeps the authoritative copy in a `grantedroot`
 	// store document and mirrors it into the conversation header (best-effort
@@ -425,6 +430,7 @@ func loadConversationState(comp *sdk.Component, session string) (conversationSta
 			ContextUsed      int      `json:"contextUsed"`
 			PromptTokens     int      `json:"promptTokens"`
 			Cwd              string   `json:"cwd"`
+			CwdPinned        bool     `json:"cwdPinned"`
 			GrantedRoots     []string `json:"grantedRoots"`
 			CachePrompt      int      `json:"cachePrompt"`
 			CacheRead        int      `json:"cacheRead"`
@@ -448,6 +454,7 @@ func loadConversationState(comp *sdk.Component, session string) (conversationSta
 		Context: response.Value.Context, ContextUsed: response.Value.ContextUsed,
 		PromptTokens: response.Value.PromptTokens,
 		Cwd:          response.Value.Cwd,
+		CwdPinned:    response.Value.CwdPinned,
 		GrantedRoots: response.Value.GrantedRoots,
 		CachePrompt:  response.Value.CachePrompt,
 		CacheRead:    response.Value.CacheRead,

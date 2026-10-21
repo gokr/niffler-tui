@@ -578,7 +578,7 @@ func TestWorkspaceReport(t *testing.T) {
 	cwd := filepath.Join(home, "git", "niffler-tui-fleet")
 
 	t.Run("primary checkout", func(t *testing.T) {
-		got := workspaceReport(LocaleEN, cwd, "main", false, "", nil)
+		got := workspaceReport(LocaleEN, cwd, "main", false, "", nil, true)
 		if !strings.Contains(got, "~/git/niffler-tui-fleet") {
 			t.Fatalf("path missing: %q", got)
 		}
@@ -592,7 +592,7 @@ func TestWorkspaceReport(t *testing.T) {
 
 	t.Run("linked worktree names the primary", func(t *testing.T) {
 		got := workspaceReport(LocaleEN, cwd, "feat/fleet", true,
-			filepath.Join(home, "git", "niffler-tui"), nil)
+			filepath.Join(home, "git", "niffler-tui"), nil, true)
 		if !strings.Contains(got, "LINKED") {
 			t.Fatalf("worktree not called out: %q", got)
 		}
@@ -602,16 +602,27 @@ func TestWorkspaceReport(t *testing.T) {
 	})
 
 	t.Run("not a repo shows no branch line", func(t *testing.T) {
-		got := workspaceReport(LocaleEN, cwd, "", false, "", nil)
+		got := workspaceReport(LocaleEN, cwd, "", false, "", nil, true)
 		if strings.Contains(got, "branch") {
 			t.Fatalf("branch line rendered without a branch: %q", got)
 		}
 	})
 
 	t.Run("grant count is reported", func(t *testing.T) {
-		got := workspaceReport(LocaleEN, cwd, "main", false, "", []string{"/a", "/b"})
+		got := workspaceReport(LocaleEN, cwd, "main", false, "", []string{"/a", "/b"}, true)
 		if !strings.Contains(got, "2") {
 			t.Fatalf("grant count missing: %q", got)
+		}
+	})
+
+	t.Run("an unchosen workspace says so", func(t *testing.T) {
+		got := workspaceReport(LocaleEN, cwd, "main", false, "", nil, false)
+		if !strings.Contains(got, "not chosen") {
+			t.Fatalf("default workspace not called out: %q", got)
+		}
+		chosen := workspaceReport(LocaleEN, cwd, "main", false, "", nil, true)
+		if strings.Contains(chosen, "not chosen") {
+			t.Fatalf("a chosen workspace claimed to be a default: %q", chosen)
 		}
 	})
 }
