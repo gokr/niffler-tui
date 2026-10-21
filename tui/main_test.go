@@ -1601,7 +1601,9 @@ func TestThinkingEffortCycle(t *testing.T) {
 	if got := m.effortLabel(); got != "auto" {
 		t.Fatalf("empty effort label = %q, want auto", got)
 	}
-	want := []string{"low", "medium", "high", "max", ""}
+	// The rotation starts at the provider default and then walks the full
+	// ladder: none/minimal (explicit no/low reasoning) up to max.
+	want := []string{"none", "minimal", "low", "medium", "high", "xhigh", "max", ""}
 	for i, level := range want {
 		next := m.nextThinkingEffort()
 		if next != level {

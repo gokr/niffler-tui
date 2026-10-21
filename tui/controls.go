@@ -2091,7 +2091,20 @@ func (m *model) cycleThinkingLevel() {
 // level core accepts and is not a synonym for high on providers that expose
 // one — DeepSeek maps minimal/low→low, medium/xhigh→high and max→max — so the
 // TUI offers the same ladder the web UI does.
-var effortCycle = []string{"", "low", "medium", "high", "max"}
+//
+// none and minimal are explicit no/low-reasoning and are NOT the same as the
+// empty entry: empty omits the field so the provider picks, while none asks
+// for no reasoning at all (measured: the same prompt returned a long reasoning
+// trace with the field absent and none with `none`). minimal sits alongside it
+// because the OpenAI family takes it and Synthetic accepts it even where its
+// own /models metadata does not list it.
+//
+// This is a preference ladder, not a capability list: a model may reject a
+// level it does not implement (one alias declares none/low/medium/high and
+// 400s on max). core and the llm component therefore retry once without the
+// field rather than failing the turn, so a rejected level costs the effort,
+// not the answer.
+var effortCycle = []string{"", "none", "minimal", "low", "medium", "high", "xhigh", "max"}
 
 // nextThinkingEffort returns the effort level following the current
 // per-conversation selection.
