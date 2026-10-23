@@ -150,6 +150,15 @@ Local commands are handled by the TUI and are never sent to the model:
 - `/lsp [add|edit|remove]` — manage language-server registry entries (config,
   not code: register e.g. gopls for .go and the lsp tool gains diagnostics and
   precise navigation for it); a bare `/lsp` opens the server browser
+- `/config [domain]` — browse and edit the settings components declare: a bare
+  `/config` lists the domains (owner, property count, when a change applies),
+  `/config repomap.gates` opens that domain's fields. Pick a field, type a new
+  value, enter applies it through the harness's `config_patch` with the
+  revision you were looking at, so a concurrent change is a visible conflict
+  instead of a lost update. Secrets show `set`/`unset` and are never held by
+  the client; read-only fields are marked; a domain whose owner is not running
+  is listed with that reason rather than failing on submit. The form is built
+  from each declaration's schema, so a new owner needs no client change.
 - `/processes` — show and manage background processes (dev servers, watchers
   started via bash's run_in_background or process_start): a status-line
   `bg N` badge while anything runs, enter peeks the output tail without

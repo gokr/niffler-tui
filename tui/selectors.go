@@ -25,6 +25,9 @@ const (
 	modeMcpForm
 	modeLsp
 	modeLspForm
+	modeConfigDomains
+	modeConfig
+	modeConfigForm
 	modeProcesses
 	modeProcessesPeek
 	modeThemes
@@ -44,7 +47,7 @@ func isSelectorMode(mode uiMode) bool {
 	switch mode {
 	case modeProviders, modeCatalogProviders, modeModels, modeSessions,
 		modeMcp, modeMcpSearch, modeThemes, modeProfiles, modeLsp, modeProcesses,
-		modeSkills:
+		modeSkills, modeConfigDomains, modeConfig:
 		return true
 	}
 	return false

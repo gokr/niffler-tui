@@ -1359,6 +1359,9 @@ func (m model) handleControlKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
+	if m.mode == modeConfigForm {
+		return m.updateConfigForm(msg)
+	}
 	if m.mode == modeProfileForm {
 		return m.updateProfileForm(msg)
 	}

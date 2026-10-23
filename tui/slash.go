@@ -160,6 +160,10 @@ func builtinSlashCommands() []slashCommand {
 		{Name: "lsp", Description: "manage language-server registry entries", builtin: true, interactive: true, run: localLsp, subcommands: lspSubcommands, Params: []slashParam{
 			{Name: "subcommand", Kind: "enum", Values: subcommandNames(lspSubcommands)},
 		}},
+		{Name: "config", Description: "browse and edit declared settings", builtin: true, interactive: true, run: localConfig, Params: []slashParam{
+			{Name: "domain", Kind: "string", Description: "configuration domain (omit to browse them all)",
+				Source: &slashSource{Tool: "config.config_list", Field: "domain"}},
+		}},
 		{Name: "processes", Description: "show and manage background processes", builtin: true, interactive: true, run: localProcesses},
 		{Name: "tasks", Description: "fleet inbox: work submitted to remote instances and how it went", builtin: true, run: localTasks},
 		{Name: "inbox", Description: "fleet inbox: work submitted to remote instances and how it went", builtin: true, aliasOf: "tasks", run: localTasks},

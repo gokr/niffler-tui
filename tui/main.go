@@ -482,6 +482,16 @@ type model struct {
 	lspServers       []lspServerSummary
 	lspConfirmDelete string
 	lspForm          lspForm
+	// Configuration surface (/config): domains, then one domain's schema-driven
+	// fields. The editor holds no per-owner knowledge — see config_editor.go.
+	configDomains  []configDomain
+	configEditing  string
+	configFields   []configField
+	configRev      int
+	configEditField configField
+	configInput     textinput.Model
+	configNote     string
+	configErr      string
 	// Background-processes control plane (/processes + the status-line
 	// badge): the registry snapshot, the two-stage kill arm, the peek view,
 	// and the badge's refresh-tick guard (one live timer per purpose — the
@@ -2369,6 +2379,63 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.syncViewport(true)
 
+	case configDomainsMsg:
+		m.controlPending = false
+		if msg.Err != nil {
+			m.contextNote = msg.Err.Error()
+			m.mode = modeChat
+			m.layout()
+			break
+		}
+		m.configDomains = msg.Domains
+		m.configNote = ""
+		if len(msg.Domains) == 0 {
+			// A harness without the config component (or with nothing
+			// declared) is a normal state, not an error.
+			m.addBlock(blockMeta, t(m.loc, "config.none"))
+			m.mode = modeChat
+			m.syncViewport(true)
+			break
+		}
+		m.openConfigDomainSelector()
+
+	case configDetailMsg:
+		m.controlPending = false
+		if msg.Err != nil {
+			m.addBlock(blockError, msg.Err.Error())
+			m.configNote = ""
+			m.mode = modeChat
+			m.syncViewport(true)
+			break
+		}
+		m.configFields = msg.Fields
+		m.configRev = msg.Detail.Rev
+		if !msg.Detail.OwnerAvailable {
+			// The declaration is durable, the values are the owner's: say so
+			// instead of rendering defaults as if they were live.
+			m.configNote = t(m.loc, "config.ownerUnavailable")
+		} else {
+			m.configNote = ""
+		}
+		m.openConfigFieldSelector()
+
+	case configAppliedMsg:
+		m.controlPending = false
+		if msg.Err != nil {
+			m.contextNote = msg.Err.Error()
+			// Stay in the form so the human can correct the value; refresh
+			// nothing, because the revision did not move.
+			m.configErr = msg.Err.Error()
+			m.mode = modeConfigForm
+			m.layout()
+			break
+		}
+		m.configErr = ""
+		m.contextNote = t(m.loc, "config.saved", msg.Label)
+		// Reload the domain so the list shows the NEW value and revision;
+		// the form closes rather than showing a stale one.
+		return m, configDetailCmd(m.comp, m.configEditing)
+
 	case lspServersMsg:
 		m.controlPending = false
 		if msg.Err == nil {
@@ -3472,7 +3539,7 @@ func (m model) View() tea.View {
 		switch m.mode {
 		case modeProviders, modeCatalogProviders, modeModels, modeSessions,
 			modeMcp, modeMcpSearch, modeThemes, modeProfiles, modeAgents, modeSkills,
-			modeLsp, modeProcesses:
+			modeLsp, modeProcesses, modeConfigDomains, modeConfig:
 			control = m.selector.list.View()
 			parts = append(parts, control)
 			footer := t(m.loc, "footer.filterChoose")
@@ -3504,6 +3571,12 @@ func (m model) View() tea.View {
 					footer = errorStyle.Render(t(m.loc, "footer.confirmRemove", m.mcpConfirmDelete))
 				}
 			}
+			if m.mode == modeConfigDomains || m.mode == modeConfig {
+				footer = t(m.loc, "footer.config")
+				if m.configNote != "" {
+					footer = m.configNote
+				}
+			}
 			if m.mode == modeLsp {
 				footer = t(m.loc, "footer.lsp")
 				if m.lspConfirmDelete != "" {
@@ -3528,6 +3601,8 @@ func (m model) View() tea.View {
 			parts = append(parts, m.mcpForm.view(m.width))
 		case modeLspForm:
 			parts = append(parts, m.lspForm.view(m.width))
+		case modeConfigForm:
+			parts = append(parts, m.configFormView())
 		case modeProcessesPeek:
 			parts = append(parts, peekView(m.loc, m.processesPeek, m.processesPeekText,
 				m.width, m.height, m.processesPeekLoading))

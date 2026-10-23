@@ -38,6 +38,8 @@
         "tui/instance_claim.go",
         "tui/instance_launch.go",
         "tui/instance_store.go",
+    "tui/config_editor.go",
+    "tui/config_command.go",
         "tui/instance_switch.go",
         "tui/instance_transport.go",
         "tui/instances.go",

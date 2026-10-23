@@ -6,6 +6,15 @@ project aims for [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+- `/config` — a schema-driven editor for the settings components declare. A bare
+  `/config` lists the domains (owner, property count, application timing); a
+  domain opens its fields, and editing one sends `config_patch` with the
+  revision you were looking at, so a concurrent change is a visible conflict
+  instead of a lost update. Secrets show `set`/`unset` and are never held by the
+  client, read-only fields are marked, and a domain whose owner is stopped is
+  listed with that reason rather than failing on submit. The form is built from
+  each declaration's schema, so a new owner needs no client change.
+
 - `/tasks` (alias `/inbox`) shows the Fleet inbox: the work this client
   submitted to remote Nifflers, its lifecycle state, and — once settled — the
   peer's bounded verdict. The list is a LOCAL read (`fleet_task_inbox` over the
