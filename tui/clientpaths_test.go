@@ -109,9 +109,12 @@ func TestLegacyHandoffConsumedWithoutResurrection(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	state := t.TempDir()
 	t.Setenv("XDG_STATE_HOME", state)
+	// A handoff from a pre-0.10 install sits flat in the old state directory;
+	// it is a MIGRATION input, adopted into sessions/ by migrateSessionFiles.
 	old := filepath.Join(state, "niffler-tui", "handoff")
 	os.MkdirAll(filepath.Dir(old), 0700)
 	os.WriteFile(old, []byte(`{"ui":"ui-one","session":"conv-one","at":0}`), 0600)
+	migrateSessionFiles()
 	ui, session := consumeHandoff("", "", time.Now())
 	if ui != "ui-one" || session != "conv-one" {
 		t.Fatalf("handoff %q %q", ui, session)

@@ -3987,7 +3987,11 @@ func sessionFilePath(natsURL, workspace string) string {
 		sum := sha256.Sum256([]byte(natsURL + "\x00" + workspace))
 		name = fmt.Sprintf("session-%x", sum[:6])
 	}
-	return statePath(name)
+	dir := stateDir("sessions")
+	if dir == "" {
+		return ""
+	}
+	return filepath.Join(dir, name)
 }
 
 // loadLastSession returns the conversation the TUI was last switched to for
@@ -4017,7 +4021,10 @@ func persistSession(natsURL, workspace, id string) {
 	if dir := filepath.Dir(path); dir != "" {
 		_ = os.MkdirAll(dir, 0o755)
 	}
-	_ = os.WriteFile(path, []byte(id+"\n"), 0o644)
+	// 0600: which conversation you had open is private, like the rest of the
+	// state directory. (It was 0644 in a 0755 dir — the one state file that
+	// leaked its name and contents to other local users.)
+	_ = os.WriteFile(path, []byte(id+"\n"), 0o600)
 }
 
 func main() {
@@ -4025,6 +4032,10 @@ func main() {
 	// config.json once, before anything reads a preference. Idempotent: the
 	// legacy files are removed only after their value lands in the config.
 	migrateLegacyPreferences()
+	// And move pre-0.10 per-conversation files into their subdirectories, so
+	// the state root keeps only the handful of things a human reads.
+	migrateHistoryFiles()
+	migrateSessionFiles()
 	originalArgs := append([]string(nil), os.Args...)
 	localDir := initialCwd()
 	// The saved last session is keyed by bus URL + launch directory: two

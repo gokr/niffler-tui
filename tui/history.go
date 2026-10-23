@@ -21,11 +21,67 @@ func sanitizeSessionID(id string) string {
 	return invalidSessionID.ReplaceAllString(id, "-")
 }
 
+// historyDir is where per-session history lives: ~/.niffler/history/. One file
+// per conversation there, instead of dozens of `history-*.jsonl` files mixed in
+// with the preferences the user might actually look at.
+func historyDir() string {
+	return stateDir("history")
+}
+
 // historyFilePath returns the per-session persistent history file
 // (JSONL, one sent message per line). Empty when the user state directory
 // is unavailable.
 func historyFilePath(session string) string {
-	return statePath("history-" + sanitizeSessionID(session) + ".jsonl")
+	dir := historyDir()
+	if dir == "" {
+		return ""
+	}
+	return filepath.Join(dir, sanitizeSessionID(session)+".jsonl")
+}
+
+// migrateHistoryFiles moves pre-0.10 `history-<id>.jsonl` files from the state
+// root into history/. Idempotent: a name already present in history/ wins (it
+// is the newer file by construction) and the root copy is removed only when the
+// move succeeded.
+func migrateHistoryFiles() {
+	dir := historyDir()
+	if dir == "" {
+		return
+	}
+	// Both roots, like the session migration: the real home (pre-0.10 flat
+	// files) and the legacy XDG directory (never launched since the move).
+	if root, err := clientPath("."); err == nil && root != "" {
+		migrateHistoryFilesFrom(root, dir)
+	}
+	if legacy := legacyStateDir(); legacy != "" {
+		migrateHistoryFilesFrom(legacy, dir)
+	}
+}
+
+func migrateHistoryFilesFrom(root, dir string) {
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		return
+	}
+	for _, entry := range entries {
+		name := entry.Name()
+		if entry.IsDir() || !strings.HasPrefix(name, "history-") ||
+			!strings.HasSuffix(name, ".jsonl") {
+			continue
+		}
+		old := filepath.Join(root, name)
+		newName := strings.TrimPrefix(name, "history-")
+		target := filepath.Join(dir, newName)
+		if _, err := os.Lstat(target); err == nil {
+			// Already migrated (or a genuinely newer file): keep it, drop the
+			// stale root copy so the directory stops accumulating.
+			_ = os.Remove(old)
+			continue
+		}
+		if err := os.Rename(old, target); err == nil {
+			_ = os.Chmod(target, 0o600)
+		}
+	}
 }
 
 // readHistoryLines reads a history file into trimmed non-empty lines. The

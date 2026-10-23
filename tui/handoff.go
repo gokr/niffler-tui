@@ -50,7 +50,8 @@ func handoffFilePath(natsURL, workspace string) string {
 	if session == "" {
 		return ""
 	}
-	return statePath("handoff" + strings.TrimPrefix(filepath.Base(session), "session"))
+	return filepath.Join(filepath.Dir(session),
+		"handoff"+strings.TrimPrefix(filepath.Base(session), "session"))
 }
 
 // writeHandoff records this client's registry identity for the successor a
@@ -65,7 +66,7 @@ func writeHandoff(natsURL, workspace, uiID, session string) {
 		return
 	}
 	if dir := filepath.Dir(path); dir != "" {
-		_ = os.MkdirAll(dir, 0o755)
+		_ = os.MkdirAll(dir, 0o700)
 	}
 	data, err := json.Marshal(restartHandoff{
 		UI:      uiID,

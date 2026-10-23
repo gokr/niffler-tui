@@ -53,9 +53,14 @@ func TestLastSessionPersistRoundtrip(t *testing.T) {
 		t.Fatalf("unsanitized session id loaded: %q", got)
 	}
 
-	// The file lives in the shared state dir next to theme/locale.
-	if dir := filepath.Dir(path); !strings.HasSuffix(dir, filepath.Join(".niffler")) {
+	// Sessions live in their own subdirectory of the state dir, so the state
+	// root keeps only the handful of files a human might read.
+	if dir := filepath.Dir(path); !strings.HasSuffix(dir, filepath.Join(".niffler", "sessions")) {
 		t.Fatalf("session file dir = %q", dir)
+	}
+	// 0600: which conversation you had open is private.
+	if info, err := os.Stat(path); err == nil && info.Mode().Perm() != 0o600 {
+		t.Fatalf("session file mode = %o, want 600", info.Mode().Perm())
 	}
 }
 
