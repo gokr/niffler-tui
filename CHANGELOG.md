@@ -6,6 +6,24 @@ project aims for [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+- One client home, and one preferences file. `~/.niffler` is the ONLY client
+  state directory: the fallback that also read `~/.config/niffler` is gone, so a
+  stale file there can no longer look authoritative (it did: an
+  `instances.json` outlived the code that read it). Theme, locale and user
+  aliases — previously three single-purpose files — now share
+  `~/.niffler/config.json`:
+
+  ```json
+  {"version": 1, "theme": "monokai", "locale": "en", "aliases": {"commit": "…"}}
+  ```
+
+  Reading is total (a missing, corrupt or future-version file yields defaults —
+  preferences must never block the UI), writes are read-modify-write so a
+  `/theme` cannot revert your aliases, and the legacy files are folded in once
+  and removed only after their value lands, with an existing choice always
+  winning. Alias entries keep their on-disk form: a bare string is a prompt
+  alias, `{"call": …}` a command alias.
+
 - `/config` — a schema-driven editor for the settings components declare. A bare
   `/config` lists the domains (owner, property count, application timing); a
   domain opens its fields, and editing one sends `config_patch` with the

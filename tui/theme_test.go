@@ -116,8 +116,8 @@ func TestThemeDetectionAndPersistence(t *testing.T) {
 	}
 
 	// An invalid persisted name falls back through the chain.
-	path := themeFilePath()
-	if err := os.WriteFile(path, []byte("bogus-theme\n"), 0o644); err != nil {
+	path := clientConfigPath()
+	if err := os.WriteFile(path, []byte("{\"version\":1,\"theme\":\"bogus-theme\"}\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if got := detectTheme(); got != ThemeDefault {
@@ -135,11 +135,10 @@ func TestThemeDetectionAndPersistence(t *testing.T) {
 	if got := detectTheme(); got != "sepia" {
 		t.Fatalf("file-over-env detectTheme = %q, want sepia", got)
 	}
-	// persistTheme must not store junk: the file keeps its previous content.
+	// persistTheme must not store junk: the stored choice stays as it was.
 	persistTheme("not-a-theme")
-	data, err := os.ReadFile(path)
-	if err != nil || strings.TrimSpace(string(data)) != "sepia" {
-		t.Fatalf("persistTheme overwrote a valid choice: %q err %v", string(data), err)
+	if got := loadClientConfig().Theme; got != "sepia" {
+		t.Fatalf("persistTheme overwrote a valid choice with %q", got)
 	}
 }
 
@@ -156,7 +155,7 @@ func TestThemeCommand(t *testing.T) {
 	if got.theme != "" || len(got.blocks) != 1 || got.blocks[0].kind != blockError {
 		t.Fatalf("unknown theme = theme:%q blocks:%+v", got.theme, got.blocks)
 	}
-	if _, err := os.Stat(themeFilePath()); !os.IsNotExist(err) {
+	if loadClientConfig().Theme != "" {
 		t.Fatal("unknown theme was persisted")
 	}
 
@@ -172,9 +171,8 @@ func TestThemeCommand(t *testing.T) {
 		!strings.Contains(got.blocks[0].text, "light") {
 		t.Fatalf("confirmation block = %+v", got.blocks)
 	}
-	data, err := os.ReadFile(themeFilePath())
-	if err != nil || strings.TrimSpace(string(data)) != "light" {
-		t.Fatalf("persisted theme file = %q err %v, want light", string(data), err)
+	if got := loadClientConfig().Theme; got != "light" {
+		t.Fatalf("persisted theme = %q, want light", got)
 	}
 }
 
@@ -230,9 +228,8 @@ func TestThemeSelectorAppliesAndPersists(t *testing.T) {
 	if len(got.blocks) == 0 || got.blocks[len(got.blocks)-1].kind != blockMeta {
 		t.Fatalf("no confirmation block: %+v", got.blocks)
 	}
-	data, err := os.ReadFile(themeFilePath())
-	if err != nil || strings.TrimSpace(string(data)) != "nord" {
-		t.Fatalf("persisted theme file = %q err %v, want nord", string(data), err)
+	if got := loadClientConfig().Theme; got != "nord" {
+		t.Fatalf("persisted theme = %q, want nord", got)
 	}
 
 	// Esc leaves the theme untouched.

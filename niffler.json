@@ -1,6 +1,6 @@
 {
   "name": "niffler-tui",
-  "version": "0.8.0",
+  "version": "0.9.0",
   "description": "Bubble Tea terminal chat client for Niffler sessions.",
   "license": "MIT",
   "components": [
@@ -18,8 +18,11 @@
         "tui/backend.go",
         "tui/bang.go",
         "tui/clickopen.go",
+        "tui/clientconfig.go",
         "tui/clientpaths.go",
         "tui/clipboard.go",
+        "tui/config_command.go",
+        "tui/config_editor.go",
         "tui/context_status.go",
         "tui/controls.go",
         "tui/diagnostic_history.go",
@@ -38,8 +41,6 @@
         "tui/instance_claim.go",
         "tui/instance_launch.go",
         "tui/instance_store.go",
-    "tui/config_editor.go",
-    "tui/config_command.go",
         "tui/instance_switch.go",
         "tui/instance_transport.go",
         "tui/instances.go",

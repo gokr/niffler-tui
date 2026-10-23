@@ -16,7 +16,6 @@ package main
 import (
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
 )
 
@@ -1400,21 +1399,12 @@ func validLocale(s string) (Locale, bool) {
 	return "", false
 }
 
-// localeFilePath is the single-line persistence file for the /locale
-// choice (same state dir as history, empty when unavailable).
-func localeFilePath() string {
-	return statePath("locale")
-}
-
-// detectLocale resolves the startup locale: an explicit /locale choice,
-// then NIF_TUI_LOCALE, then LANG/LC_ALL, then English.
+// detectLocale resolves the startup locale: an explicit /locale choice, then
+// NIF_TUI_LOCALE, then LANG/LC_ALL, then English. The choice lives in the
+// shared client config (clientconfig.go).
 func detectLocale() Locale {
-	if path := localeFilePath(); path != "" {
-		if data, err := os.ReadFile(path); err == nil {
-			if loc, ok := validLocale(strings.TrimSpace(string(data))); ok {
-				return loc
-			}
-		}
+	if loc, ok := validLocale(loadClientConfig().Locale); ok {
+		return loc
 	}
 	if env := strings.TrimSpace(os.Getenv("NIF_TUI_LOCALE")); env != "" {
 		if loc, ok := validLocale(env); ok {
@@ -1439,10 +1429,5 @@ func detectLocale() Locale {
 // persistLocale stores the /locale choice (best effort; the in-memory
 // value still applies for this run when the file is unavailable).
 func persistLocale(loc Locale) {
-	if path := localeFilePath(); path != "" {
-		if dir := filepath.Dir(path); dir != "" {
-			_ = os.MkdirAll(dir, 0o755)
-		}
-		_ = os.WriteFile(path, []byte(string(loc)+"\n"), 0o644)
-	}
+	_ = updateClientConfig(func(cfg *clientConfig) { cfg.Locale = string(loc) })
 }

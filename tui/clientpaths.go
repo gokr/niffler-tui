@@ -1,7 +1,11 @@
 package main
 
-// Client-local files share one cross-platform home. XDG paths are migration
-// inputs only; harness/store configuration and skill discovery are unchanged.
+// Client-local files share ONE home: ~/.niffler. There is deliberately no
+// fallback to an XDG config directory any more — two candidate homes meant a
+// file could be read from a location nothing wrote to (a stale
+// ~/.config/niffler/instances.json looked authoritative long after the client
+// stopped using it). XDG paths are MIGRATION INPUTS only, tried once while the
+// file is still absent from the real home.
 import (
 	"fmt"
 	"io"
@@ -10,7 +14,7 @@ import (
 	"strings"
 )
 
-func clientPath(name string, config bool) (string, error) {
+func clientPath(name string) (string, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return "", err
@@ -21,28 +25,25 @@ func clientPath(name string, config bool) (string, error) {
 	} else if !os.IsNotExist(err) {
 		return "", err
 	}
-	var oldDir string
-	if config {
-		oldDir, err = os.UserConfigDir()
-		if err != nil {
-			return "", err
-		}
-		oldDir = filepath.Join(oldDir, "niffler")
-	} else {
-		oldDir = strings.TrimSpace(os.Getenv("XDG_STATE_HOME"))
-		if oldDir == "" {
-			oldDir = filepath.Join(home, ".local", "state")
-		}
-		oldDir = filepath.Join(oldDir, "niffler-tui")
+	// Migration input: the old state directory only. A config-dir source is
+	// no longer consulted (the 0.8 consolidation moved every preference into
+	// config.json in the real home), so a stale file there cannot be mistaken
+	// for current state.
+	oldDir := strings.TrimSpace(os.Getenv("XDG_STATE_HOME"))
+	if oldDir == "" {
+		oldDir = filepath.Join(home, ".local", "state")
 	}
-	if err := migrateClientFile(filepath.Join(oldDir, name), path, config); err != nil {
+	oldDir = filepath.Join(oldDir, "niffler-tui")
+	// Migrated files were private client state or preferences; both were
+	// 0600-worthy, so every migration target keeps that mode.
+	if err := migrateClientFile(filepath.Join(oldDir, name), path, true); err != nil {
 		return "", fmt.Errorf("migrate client file %s: %w", name, err)
 	}
 	return path, nil
 }
 
 func statePath(name string) string {
-	path, err := clientPath(name, false)
+	path, err := clientPath(name)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		return ""

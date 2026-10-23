@@ -146,7 +146,7 @@ func (l *activityLedger) unread(scope string) []fleetActivity {
 	return result
 }
 func activityLedgerPath() (string, error) {
-	return clientPath("activity.json", true)
+	return clientPath("activity.json")
 }
 func loadActivityLedger(path string) (*activityLedger, error) {
 	l := newActivityLedger()

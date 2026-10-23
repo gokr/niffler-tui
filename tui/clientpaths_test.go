@@ -7,26 +7,22 @@ import (
 	"time"
 )
 
+// There is exactly ONE client home: ~/.niffler. The old state directory is a
+// migration input; a config-directory file is NOT (two candidate homes once
+// let a stale ~/.config/niffler/instances.json look authoritative).
 func TestClientPathsMigration(t *testing.T) {
-	home, state, config := t.TempDir(), t.TempDir(), t.TempDir()
+	home, state := t.TempDir(), t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("XDG_STATE_HOME", state)
-	t.Setenv("XDG_CONFIG_HOME", config)
-	// On macOS UserConfigDir intentionally ignores XDG_CONFIG_HOME.
-	legacyConfig, err := os.UserConfigDir()
-	if err != nil {
-		t.Fatal(err)
-	}
 	for _, item := range []struct {
 		name, dir string
-		config    bool
 	}{
-		{"theme", filepath.Join(state, "niffler-tui"), false},
-		{"locale", filepath.Join(state, "niffler-tui"), false},
-		{"aliases", filepath.Join(state, "niffler-tui"), false},
-		{"history-conv.jsonl", filepath.Join(state, "niffler-tui"), false},
-		{"session", filepath.Join(state, "niffler-tui"), false},
-		{"activity.json", filepath.Join(legacyConfig, "niffler"), true},
+		{"theme", filepath.Join(state, "niffler-tui")},
+		{"locale", filepath.Join(state, "niffler-tui")},
+		{"aliases", filepath.Join(state, "niffler-tui")},
+		{"history-conv.jsonl", filepath.Join(state, "niffler-tui")},
+		{"session", filepath.Join(state, "niffler-tui")},
+		{"activity.json", filepath.Join(state, "niffler-tui")},
 	} {
 		old := filepath.Join(item.dir, item.name)
 		if err := os.MkdirAll(item.dir, 0700); err != nil {
@@ -35,7 +31,7 @@ func TestClientPathsMigration(t *testing.T) {
 		if err := os.WriteFile(old, []byte("original"), 0600); err != nil {
 			t.Fatal(err)
 		}
-		got, err := clientPath(item.name, item.config)
+		got, err := clientPath(item.name)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -55,13 +51,43 @@ func TestClientPathsMigration(t *testing.T) {
 		}
 		// New file wins even when an older client creates another legacy file.
 		os.WriteFile(old, []byte("stale"), 0600)
-		if _, err := clientPath(item.name, item.config); err != nil {
+		if _, err := clientPath(item.name); err != nil {
 			t.Fatal(err)
 		}
 		data, _ = os.ReadFile(got)
 		if string(data) != "original" {
 			t.Fatal("overwrote destination")
 		}
+	}
+}
+
+// A file in the old CONFIG directory is not state: the client must not read
+// it, and must not migrate it into the real home either.
+func TestClientIgnoresConfigDirState(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	legacyConfig, err := os.UserConfigDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Join(legacyConfig, "niffler")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	stale := filepath.Join(dir, "instances.json")
+	if err := os.WriteFile(stale, []byte(`{"version":1}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got, err := clientPath("instances.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(got); !os.IsNotExist(err) {
+		t.Fatalf("a config-dir file was migrated into the client home: %v", err)
+	}
+	if data, err := os.ReadFile(stale); err != nil || len(data) == 0 {
+		t.Fatalf("the config-dir file was consumed: %v", err)
 	}
 }
 

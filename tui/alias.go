@@ -32,8 +32,6 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
-	"os"
-	"path/filepath"
 	"sort"
 	"strings"
 	"time"
@@ -87,32 +85,14 @@ func aliasSubcommands() []slashSubcommand {
 
 // ---- persistence -----------------------------------------------------------
 
-// aliasFilePath is the JSON persistence file for user-defined aliases: the
-// same per-user state dir as the theme/locale/session files, but global —
-// aliases are not tied to a harness or workspace (empty when unavailable).
-func aliasFilePath() string {
-	return statePath("aliases")
-}
-
-// loadAliases reads the alias file. Best effort and total: a missing,
-// unreadable or corrupt file yields no aliases rather than an error, and
-// entries that fail validation (name, empty body, malformed call line) are
-// dropped — a hand-edited file must never crash or block the UI.
+// loadAliases reads user-defined aliases from the shared client config
+// (clientconfig.go), where they live beside the theme and locale. Best effort
+// and total: a missing, unreadable or corrupt entry yields no aliases rather
+// than an error, and entries that fail validation (name, empty body, malformed
+// call line) are dropped — a hand-edited file must never crash or block the UI.
 func loadAliases() map[string]aliasEntry {
 	aliases := map[string]aliasEntry{}
-	path := aliasFilePath()
-	if path == "" {
-		return aliases
-	}
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return aliases
-	}
-	var raw map[string]json.RawMessage
-	if err := json.Unmarshal(data, &raw); err != nil {
-		return aliases
-	}
-	for name, value := range raw {
+	for name, value := range loadClientConfig().Aliases {
 		n := normalizeAliasName(name)
 		entry, ok := decodeAlias(value)
 		if !validAliasName(n) || !ok {
@@ -156,20 +136,17 @@ func decodeAlias(raw json.RawMessage) (aliasEntry, bool) {
 // sorts map keys, so the serialized form is deterministic. Returns an error
 // only so the caller can surface it; the in-memory map still applies.
 func saveAliases(aliases map[string]aliasEntry) error {
-	path := aliasFilePath()
-	if path == "" {
-		return fmt.Errorf("no state directory")
-	}
-	if dir := filepath.Dir(path); dir != "" {
-		if err := os.MkdirAll(dir, 0o755); err != nil {
+	raw := make(map[string]json.RawMessage, len(aliases))
+	for name, entry := range aliases {
+		encoded, err := json.Marshal(entry)
+		if err != nil {
 			return err
 		}
+		raw[name] = encoded
 	}
-	data, err := json.MarshalIndent(aliases, "", "  ")
-	if err != nil {
-		return err
-	}
-	return os.WriteFile(path, append(data, '\n'), 0o600)
+	// Read-modify-write: the config also carries theme and locale, so a
+	// targeted update is what keeps saving aliases from reverting a /theme.
+	return updateClientConfig(func(cfg *clientConfig) { cfg.Aliases = raw })
 }
 
 // ---- validation ------------------------------------------------------------

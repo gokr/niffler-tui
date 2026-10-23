@@ -4021,6 +4021,10 @@ func persistSession(natsURL, workspace, id string) {
 }
 
 func main() {
+	// Fold the pre-consolidation preference files (theme, locale, aliases) into
+	// config.json once, before anything reads a preference. Idempotent: the
+	// legacy files are removed only after their value lands in the config.
+	migrateLegacyPreferences()
 	originalArgs := append([]string(nil), os.Args...)
 	localDir := initialCwd()
 	// The saved last session is keyed by bus URL + launch directory: two

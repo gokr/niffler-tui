@@ -44,18 +44,18 @@ func TestAliasCreatePersistReload(t *testing.T) {
 		t.Fatalf("create confirmation = %q", text)
 	}
 
-	// The file exists, is 0600, and its directory 0755.
-	path := aliasFilePath()
+	// Aliases live in the shared client config: 0600 file, 0700 directory.
+	path := clientConfigPath()
 	info, err := os.Stat(path)
 	if err != nil {
-		t.Fatalf("alias file not written: %v", err)
+		t.Fatalf("client config not written: %v", err)
 	}
 	if got := info.Mode().Perm(); got != 0o600 {
-		t.Fatalf("alias file mode = %o, want 600", got)
+		t.Fatalf("client config mode = %o, want 600", got)
 	}
 	if di, err := os.Stat(filepath.Dir(path)); err == nil {
-		if got := di.Mode().Perm(); got != 0o755 {
-			t.Fatalf("alias dir mode = %o, want 755", got)
+		if got := di.Mode().Perm(); got != 0o700 {
+			t.Fatalf("client config dir mode = %o, want 700", got)
 		}
 	}
 
@@ -75,9 +75,12 @@ func TestAliasCreatePersistReload(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := "{\n  \"commit\": \"Please commit all changes properly\",\n  \"push\": \"push everything now\"\n}\n"
+	// Aliases live inside config.json now, beside theme and locale.
+	want := "{\n  \"version\": 1,\n  \"aliases\": {\n" +
+		"    \"commit\": \"Please commit all changes properly\",\n" +
+		"    \"push\": \"push everything now\"\n  }\n}\n"
 	if string(data) != want {
-		t.Fatalf("serialized aliases = %q, want %q", data, want)
+		t.Fatalf("serialized config = %q, want %q", data, want)
 	}
 }
 
@@ -262,8 +265,8 @@ func TestAliasFileTolerance(t *testing.T) {
 		t.Fatalf("missing file = %#v, want empty", got)
 	}
 
-	path := aliasFilePath()
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+	path := clientConfigPath()
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		t.Fatal(err)
 	}
 
@@ -281,8 +284,8 @@ func TestAliasFileTolerance(t *testing.T) {
 		}
 	}
 
-	// Invalid entries inside a valid object are dropped, valid ones kept.
-	body := `{"ok":"keep me","BAD name":"x","":"y","empty":""}`
+	// Invalid entries inside a valid aliases object are dropped, valid ones kept.
+	body := `{"version":1,"aliases":{"ok":"keep me","BAD name":"x","":"y","empty":""}}`
 	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -491,11 +494,11 @@ func TestAliasToolRegistered(t *testing.T) {
 
 func TestAliasFileObjectForms(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
-	path := aliasFilePath()
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+	path := clientConfigPath()
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	body := `{"pr":{"call":"cli call git '{}'"},"o":"a prompt","bad":{"call":"cli call git nope"},"emptyobj":{}}`
+	body := `{"version":1,"aliases":{"pr":{"call":"cli call git '{}'"},"o":"a prompt","bad":{"call":"cli call git nope"},"emptyobj":{}}}`
 	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
 		t.Fatal(err)
 	}

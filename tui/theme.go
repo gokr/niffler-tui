@@ -13,7 +13,6 @@ package main
 
 import (
 	"os"
-	"path/filepath"
 	"strings"
 
 	"charm.land/bubbles/v2/textarea"
@@ -725,21 +724,12 @@ func applyTheme(name string) bool {
 
 // ---- persistence -----------------------------------------------------------
 
-// themeFilePath is the single-line persistence file for the /theme choice
-// (same state dir as the locale choice; empty when unavailable).
-func themeFilePath() string {
-	return statePath("theme")
-}
-
 // detectTheme resolves the startup theme: an explicit /theme choice, then
 // NIF_TUI_THEME, then the compiled-in default. Unknown names fall through.
+// The choice lives in the shared client config (clientconfig.go).
 func detectTheme() string {
-	if path := themeFilePath(); path != "" {
-		if data, err := os.ReadFile(path); err == nil {
-			if name := strings.TrimSpace(string(data)); validTheme(name) {
-				return name
-			}
-		}
+	if name := loadClientConfig().Theme; validTheme(name) {
+		return name
 	}
 	if env := strings.TrimSpace(os.Getenv("NIF_TUI_THEME")); env != "" && validTheme(env) {
 		return env
@@ -753,12 +743,7 @@ func persistTheme(name string) {
 	if !validTheme(name) {
 		return
 	}
-	if path := themeFilePath(); path != "" {
-		if dir := filepath.Dir(path); dir != "" {
-			_ = os.MkdirAll(dir, 0o755)
-		}
-		_ = os.WriteFile(path, []byte(name+"\n"), 0o644)
-	}
+	_ = updateClientConfig(func(cfg *clientConfig) { cfg.Theme = name })
 }
 
 func validTheme(name string) bool {
