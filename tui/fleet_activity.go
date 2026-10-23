@@ -31,10 +31,51 @@ type activityLedger struct {
 	Version int                                 `json:"version"`
 	Latest  map[string]map[string]fleetActivity `json:"latest"`
 	Seen    map[string]map[string]int           `json:"seen"`
+	// Fleet inbox seen keys, (peer|jobId|activation). Kept in this file rather
+	// than its own because it is the same kind of state: what THIS client has
+	// shown the human, never something the harness is told.
+	FleetSeen []string `json:"fleetSeen,omitempty"`
+	// FleetBaseline records that the first-connect baseline happened: a fresh
+	// client must adopt existing settlements as already-seen instead of
+	// presenting a long history as a wall of unread work.
+	FleetBaseline bool `json:"fleetBaseline,omitempty"`
 }
 
 func newActivityLedger() *activityLedger {
 	return &activityLedger{Version: 1, Latest: map[string]map[string]fleetActivity{}, Seen: map[string]map[string]int{}}
+}
+
+// fleetSeen reports whether this client has already shown this settlement.
+func (l *activityLedger) fleetSeen(key string) bool {
+	for _, existing := range l.FleetSeen {
+		if existing == key {
+			return true
+		}
+	}
+	return false
+}
+
+// markFleetSeen records one settlement as shown. Bounded: the ledger is a
+// private file capped at 8 MiB, and an unbounded slice would grow it forever.
+func (l *activityLedger) markFleetSeen(key string) bool {
+	if l.fleetSeen(key) {
+		return false
+	}
+	l.FleetSeen = append(l.FleetSeen, key)
+	const maxSeen = 2000
+	if len(l.FleetSeen) > maxSeen {
+		l.FleetSeen = l.FleetSeen[len(l.FleetSeen)-maxSeen:]
+	}
+	return true
+}
+
+// fleetSeenKeys is the lookup the renderer takes: rendering must not mutate.
+func (l *activityLedger) fleetSeenKeys() map[string]bool {
+	keys := make(map[string]bool, len(l.FleetSeen))
+	for _, key := range l.FleetSeen {
+		keys[key] = true
+	}
+	return keys
 }
 func validFleetActivity(a fleetActivity) bool {
 	if a.SessionID == "" || a.ID != a.SessionID || a.TurnID == "" || a.Seq < 1 || a.At <= 0 {

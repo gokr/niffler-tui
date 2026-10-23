@@ -154,6 +154,15 @@ Local commands are handled by the TUI and are never sent to the model:
   started via bash's run_in_background or process_start): a status-line
   `bg N` badge while anything runs, enter peeks the output tail without
   touching the model's drain cursor, d kills with a two-stage confirm
+- `/tasks` (`/inbox`) — the Fleet inbox: tasks you submitted to remote
+  Nifflers with their lifecycle state and, once settled, the peer's bounded
+  verdict. A local read, so a job whose instance is down or gone still shows
+  what it reported; detail is `fleet_task_result` and needs the peer. A
+  settlement arriving while you are connected marks the status line instead of
+  taking the viewport. Unread marks are yours alone — they live in the client's
+  own state and are never sent to the harness, so nothing acknowledges a model's
+  notice. The first connect baselines existing history rather than showing it
+  all as new.
 - `/status` — detailed effective provider/model/context provenance and usage
 - `/info [id]` — conversation statistics computed from the store's message
   documents: message counts per role, per-tool call counts and tool-result

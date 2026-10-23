@@ -152,6 +152,34 @@ func (f *fleetModel) persistLedger() {
 	}
 }
 
+// baselineFleetInboxCmd marks every settlement that already exists as seen,
+// once, on the first connect. It records FleetBaseline so a later connect does
+// not adopt a settlement that arrived while the client was away.
+func (f *fleetModel) baselineFleetInboxCmd(name string, generation uint64, comp *sdk.Component) tea.Cmd {
+	return scopeCmd(name, generation, func() tea.Msg {
+		msg := fleetInboxCmd(comp, 100)()
+		batch, ok := msg.(fleetInboxMsg)
+		if !ok || batch.Err != nil {
+			return fleetInboxBaselineMsg{Err: fmt.Errorf("baseline unavailable")}
+		}
+		return fleetInboxBaselineMsg{Items: batch.Items}
+	})
+}
+
+// fleetInboxBaselineMsg completes the first-connect baseline.
+type fleetInboxBaselineMsg struct {
+	Items []fleetInboxItem
+	Err   error
+}
+
+// seenKeys is the render-time view of fleet seen markers (never mutates).
+func (f *fleetModel) seenKeys() map[string]bool {
+	if f.ledger == nil {
+		return nil
+	}
+	return f.ledger.fleetSeenKeys()
+}
+
 func (f *fleetModel) scopeOf(name string) string {
 	return f.scopes[name]
 }
@@ -291,6 +319,15 @@ func (f *fleetModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return f, tea.Batch(cmd, scopeCmd(msg.name, msg.generation, loadFleetActivityCmd(m.comp)))
 			}
 		}
+		if _, connected := msg.msg.(connectedMsg); connected {
+			// The FIRST connect baselines the fleet inbox: a client opened
+			// against a long job history must not present all of it as unread
+			// work. Later settlements are news (docs/FLEET-INBOX.md).
+			if m, ok := f.models[msg.name]; ok && m.comp != nil && f.ledger != nil &&
+				!f.ledger.FleetBaseline {
+				return f, tea.Batch(cmd, f.baselineFleetInboxCmd(msg.name, msg.generation, m.comp))
+			}
+		}
 		return f, cmd
 	case fleetReadyMsg:
 		f.pending = ""
@@ -367,6 +404,78 @@ func (f *fleetModel) activityMessage(name string, msg tea.Msg) (bool, tea.Cmd) {
 		}
 		for _, item := range value.Items {
 			f.mergeActivity(name, item, f.isViewed(name, item.SessionID))
+		}
+		return true, nil
+	case fleetInboxBaselineMsg:
+		if f.ledger == nil || f.ledger.FleetBaseline {
+			return true, nil
+		}
+		// A failed baseline must NOT latch: leaving FleetBaseline false means
+		// the next connect tries again, rather than silently presenting the
+		// whole history as unread (or worse, marking it read on a bad read).
+		if value.Err != nil {
+			return true, nil
+		}
+		for _, item := range value.Items {
+			if item.settledOnly() {
+				f.ledger.markFleetSeen(item.seenKey())
+			}
+		}
+		f.ledger.FleetBaseline = true
+		f.persistLedger()
+		return true, nil
+	case fleetSettledMsg:
+		// A live settlement: mark it unread and say so in the status line. We
+		// do NOT append a chat block — a toast that steals the viewport while
+		// you are reading a reply is worse than a marker you can act on.
+		m, ok := f.models[name]
+		if !ok {
+			return true, nil
+		}
+		item := value.Item
+		if item.settledOnly() && f.ledger != nil {
+			// A settlement for the conversation currently on screen, from the
+			// instance on screen, counts as seen only if it is actually the
+			// same job as the open session; otherwise it is news.
+			if !f.isViewed(name, item.JobID) {
+				note := fmt.Sprintf("fleet: %s finished on %s — /tasks", item.JobID, item.Peer)
+				if item.Settled != nil && item.Settled.Status != "" {
+					note = fmt.Sprintf("fleet: %s finished on %s (%s) — /tasks",
+						oneLine(item.Objective), item.Peer, item.Settled.Status)
+				}
+				m.contextNote = note
+				f.models[name] = m
+			}
+		}
+		return true, nil
+	case fleetTasksRenderedMsg:
+		// The /tasks read lands here rather than in the instance's own model:
+		// the seen markers are client state owned by this ledger, and the
+		// block must render into whichever instance is on screen. Marking
+		// AFTER the render is deliberate — a settlement that arrives while the
+		// list is being drawn must not be swallowed as already-read.
+		m, ok := f.models[name]
+		if !ok {
+			return true, nil
+		}
+		if value.Err != nil {
+			m.contextNote = "fleet inbox: " + value.Err.Error()
+			f.models[name] = m
+			return true, nil
+		}
+		m.addBlock(blockMeta, renderFleetInbox(value.Items, f.seenKeys()))
+		m.syncViewport(true)
+		f.models[name] = m
+		if f.ledger != nil {
+			changed := false
+			for _, item := range value.Items {
+				if item.settledOnly() && f.ledger.markFleetSeen(item.seenKey()) {
+					changed = true
+				}
+			}
+			if changed {
+				f.persistLedger()
+			}
 		}
 		return true, nil
 	case fleetActivityRescanMsg:

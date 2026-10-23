@@ -24,6 +24,19 @@ func bindInstanceEvents(ctx context.Context, comp *sdk.Component, gate *sessionE
 			send(fleetActivityMsg{Activity: item})
 		}
 	})
+	// Fleet settlements (docs/FLEET-INBOX.md): a job this harness submitted to
+	// a remote instance finished. This is the human feed, so it lands in the
+	// client-local ledger and never acknowledges anything on the harness: the
+	// event exists to tell a connected client, not to be confirmed.
+	comp.On("ev.fleet.settled", func(_ *sdk.Component, _ string, payload json.RawMessage) {
+		if send == nil {
+			return
+		}
+		var item fleetInboxItem
+		if json.Unmarshal(payload, &item) == nil && item.JobID != "" {
+			send(fleetSettledMsg{Item: item})
+		}
+	})
 	comp.On("ev.session.>", func(_ *sdk.Component, subject string, payload json.RawMessage) {
 		// Subjects are per-conversation (ev.session.<sessionId>.<kind>); the
 		// gate filters on the subject's session token before the payload is

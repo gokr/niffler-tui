@@ -161,6 +161,8 @@ func builtinSlashCommands() []slashCommand {
 			{Name: "subcommand", Kind: "enum", Values: subcommandNames(lspSubcommands)},
 		}},
 		{Name: "processes", Description: "show and manage background processes", builtin: true, interactive: true, run: localProcesses},
+		{Name: "tasks", Description: "fleet inbox: work submitted to remote instances and how it went", builtin: true, run: localTasks},
+		{Name: "inbox", Description: "fleet inbox: work submitted to remote instances and how it went", builtin: true, aliasOf: "tasks", run: localTasks},
 		{Name: "mcp", Description: "manage external MCP servers", builtin: true, interactive: true, run: localMcp, subcommands: mcpSubcommands, Params: []slashParam{
 			{Name: "subcommand", Kind: "enum", Values: subcommandNames(mcpSubcommands)},
 			{Name: "name", Kind: "string", Description: "server name",

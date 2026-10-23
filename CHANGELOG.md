@@ -6,6 +6,18 @@ project aims for [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+- `/tasks` (alias `/inbox`) shows the Fleet inbox: the work this client
+  submitted to remote Nifflers, its lifecycle state, and — once settled — the
+  peer's bounded verdict. The list is a LOCAL read (`fleet_task_inbox` over the
+  `fleetjob` kind), so a job whose instance is down, rebuilt or removed still
+  shows what it reported; detail remains `fleet_task_result` and needs the peer
+  to answer. A settlement arriving while connected marks the status line rather
+  than seizing the viewport. Unread marks are client-local, keyed by
+  `(peer, jobId, activation)` — a re-run is new news, not a silent overwrite —
+  and are never sent to the harness: reading does not acknowledge a model's
+  notice. The first connect baselines existing history instead of presenting it
+  as unread, and a failed baseline does not latch.
+
 - Instance routes now come from the harness's fleet registry (`fleet_instances`,
   store kind `fleetinstance`). The client-side `~/.niffler/instances.json` file
   and `--instance-import` are REMOVED: the client always has its local harness,

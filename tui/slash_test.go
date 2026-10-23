@@ -513,6 +513,7 @@ func TestAliasDispatch(t *testing.T) {
 	aliases := map[string]string{
 		"?": "help", "newsession": "new", "providers": "provider",
 		"models": "model", "sessions": "session", "profile": "toolset",
+		"inbox": "tasks",
 	}
 	for alias, canonical := range aliases {
 		entry, ok := builtinCommand(alias)
