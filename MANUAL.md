@@ -165,7 +165,9 @@ Local commands are handled by the TUI and are never sent to the model:
   touching the model's drain cursor, d kills with a two-stage confirm
 - `/tasks` (`/inbox`) — the Fleet inbox: tasks you submitted to remote
   Nifflers with their lifecycle state and, once settled, the peer's bounded
-  verdict. A local read, so a job whose instance is down or gone still shows
+  verdict. `/tasks <jobId>` opens one task's report; that read needs the peer
+  to answer, so an offline instance reports "detail unavailable" while the
+  verdict stays in the inbox. A local read, so a job whose instance is down or gone still shows
   what it reported; detail is `fleet_task_result` and needs the peer. A
   settlement arriving while you are connected marks the status line instead of
   taking the viewport. Unread marks are yours alone — they live in the client's

@@ -165,7 +165,9 @@ func builtinSlashCommands() []slashCommand {
 				Source: &slashSource{Tool: "config.config_list", Field: "domain"}},
 		}},
 		{Name: "processes", Description: "show and manage background processes", builtin: true, interactive: true, run: localProcesses},
-		{Name: "tasks", Description: "fleet inbox: work submitted to remote instances and how it went", builtin: true, run: localTasks},
+		{Name: "tasks", Description: "fleet inbox: work submitted to remote instances and how it went; /tasks <jobId> shows one report", builtin: true, run: localTasks, Params: []slashParam{
+			{Name: "jobId", Kind: "string", Description: "optional task id — its bounded report from the peer"},
+		}},
 		{Name: "inbox", Description: "fleet inbox: work submitted to remote instances and how it went", builtin: true, aliasOf: "tasks", run: localTasks},
 		{Name: "mcp", Description: "manage external MCP servers", builtin: true, interactive: true, run: localMcp, subcommands: mcpSubcommands, Params: []slashParam{
 			{Name: "subcommand", Kind: "enum", Values: subcommandNames(mcpSubcommands)},

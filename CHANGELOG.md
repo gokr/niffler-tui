@@ -6,6 +6,19 @@ project aims for [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+- `/tasks <jobId>` opens one task's report (`fleet_task_result`): role-tagged,
+  one line per entry, and honest when the peer returns more than the bounded
+  report carries. Asking for a report is an explicit act because it needs the
+  peer to answer — when the instance is down, rebuilt or its transcript is gone
+  the client says so and leaves the verdict in the inbox, which is the split
+  docs/FLEET-INBOX.md describes.
+- Per-conversation state moved into subdirectories: `~/.niffler/history/` for
+  `history-*.jsonl`, `~/.niffler/sessions/` for the last-session and restart
+  handoff files. Existing files migrate on startup from both the current home
+  and the legacy XDG directory. The last-session file is written 0600 in a 0700
+  directory now; it was 0644 in 0755, the one state file readable by other
+  local users.
+
 - One client home, and one preferences file. `~/.niffler` is the ONLY client
   state directory: the fallback that also read `~/.config/niffler` is gone, so a
   stale file there can no longer look authoritative (it did: an

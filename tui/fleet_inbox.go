@@ -180,6 +180,13 @@ func localTasks(m model, cmd slashCommand, argument string) (tea.Model, tea.Cmd)
 		m.contextNote = t(m.loc, "note.notConnected")
 		return m, nil
 	}
+	// `/tasks <jobId>` opens that job's report; a bare `/tasks` lists the inbox.
+	// The distinction is deliberate: the list is a LOCAL read that always
+	// answers, while a report needs the peer — so asking for one is an explicit
+	// act, not something the list silently does for every row.
+	if job := strings.TrimSpace(argument); job != "" {
+		return m, fleetTaskDetailCmd(m.comp, job)
+	}
 	return m, func() tea.Msg {
 		msg := fleetInboxCmd(m.comp, 100)()
 		batch, ok := msg.(fleetInboxMsg)
@@ -190,6 +197,62 @@ func localTasks(m model, cmd slashCommand, argument string) (tea.Model, tea.Cmd)
 			return fleetTasksRenderedMsg{Err: batch.Err}
 		}
 		return fleetTasksRenderedMsg{Items: batch.Items}
+	}
+}
+
+// fleetTaskDetailMsg carries one job's remote report back to the UI loop.
+type fleetTaskDetailMsg struct {
+	JobID string
+	Reply string
+	Err   error
+}
+
+// fleetTaskDetailCmd pulls one job's bounded report from the peer
+// (fleet_task_result). It can fail for reasons the inbox never does — the
+// instance is down, rebuilt, or the transcript is gone — and the message says
+// which, because "no detail" is not "no result".
+func fleetTaskDetailCmd(comp *sdk.Component, jobID string) tea.Cmd {
+	return func() tea.Msg {
+		if comp == nil {
+			return fleetTaskDetailMsg{JobID: jobID, Err: fmt.Errorf("not connected")}
+		}
+		var reply struct {
+			JobID string `json:"jobId"`
+			State string `json:"state"`
+			Items []struct {
+				ID      string `json:"id"`
+				Role    string `json:"role"`
+				Content string `json:"content"`
+			} `json:"items"`
+			Bounded bool   `json:"bounded"`
+			HasMore bool   `json:"hasMore"`
+			Error   string `json:"error"`
+		}
+		if err := requestInto(comp, "fleet", "fleet_task_result",
+			map[string]any{"jobId": jobID}, &reply); err != nil {
+			return fleetTaskDetailMsg{JobID: jobID, Err: err}
+		}
+		if reply.Error != "" {
+			return fleetTaskDetailMsg{JobID: jobID, Err: fmt.Errorf("%s", reply.Error)}
+		}
+		var b strings.Builder
+		fmt.Fprintf(&b, "Fleet task %s", jobID)
+		if reply.State != "" {
+			fmt.Fprintf(&b, " (%s)", reply.State)
+		}
+		b.WriteString("\n")
+		if len(reply.Items) == 0 {
+			b.WriteString("  the peer returned no transcript entries")
+		}
+		for _, item := range reply.Items {
+			fmt.Fprintf(&b, "  %-9s %s\n", item.Role+":", oneLine(item.Content))
+		}
+		if reply.HasMore {
+			// Honest about truncation: this is a bounded report, and the full
+			// canonical transcript stays on the worker.
+			b.WriteString("  … more entries on the peer (the transcript stays canonical there)\n")
+		}
+		return fleetTaskDetailMsg{JobID: jobID, Reply: strings.TrimRight(b.String(), "\n")}
 	}
 }
 

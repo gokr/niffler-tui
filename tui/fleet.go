@@ -448,6 +448,24 @@ func (f *fleetModel) activityMessage(name string, msg tea.Msg) (bool, tea.Cmd) {
 			}
 		}
 		return true, nil
+	case fleetTaskDetailMsg:
+		m, ok := f.models[name]
+		if !ok {
+			return true, nil
+		}
+		if value.Err != nil {
+			// A detail failure is the NORMAL offline case, not a bug: the inbox
+			// promised a verdict, the transcript lives on the peer. Say which.
+			m.addBlock(blockMeta, fmt.Sprintf(
+				"Fleet task %s: detail unavailable (%v).\n"+
+					"The verdict stays in the inbox; the transcript is canonical on the peer.",
+				value.JobID, value.Err))
+		} else {
+			m.addBlock(blockMeta, value.Reply)
+		}
+		m.syncViewport(true)
+		f.models[name] = m
+		return true, nil
 	case fleetTasksRenderedMsg:
 		// The /tasks read lands here rather than in the instance's own model:
 		// the seen markers are client state owned by this ledger, and the
