@@ -126,3 +126,36 @@ func itoa(n int) string {
 	}
 	return string(b)
 }
+
+// requestInto is the seam the inbox and the drill-down both cross, and it is
+// exactly where the human-scope bug lived: the list was a human read, the
+// report was a conversation read, and the client had no conversation. These
+// tests pin the ARGUMENTS the client sends, which no unit test of either side
+// could have caught.
+func TestFleetRequestsCarryHumanScope(t *testing.T) {
+	// fleet_task_inbox must not require a session (it never sends human, and
+	// does not need to: it is a human read by construction on the harness side).
+	inboxArgs := inboxRequestArgs(100, "")
+	if _, ok := inboxArgs["human"]; ok {
+		t.Fatalf("inbox does not need the human flag: %#v", inboxArgs)
+	}
+	if inboxArgs["limit"] != 100 {
+		t.Fatalf("inbox limit = %#v", inboxArgs["limit"])
+	}
+	if _, ok := inboxArgs["after"]; ok {
+		t.Fatalf("an empty cursor must not be sent: %#v", inboxArgs)
+	}
+	if got := inboxRequestArgs(100, "cur"); got["after"] != "cur" {
+		t.Fatalf("cursor not forwarded: %#v", got)
+	}
+
+	// The report DOES need it, or the harness refuses with "session context
+	// required" and the UI can never open what it lists.
+	detailArgs := detailRequestArgs("fleet-abc")
+	if detailArgs["human"] != true {
+		t.Fatalf("report read must carry human scope: %#v", detailArgs)
+	}
+	if detailArgs["jobId"] != "fleet-abc" {
+		t.Fatalf("jobId = %#v", detailArgs["jobId"])
+	}
+}

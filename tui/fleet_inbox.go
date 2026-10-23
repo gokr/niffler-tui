@@ -49,6 +49,23 @@ type fleetInboxItem struct {
 	} `json:"artifact"`
 }
 
+// inboxRequestArgs is the inbox read's payload. No `human` flag: the inbox is a
+// human read by construction on the harness side.
+func inboxRequestArgs(limit int, after string) map[string]any {
+	args := map[string]any{"limit": limit}
+	if after != "" {
+		args["after"] = after
+	}
+	return args
+}
+
+// detailRequestArgs is the report read's payload. `human: true` is required —
+// without it the harness demands a conversation owner and refuses, which is how
+// /tasks <jobId> first failed against a real client.
+func detailRequestArgs(jobID string) map[string]any {
+	return map[string]any{"jobId": jobID, "human": true}
+}
+
 type fleetInboxMsg struct {
 	Items []fleetInboxItem
 	Err   error
@@ -86,10 +103,7 @@ func fleetInboxCmd(comp *sdk.Component, limit int) tea.Cmd {
 				HasMore   bool             `json:"hasMore"`
 				NextAfter string           `json:"nextAfter"`
 			}
-			args := map[string]any{"limit": limit}
-			if after != "" {
-				args["after"] = after
-			}
+			args := inboxRequestArgs(limit, after)
 			if err := requestInto(comp, "fleet", "fleet_task_inbox", args, &reply); err != nil {
 				return fleetInboxMsg{Err: err}
 			}
@@ -228,8 +242,11 @@ func fleetTaskDetailCmd(comp *sdk.Component, jobID string) tea.Cmd {
 			HasMore bool   `json:"hasMore"`
 			Error   string `json:"error"`
 		}
+		// `human: true` is the human-scope read: the owner check keeps
+		// CONVERSATIONS apart, and a person at a keyboard is not a conversation.
+		// Without it the inbox could list every job and open none of them.
 		if err := requestInto(comp, "fleet", "fleet_task_result",
-			map[string]any{"jobId": jobID}, &reply); err != nil {
+			detailRequestArgs(jobID), &reply); err != nil {
 			return fleetTaskDetailMsg{JobID: jobID, Err: err}
 		}
 		if reply.Error != "" {
