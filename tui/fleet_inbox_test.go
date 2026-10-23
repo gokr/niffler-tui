@@ -159,3 +159,57 @@ func TestFleetRequestsCarryHumanScope(t *testing.T) {
 		t.Fatalf("jobId = %#v", detailArgs["jobId"])
 	}
 }
+
+// The artifact is the reason the inbox is worth opening for a coding task, so
+// its rendering has to say what changed — and must never imply success from a
+// missing field.
+func TestFleetArtifactRendering(t *testing.T) {
+	// A produced commit: base, head, subject, diffstat, and the link.
+	produced := &fleetArtifact{
+		Version: 1, Observed: true, ProducedCommit: true, HeadMoved: true, OnBase: true,
+	}
+	produced.Base = &struct {
+		Commit string `json:"commit"`
+		Short  string `json:"short"`
+	}{Short: "9cba035"}
+	produced.Head = &struct {
+		Commit  string `json:"commit"`
+		Short   string `json:"short"`
+		Subject string `json:"subject"`
+		Branch  string `json:"branch"`
+		URL     string `json:"url"`
+	}{Short: "4a54dee", Subject: "fix the flaky test", URL: "https://github.com/x/y/commit/4a54dee"}
+	produced.Diffstat = " a.go | 12 +++++\n 1 file changed"
+	got := strings.Join(produced.render(), "\n")
+	for _, want := range []string{"9cba035 → 4a54dee", "fix the flaky test", "a.go", "github.com"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("artifact render missing %q:\n%s", want, got)
+		}
+	}
+
+	// History replaced: the one thing a reviewer must not have to infer.
+	produced.OnBase = false
+	if got := strings.Join(produced.render(), "\n"); !strings.Contains(got, "not on the base") {
+		t.Fatalf("off-base commit not flagged:\n%s", got)
+	}
+	produced.OnBase = true
+
+	// No commit, dirty tree: a real outcome, not a failure to hide.
+	noCommit := &fleetArtifact{Version: 1, Observed: true, Dirty: true, Untracked: 2}
+	got = strings.Join(noCommit.render(), "\n")
+	if !strings.Contains(got, "no commit") || !strings.Contains(got, "dirty") {
+		t.Fatalf("uncommitted change not described:\n%s", got)
+	}
+
+	// Unobservable: says so, and explicitly claims nothing to review.
+	blind := &fleetArtifact{Version: 1, Observed: false}
+	got = strings.Join(blind.render(), "\n")
+	if !strings.Contains(got, "not observable") || !strings.Contains(got, "nothing to review") {
+		t.Fatalf("unobservable artifact must not imply success:\n%s", got)
+	}
+
+	// No artifact at all renders nothing rather than an empty label.
+	if out := (*fleetArtifact)(nil).render(); len(out) != 0 {
+		t.Fatalf("nil artifact rendered %v", out)
+	}
+}

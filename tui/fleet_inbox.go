@@ -40,13 +40,11 @@ type fleetInboxItem struct {
 		Summary             string `json:"summary"`
 		TranscriptCommitted bool   `json:"transcriptCommitted"`
 	} `json:"settled"`
-	Artifact *struct {
-		Name      string  `json:"name"`
-		MediaType string  `json:"mediaType"`
-		Size      float64 `json:"size"`
-		Digest    string  `json:"digest"`
-		Summary   string  `json:"summary"`
-	} `json:"artifact"`
+	// A coding artifact, as the worker produced it: the change itself, not a
+	// description of it. There is no media/size/digest here because a coding
+	// artifact is a git observation — the commit lives in the worker's repo,
+	// which is where reviewable code belongs.
+	Artifact *fleetArtifact `json:"artifact"`
 }
 
 // inboxRequestArgs is the inbox read's payload. No `human` flag: the inbox is a
@@ -159,19 +157,95 @@ func renderFleetInbox(items []fleetInboxItem, seen map[string]bool) string {
 		if item.Settled != nil && item.Settled.Summary != "" {
 			lines = append(lines, "    "+oneLine(item.Settled.Summary))
 		}
-		if item.Artifact != nil {
-			what := item.Artifact.Summary
-			if what == "" {
-				what = item.Artifact.Name
-			}
-			if what != "" {
-				lines = append(lines, "    artifact: "+oneLine(what))
-			}
-		}
+		lines = append(lines, item.Artifact.render()...)
 	}
 	lines = append(lines, "", "Detail lives on the peer: fleet_task_result {jobId}. "+
 		"A job whose instance is gone keeps its verdict here and loses its detail.")
 	return strings.Join(lines, "\n")
+}
+
+// fleetArtifact mirrors sdk/niffler/codingartifact.nim's shape. Every field
+// degrades honestly there (`observed: false` plus a reason), so rendering must
+// never imply success from a missing one.
+type fleetArtifact struct {
+	Version        int    `json:"version"`
+	Observed       bool   `json:"observed"`
+	Reason         string `json:"reason"`
+	ProducedCommit bool   `json:"producedCommit"`
+	HeadMoved      bool   `json:"headMoved"`
+	OnBase         bool   `json:"onBase"`
+	Dirty          bool   `json:"dirty"`
+	Untracked      int    `json:"untracked"`
+	Base           *struct {
+		Commit string `json:"commit"`
+		Short  string `json:"short"`
+	} `json:"base"`
+	Head *struct {
+		Commit  string `json:"commit"`
+		Short   string `json:"short"`
+		Subject string `json:"subject"`
+		Branch  string `json:"branch"`
+		URL     string `json:"url"`
+	} `json:"head"`
+	Diffstat string `json:"diffstat"`
+	Summary  string `json:"summary"`
+}
+
+// render describes what changed, in the order a reviewer reads it: what it
+// built on, what it produced, whether the tree was left messy, and where to
+// look. It never says the change is good — that stays the reviewer's call.
+func (a *fleetArtifact) render() []string {
+	if a == nil {
+		return nil
+	}
+	if !a.Observed {
+		reason := a.Reason
+		if reason == "" {
+			reason = "workspace was not observable"
+		}
+		return []string{"    artifact: " + oneLine(reason) + " (nothing to review)"}
+	}
+	var out []string
+	if a.ProducedCommit {
+		head := "?"
+		if a.Head != nil && a.Head.Short != "" {
+			head = a.Head.Short
+		}
+		base := "?"
+		if a.Base != nil && a.Base.Short != "" {
+			base = a.Base.Short
+		}
+		line := fmt.Sprintf("    changed: %s → %s", base, head)
+		if a.Head != nil && a.Head.Subject != "" {
+			line += " \"" + oneLine(a.Head.Subject) + "\""
+		}
+		out = append(out, line)
+		if !a.OnBase {
+			// The difference between "built on the work you approved" and
+			// "replaced it" — the one thing a reviewer must not have to infer.
+			out = append(out, "    WARNING: not on the base it started from (history replaced)")
+		}
+		if a.Head != nil && a.Head.URL != "" {
+			out = append(out, "    "+a.Head.URL)
+		}
+	} else {
+		out = append(out, "    changed: no commit")
+	}
+	if a.Dirty || a.Untracked > 0 {
+		mess := fmt.Sprintf("    tree left dirty (%d untracked)", a.Untracked)
+		if !a.Dirty {
+			mess = fmt.Sprintf("    %d untracked file(s)", a.Untracked)
+		}
+		out = append(out, mess)
+	}
+	if a.Diffstat != "" {
+		for _, line := range strings.Split(strings.TrimRight(a.Diffstat, "\n"), "\n") {
+			if strings.TrimSpace(line) != "" {
+				out = append(out, "    "+oneLine(line))
+			}
+		}
+	}
+	return out
 }
 
 func oneLine(s string) string {
