@@ -17,6 +17,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -24,7 +25,15 @@ import (
 	"charm.land/lipgloss/v2"
 )
 
-const maxApprovalArgs = 3000
+const (
+	maxApprovalArgs = 3000
+	// approvalFrameRows is the box's own chrome: top and bottom border plus
+	// one row of padding on each side.
+	approvalFrameRows = 4
+	// approvalHeadRows is the fixed part above the argument block: title,
+	// intro line, blank separator and the tool name.
+	approvalHeadRows = 4
+)
 
 // approvalRequest is one queued human-gate prompt.
 type approvalRequest struct {
@@ -71,6 +80,11 @@ func (m *model) applyApprovalEvent(msg approvalEventMsg) tea.Cmd {
 	// A fresh request invalidates a pending "approve all" arm: the arm was
 	// raised for a different prompt on screen and must never carry over.
 	m.approveAllArmed = false
+	// The first request of a quiet queue becomes the front of the modal; its
+	// arguments start at the top, with no scroll position from a prior gate.
+	if len(m.approvals) == 0 {
+		m.resetApprovalView()
+	}
 	if m.isAutoApproved(req.sessionID, req.tool) {
 		// A decision alone resolves the gate; no ack needed.
 		m.replyApproval(req.id, false, true)
@@ -87,9 +101,17 @@ func (m *model) applyApprovalEvent(msg approvalEventMsg) tea.Cmd {
 // applyApprovalResolved removes a request whose gate reached a verdict.
 func (m *model) applyApprovalResolved(id string) {
 	m.approveAllArmed = false
+	front := ""
+	if len(m.approvals) > 0 {
+		front = m.approvals[0].id
+	}
 	m.approvals = slices.DeleteFunc(m.approvals, func(req approvalRequest) bool {
 		return req.id == id
 	})
+	// A different request may now be on screen; it must open at the top.
+	if len(m.approvals) == 0 || m.approvals[0].id != front {
+		m.resetApprovalView()
+	}
 }
 
 // answerApproval replies to the front queued request; auto also remembers
@@ -108,6 +130,7 @@ func (m *model) answerApproval(ok, auto bool) tea.Cmd {
 	}
 	m.replyApproval(req.id, false, ok)
 	m.approvals = m.approvals[1:]
+	m.resetApprovalView()
 	return persist
 }
 
@@ -155,6 +178,7 @@ func (m *model) answerApprovalAll() tea.Cmd {
 	}
 	m.approvalSaves[req.sessionID] = true
 	m.rememberAutoApproveAll(req.sessionID)
+	defer m.resetApprovalView()
 	kept := make([]approvalRequest, 0, len(m.approvals))
 	for _, pending := range m.approvals {
 		if pending.id == req.id || (req.sessionID != "" && pending.sessionID == req.sessionID) {
@@ -317,26 +341,81 @@ var (
 				Foreground(lipgloss.Color("3"))
 )
 
-// approvalBox renders the modal gate prompt. Shown instead of the chat
-// surface while requests are pending (like the control-mode views).
-func (m *model) approvalBox() string {
-	req := m.approvals[0]
-	var b strings.Builder
-	b.WriteString(approvalTitleStyle.Render(t(m.loc, "approval.title")))
-	b.WriteString("\nA tool call with x-harness.approval is waiting for your ok:\n\n")
-	b.WriteString(toolStyle.Render(req.tool) + " " + prettyApprovalArgs(req.args))
-	if len(m.approvals) > 1 {
-		fmt.Fprintf(&b, "\n\n+ %d more waiting", len(m.approvals)-1)
-	}
-	if m.autoAll[req.sessionID] {
-		b.WriteString("\n\n" + t(m.loc, "approval.allOn"))
-	} else if tools := m.autoApproved[req.sessionID]; len(tools) > 0 {
-		b.WriteString("\n\nauto-approving this session: " + strings.Join(tools, ", "))
-	}
+// approvalBoxWidth keeps the modal readable on a wide terminal and inside a
+// narrow one (the same clamp the legend below uses).
+func (m model) approvalBoxWidth() int {
 	width := 72
 	if m.width > 0 {
 		width = max(24, min(72, m.width-4))
 	}
+	return width
+}
+
+// approvalContentWidth is the box's inner text width; the frame's horizontal
+// padding eats two cells on each side.
+func (m model) approvalContentWidth() int {
+	return max(8, m.approvalBoxWidth()-4)
+}
+
+// approvalViewWidth is the width available to the legend under the box.
+// Zero means the terminal size is not known yet.
+func (m model) approvalViewWidth() int {
+	if m.width <= 0 {
+		return 0
+	}
+	return max(8, m.width-1)
+}
+
+// wrapRows counts the terminal rows a line of text occupies at width, counting
+// wraps the terminal would do. Height budgets have to include those, or a long
+// legend silently pushes the top of the modal off the screen.
+func wrapRows(text string, width int) int {
+	if strings.TrimSpace(text) == "" {
+		return 0
+	}
+	if width <= 0 {
+		return 1
+	}
+	return len(strings.Split(clampLines(text, width), "\n"))
+}
+
+// clampToView fits text to the client width. Unknown width leaves it alone
+// (tests run before the first resize).
+func (m model) clampToView(text string) string {
+	if width := m.approvalViewWidth(); width > 0 {
+		return clampLines(text, width)
+	}
+	return text
+}
+
+// approvalArgsLines is the pretty-printed argument block split into rows that
+// fit the box. Wrapping first means the window math below counts what the
+// terminal will draw, and no long JSON line spills past the right edge.
+func (m model) approvalArgsLines(req approvalRequest) []string {
+	return strings.Split(clampLines(prettyApprovalArgs(req.args), m.approvalContentWidth()), "\n")
+}
+
+// approvalTail is the text under the argument block: how many requests are
+// queued behind this one, and what the conversation has already been granted.
+func (m model) approvalTail(req approvalRequest) []string {
+	var tail []string
+	if len(m.approvals) > 1 {
+		tail = append(tail, "", fmt.Sprintf("+ %d more waiting", len(m.approvals)-1))
+	}
+	if m.autoAll[req.sessionID] {
+		tail = append(tail, "", t(m.loc, "approval.allOn"))
+	} else if tools := m.autoApproved[req.sessionID]; len(tools) > 0 {
+		tail = append(tail, "", "auto-approving this session: "+strings.Join(tools, ", "))
+	}
+	if len(tail) == 0 {
+		return nil
+	}
+	return strings.Split(clampLines(strings.Join(tail, "\n"), m.approvalContentWidth()), "\n")
+}
+
+// approvalHint is the key legend under the modal; an explanation for an inert
+// "a"/"A" overrides it.
+func (m model) approvalHint(req approvalRequest) string {
 	hint := t(m.loc, "approval.hint")
 	if m.approveAllArmed {
 		hint = t(m.loc, "approval.armed")
@@ -353,8 +432,211 @@ func (m *model) approvalBox() string {
 	if m.approvalNotice != "" {
 		hint = m.approvalNotice
 	}
-	return approvalBoxStyle.Width(width).Render(b.String()) + "\n" +
-		metaStyle.Render(hint)
+	return hint
+}
+
+// approvalContentRows is how many text rows the box may use: the terminal
+// height minus the header line, the frame and the footer lines below the box
+// (the key legend plus the expand/scroll line, whose widest form is always
+// reserved — a budget that shrank for a clipped modal would make it overflow
+// by the very row it then draws). Zero means the height is unknown and
+// nothing is clipped.
+func (m model) approvalContentRows(hint string) int {
+	if m.height <= 0 {
+		return 0
+	}
+	width := m.approvalViewWidth()
+	used := 1 + approvalFrameRows + wrapRows(hint, width) + wrapRows(m.approvalLongestLegend(), width)
+	return max(1, m.height-used)
+}
+
+// approvalLongestLegend is the widest form the second footer line can take.
+func (m model) approvalLongestLegend() string {
+	return t(m.loc, "approval.scroll", "9999", "9999", "9999")
+}
+
+// approvalOverflows reports whether the arguments need more rows than the
+// compact modal has. Only then does "v" have something more to reveal.
+func (m model) approvalOverflows(req approvalRequest) bool {
+	rows := m.approvalContentRows(m.approvalHint(req))
+	if rows == 0 {
+		return false
+	}
+	return approvalHeadRows+len(m.approvalTail(req))+len(m.approvalArgsLines(req)) > rows
+}
+
+// approvalScrollLegend is the line under the expanded view: which rows of the
+// argument block are on screen, and how to move them.
+func (m model) approvalScrollLegend(start, end, total int) string {
+	return t(m.loc, "approval.scroll",
+		strconv.Itoa(start), strconv.Itoa(end), strconv.Itoa(total))
+}
+
+// approvalWindow is the number of argument rows the expanded view shows and
+// the height of the whole block it scrolls through.
+func (m model) approvalWindow(req approvalRequest) (window, total int) {
+	total = len(m.approvalArgsLines(req))
+	rows := m.approvalContentRows(m.approvalHint(req))
+	window = rows - approvalHeadRows - len(m.approvalTail(req))
+	if rows == 0 || window >= total {
+		window = total
+	}
+	return max(1, window), max(1, total)
+}
+
+// approvalFooters is the text under the box: the key legend, plus the
+// expand/scroll line — the one key that reveals the rest of a clipped call
+// has to be discoverable, and while it is open the same line says which rows
+// are visible. `start` is the first visible argument row (0-based).
+func (m model) approvalFooters(req approvalRequest, clipped bool, start, total int) []string {
+	footers := []string{m.approvalHint(req)}
+	switch {
+	case m.approvalExpanded && clipped:
+		window, _ := m.approvalWindow(req)
+		first := min(start+1, total)
+		footers = append(footers, m.approvalScrollLegend(first, min(total, first+window-1), total))
+	case clipped:
+		footers = append(footers, t(m.loc, "approval.expand"))
+	}
+	return footers
+}
+
+// clampApprovalScroll keeps the expanded window inside the argument block —
+// after a resize, a switch to a shorter request, or a key that ran past the
+// end.
+func (m *model) clampApprovalScroll() {
+	if len(m.approvals) == 0 {
+		m.resetApprovalView()
+		return
+	}
+	window, total := m.approvalWindow(m.approvals[0])
+	m.approvalScroll = min(max(0, m.approvalScroll), max(0, total-window))
+}
+
+// resetApprovalView returns the modal to its compact, top-of-arguments state.
+// Called whenever the front request changes, so one call's scroll position
+// never leaks onto the next.
+func (m *model) resetApprovalView() {
+	m.approvalExpanded, m.approvalScroll = false, 0
+}
+
+// toggleApprovalExpanded opens or closes the full-argument view. It only does
+// something when the compact modal actually had to clip arguments: an empty
+// toggle on a small call would just swap identical views.
+func (m *model) toggleApprovalExpanded() {
+	if len(m.approvals) == 0 {
+		return
+	}
+	if !m.approvalExpanded && !m.approvalOverflows(m.approvals[0]) {
+		return
+	}
+	m.approvalExpanded = !m.approvalExpanded
+	m.approvalScroll = 0
+}
+
+// approvalWheel scrolls the expanded argument view with the wheel. Without
+// this the wheel would reach the transcript viewport behind the modal and
+// move content the human cannot see.
+func (m *model) approvalWheel(msg tea.MouseWheelMsg) bool {
+	if len(m.approvals) == 0 || !m.approvalExpanded {
+		return false
+	}
+	switch msg.Button {
+	case tea.MouseWheelUp:
+		m.approvalScroll = max(0, m.approvalScroll-3)
+	case tea.MouseWheelDown:
+		m.approvalScroll += 3
+	default:
+		return false
+	}
+	m.clampApprovalScroll()
+	return true
+}
+
+// approvalScrollKey moves the expanded window. It returns whether the key was
+// consumed, so scroll keys never leak into the textarea behind the modal.
+func (m *model) approvalScrollKey(key string) (tea.Cmd, bool) {
+	if len(m.approvals) == 0 || !m.approvalExpanded {
+		return nil, false
+	}
+	window, total := m.approvalWindow(m.approvals[0])
+	maxScroll := max(0, total-window)
+	switch key {
+	case "up", "ctrl+up":
+		m.approvalScroll = max(0, m.approvalScroll-1)
+	case "down", "ctrl+down":
+		m.approvalScroll = min(maxScroll, m.approvalScroll+1)
+	case "pgup":
+		m.approvalScroll = max(0, m.approvalScroll-window)
+	case "pgdown":
+		m.approvalScroll = min(maxScroll, m.approvalScroll+window)
+	case "home":
+		m.approvalScroll = 0
+	case "end":
+		m.approvalScroll = maxScroll
+	default:
+		return nil, false
+	}
+	m.clampApprovalScroll()
+	return nil, true
+}
+
+// approvalBox renders the modal gate prompt. Shown instead of the chat
+// surface while requests are pending (like the control-mode views).
+//
+// The argument block is clipped to the rows the terminal has left, and "v"
+// opens the full, scrollable block in place: a large program-shaped call (a
+// fabric program, a long script) must never push the verdict keys or the tool
+// name off the screen — the human has to see what is being granted.
+func (m *model) approvalBox() string {
+	req := m.approvals[0]
+	width := m.approvalBoxWidth()
+	lines := m.approvalArgsLines(req)
+	tail := m.approvalTail(req)
+	hint := m.approvalHint(req)
+	base := approvalHeadRows + len(tail)
+
+	visible := len(lines)
+	clipped := false
+	moreText := ""
+	if rows := m.approvalContentRows(hint); rows > 0 && base+len(lines) > rows {
+		clipped = true
+		moreText = t(m.loc, "approval.more", strconv.Itoa(len(lines)))
+		markerRows := wrapRows(moreText, m.approvalContentWidth())
+		visible = rows - base - markerRows
+		if visible >= len(lines) {
+			visible, clipped, moreText = len(lines), false, ""
+		} else if visible < 1 {
+			// A terminal too short for even the marker: one line of
+			// arguments plus the expand legend is the most that fits.
+			visible, moreText = 1, ""
+		}
+	}
+
+	body := []string{
+		approvalTitleStyle.Render(t(m.loc, "approval.title")),
+		"A tool call with x-harness.approval is waiting for your ok:",
+		"",
+		clampLines(toolStyle.Render(req.tool), m.approvalContentWidth()),
+	}
+
+	if m.approvalExpanded && clipped {
+		window, total := m.approvalWindow(req)
+		start := min(max(0, m.approvalScroll), max(0, total-window))
+		body = append(body, lines[start:min(total, start+window)]...)
+	} else {
+		body = append(body, lines[:visible]...)
+		if clipped && moreText != "" {
+			body = append(body, clampLines(moreText, m.approvalContentWidth()))
+		}
+	}
+	body = append(body, tail...)
+
+	parts := []string{approvalBoxStyle.Width(width).Render(strings.Join(body, "\n"))}
+	for _, line := range m.approvalFooters(req, clipped, m.approvalScroll, len(lines)) {
+		parts = append(parts, metaStyle.Render(m.clampToView(line)))
+	}
+	return strings.Join(parts, "\n")
 }
 
 // approvalKey takes Enter/Esc/"a"/"A" while a gate prompt is pending.
@@ -375,6 +657,17 @@ func (m *model) approvalKey(msg tea.KeyPressMsg) (tea.Cmd, bool) {
 	// session-less request they are inert. Swallowing them made the modal
 	// look broken next to Enter, which has no such precondition.
 	m.approvalNotice = ""
+	if key == "v" {
+		// Looking at the arguments is not a verdict: an armed approve-all
+		// must not survive it (same rule as any other non-A key).
+		m.approveAllArmed = false
+		m.toggleApprovalExpanded()
+		return nil, true
+	}
+	if cmd, consumed := m.approvalScrollKey(key); consumed {
+		m.approveAllArmed = false
+		return cmd, true
+	}
 	if key == "A" || key == "shift+a" {
 		if !m.approveAllArmed {
 			m.approveAllArmed = true

@@ -653,6 +653,13 @@ type model struct {
 	approvals    []approvalRequest
 	autoApproved map[string][]string // sessionId -> tool names
 	autoAll      map[string]bool     // sessionId -> "A": every gated tool granted
+	// approvalExpanded / approvalScroll open the full-argument view in place
+	// of the clipped preview (approvals.go). A request whose arguments fit on
+	// screen never needs it; "v" toggles it and the scroll keys move the
+	// window. Reset whenever the front request changes, so a window position
+	// never carries over to a different call.
+	approvalExpanded bool
+	approvalScroll   int
 	// approvalSaves is set by the modal's A,A while a turn is running.
 	// The runner refuses session controls mid-turn; persist on completion,
 	// retaining the local grant only for the current turn until then.
@@ -1534,6 +1541,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.height = msg.Height
 		m.clearMouseSelection()
 		m.layout()
+		// A resize changes how many rows the approval modal has: keep the
+		// expanded argument window inside the block.
+		m.clampApprovalScroll()
 		m.syncViewport(false)
 
 	case tea.KeyPressMsg:
@@ -1846,6 +1856,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tea.MouseWheelMsg:
+		// While the approval modal is open it owns the screen; with its
+		// arguments expanded the wheel scrolls them instead of moving the
+		// transcript hidden behind the modal.
+		if m.approvalWheel(msg) {
+			return m, nil
+		}
 		// A screen-coordinate selection cannot stay attached to content that
 		// moves underneath it. Clear it, then let the viewport consume the
 		// wheel below.
