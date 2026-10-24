@@ -207,7 +207,11 @@ Local commands are handled by the TUI and are never sent to the model:
   it also grants the requests already queued for that conversation. It covers
   program-shaped calls too, which the per-tool `a` deliberately does not — so
   the widest grant needs the extra keypress. `a` keeps its narrower meaning
-  (always allow *this* tool for this session).
+  (always allow *this* tool for this session). The modal never grows past the
+  terminal: arguments longer than the space left are clipped to a short
+  preview, and `v` opens the full block in place, scrolled with
+  `up`/`down`/`pgup`/`pgdn`/`home`/`end` or the mouse wheel and closed again
+  with `v`. `enter`/`esc`/`a`/`A` keep their verdict meaning in both views.
 - `/workspace [path]` — where this conversation works, and the control for the
   one thing the client pins on your behalf: started in a directory, the first
   turn pins it as the conversation's workspace. A bare `/workspace` reports the

@@ -6,6 +6,19 @@ project aims for [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+- The approval gate never grows past the terminal. Arguments used to be dumped
+  into the modal in full, so a program-shaped call (a fabric program, a long
+  script) could push the tool name and the verdict keys off the screen — the
+  one thing the prompt exists to show. The prompt now budgets the rows the
+  terminal has left, wraps long argument lines, and clips the block to a short
+  preview with a `… (N lines of arguments in full)` marker. `v` opens the full
+  block in place, scrolled with `up`/`down`/`pgup`/`pgdn`/`home`/`end` or the
+  wheel (which no longer moves the transcript hidden behind the modal) and
+  closed again with `v`; `enter`/`esc`/`a`/`A` keep their verdict meaning in
+  both views, and the scroll position resets whenever the prompt on screen
+  changes. A call that already fits advertises no expander at all. New strings
+  are translated (en/zh/zh-TW).
+
 - `/tasks <jobId>` opens one task's report (`fleet_task_result`): role-tagged,
   one line per entry, and honest when the peer returns more than the bounded
   report carries. Asking for a report is an explicit act because it needs the
