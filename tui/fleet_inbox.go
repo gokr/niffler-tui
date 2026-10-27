@@ -269,9 +269,8 @@ func localTasks(m model, cmd slashCommand, argument string) (tea.Model, tea.Cmd)
 		return m, nil
 	}
 	// `/tasks <jobId>` opens that job's report; a bare `/tasks` lists the inbox.
-	// The distinction is deliberate: the list is a LOCAL read that always
-	// answers, while a report needs the peer — so asking for one is an explicit
-	// act, not something the list silently does for every row.
+	// Both are local reads; requesting detail explicitly avoids dumping every
+	// full report into the inbox.
 	if job := strings.TrimSpace(argument); job != "" {
 		return m, fleetTaskDetailCmd(m.comp, job)
 	}
@@ -295,15 +294,20 @@ type fleetTaskDetailMsg struct {
 	Err   error
 }
 
-// fleetTaskDetailCmd pulls one job's bounded report from the peer
-// (fleet_task_result). It can fail for reasons the inbox never does — the
-// instance is down, rebuilt, or the transcript is gone — and the message says
-// which, because "no detail" is not "no result".
+// fleetTaskDetailCmd reads one locally cached report via fleet_task_result.
+// Newer harnesses page full prose; older ones return summaries or bounded rows.
 func fleetTaskDetailCmd(comp *sdk.Component, jobID string) tea.Cmd {
-	return func() tea.Msg {
+	return fleetTaskDetailReadCmd(jobID, func(args map[string]any, reply any) error {
 		if comp == nil {
-			return fleetTaskDetailMsg{JobID: jobID, Err: fmt.Errorf("not connected")}
+			return fmt.Errorf("not connected")
 		}
+		return requestInto(comp, "fleet", "fleet_task_result", args, reply)
+	})
+}
+
+// The request seam lets tests exercise pagination without a live bus.
+func fleetTaskDetailReadCmd(jobID string, read func(map[string]any, any) error) tea.Cmd {
+	return func() tea.Msg {
 		var reply struct {
 			JobID string `json:"jobId"`
 			State string `json:"state"`
@@ -312,15 +316,18 @@ func fleetTaskDetailCmd(comp *sdk.Component, jobID string) tea.Cmd {
 				Role    string `json:"role"`
 				Content string `json:"content"`
 			} `json:"items"`
-			Bounded bool   `json:"bounded"`
-			HasMore bool   `json:"hasMore"`
-			Error   string `json:"error"`
+			Bounded    bool    `json:"bounded"`
+			HasMore    bool    `json:"hasMore"`
+			Report     *string `json:"report"`
+			Summary    string  `json:"summary"`
+			Detail     string  `json:"detail"`
+			NextOffset int     `json:"nextOffset"`
+			Error      string  `json:"error"`
 		}
 		// `human: true` is the human-scope read: the owner check keeps
 		// CONVERSATIONS apart, and a person at a keyboard is not a conversation.
 		// Without it the inbox could list every job and open none of them.
-		if err := requestInto(comp, "fleet", "fleet_task_result",
-			detailRequestArgs(jobID), &reply); err != nil {
+		if err := read(detailRequestArgs(jobID), &reply); err != nil {
 			return fleetTaskDetailMsg{JobID: jobID, Err: err}
 		}
 		if reply.Error != "" {
@@ -332,6 +339,44 @@ func fleetTaskDetailCmd(comp *sdk.Component, jobID string) tea.Cmd {
 			fmt.Fprintf(&b, " (%s)", reply.State)
 		}
 		b.WriteString("\n")
+		if reply.Report != nil {
+			b.WriteString(*reply.Report)
+			// Reports are local pages on newer harnesses. Preserve paragraphs
+			// and links, rather than collapsing a detailed report to one line.
+			offset := 0
+			for reply.HasMore {
+				if reply.NextOffset <= offset {
+					return fleetTaskDetailMsg{JobID: jobID, Err: fmt.Errorf("invalid report cursor")}
+				}
+				offset = reply.NextOffset
+				args := detailRequestArgs(jobID)
+				args["offset"] = offset
+				reply.Report, reply.HasMore = nil, false
+				if err := read(args, &reply); err != nil {
+					return fleetTaskDetailMsg{JobID: jobID, Err: err}
+				}
+				if reply.Error != "" || reply.Report == nil {
+					return fleetTaskDetailMsg{JobID: jobID, Err: fmt.Errorf("report page unavailable: %s", reply.Error)}
+				}
+				b.WriteString(*reply.Report)
+				if b.Len() > 1024*1024 {
+					b.WriteString("\n… display capped at 1 MiB; retrieve further pages with fleet_task_result")
+					break
+				}
+			}
+			if reply.Detail != "" {
+				b.WriteString("\n" + reply.Detail)
+			}
+			return fleetTaskDetailMsg{JobID: jobID, Reply: b.String()}
+		}
+		// Older harnesses may return only a cached summary or transcript rows.
+		if reply.Summary != "" {
+			b.WriteString(reply.Summary)
+			if reply.Detail != "" {
+				b.WriteString("\n" + reply.Detail)
+			}
+			return fleetTaskDetailMsg{JobID: jobID, Reply: b.String()}
+		}
 		if len(reply.Items) == 0 {
 			b.WriteString("  the peer returned no transcript entries")
 		}
