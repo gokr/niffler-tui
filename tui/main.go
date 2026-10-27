@@ -3333,7 +3333,13 @@ func (m model) inputAtBottom() bool {
 	return m.input.Line() == m.input.LineCount()-1 && info.RowOffset >= info.Height-1
 }
 
-func (m *model) handleSearchKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+// handleSearchKey MUST have a value receiver, like every other handler called
+// from model.Update: `return m` here becomes the tea.Model that Update hands
+// back, and fleet stores instances as a concrete `model` and asserts the result
+// back with `updated.(model)`. A pointer receiver made that assertion panic
+// (interface conversion: tea.Model is *main.model, not main.model) as soon as
+// a key arrived during an active history search.
+func (m model) handleSearchKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "ctrl+c":
 		return m, tea.Quit

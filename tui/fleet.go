@@ -281,7 +281,15 @@ func (f *fleetModel) updateInstance(name string, msg tea.Msg) tea.Cmd {
 		return nil
 	}
 	updated, cmd := m.Update(msg)
-	f.models[name] = updated.(model)
+	// Defensive, not decorative: model.Update returns tea.Model, and the whole
+	// fleet design stores each instance as a concrete `model`. A single handler
+	// with a pointer receiver is enough to make this assertion panic (that is
+	// exactly how the reported crash happened), and a crash in one background
+	// instance must not take down the terminal. Keep the last good value and
+	// carry on.
+	if next, ok := updated.(model); ok {
+		f.models[name] = next
+	}
 	return scopeCmd(name, f.generations[name], cmd)
 }
 func (f *fleetModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
