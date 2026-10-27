@@ -484,14 +484,14 @@ type model struct {
 	lspForm          lspForm
 	// Configuration surface (/config): domains, then one domain's schema-driven
 	// fields. The editor holds no per-owner knowledge — see config_editor.go.
-	configDomains  []configDomain
-	configEditing  string
-	configFields   []configField
-	configRev      int
+	configDomains   []configDomain
+	configEditing   string
+	configFields    []configField
+	configRev       int
 	configEditField configField
 	configInput     textinput.Model
-	configNote     string
-	configErr      string
+	configNote      string
+	configErr       string
 	// Background-processes control plane (/processes + the status-line
 	// badge): the registry snapshot, the two-stage kill arm, the peek view,
 	// and the badge's refresh-tick guard (one live timer per purpose — the
@@ -2447,7 +2447,14 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			break
 		}
 		m.configErr = ""
-		m.contextNote = t(m.loc, "config.saved", msg.Label)
+		// Say when the change actually lands. A human who reads "saved" and then
+		// sees old behaviour assumes the edit failed; "saved · next turn" is the
+		// truth the owner declared. An immediate change keeps the plain note.
+		note := t(m.loc, "config.saved")
+		if when := configApplyNote(msg.Applies); when != "" {
+			note = t(m.loc, "config.savedWhen", note, when)
+		}
+		m.contextNote = note + " — " + msg.Label
 		// Reload the domain so the list shows the NEW value and revision;
 		// the form closes rather than showing a stale one.
 		return m, configDetailCmd(m.comp, m.configEditing)

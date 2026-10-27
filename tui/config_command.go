@@ -43,7 +43,10 @@ type configAppliedMsg struct {
 	Domain string
 	Rev    int
 	Label  string
-	Err    error
+	// Applies is the harness's own answer to "when does this take effect" for
+	// the properties just written; empty for a reset or when it did not say.
+	Applies map[string]string
+	Err     error
 }
 
 func configDomainsCmd(comp *sdk.Component) tea.Cmd {
@@ -71,7 +74,8 @@ func configApplyCmd(comp *sdk.Component, domain string, patch map[string]any,
 		if err != nil {
 			return configAppliedMsg{Domain: domain, Err: err}
 		}
-		return configAppliedMsg{Domain: domain, Rev: result.Rev, Label: label}
+		return configAppliedMsg{Domain: domain, Rev: result.Rev, Label: label,
+			Applies: result.Applies}
 	}
 }
 
@@ -166,6 +170,11 @@ func configFieldItems(loc Locale, fields []configField) []list.Item {
 		if f.ReadOnly {
 			description += " · " + t(loc, "config.readOnly")
 		}
+		// Say it in the list, not only in the form: a human scanning the domain
+		// should see which settings are theirs alone to change.
+		if f.HumanOnly {
+			description += " · " + t(loc, "config.humanOnly")
+		}
 		if f.Application != "" {
 			description += " · " + f.Application
 		}
@@ -248,8 +257,16 @@ func (m model) configFormView() string {
 		b.WriteString(truncate(f.Description, max(20, m.width-2)))
 		b.WriteString("\n")
 	}
-	b.WriteString(metaStyle.Render(t(m.loc, "config.current")+": "+f.rendered()))
-	b.WriteString("\n\n")
+	b.WriteString(metaStyle.Render(t(m.loc, "config.current") + ": " + f.rendered()))
+	b.WriteString("\n")
+	if f.HumanOnly {
+		// Before the input, so the reason a model cannot change this is not a
+		// surprise later. The human is the right audience: the harness refuses
+		// an agent here whatever its approval said.
+		b.WriteString(metaStyle.Render(t(m.loc, "config.humanOnlyNote")))
+		b.WriteString("\n")
+	}
+	b.WriteString("\n")
 	b.WriteString(m.configInput.View())
 	b.WriteString("\n")
 	if m.configErr != "" {

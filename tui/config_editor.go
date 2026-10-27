@@ -55,6 +55,10 @@ type configField struct {
 	Kind        string // string | boolean | integer | number | other
 	Secret      bool
 	ReadOnly    bool
+	// HumanOnly marks a decision the harness will not let a model make: a
+	// paid-call gate, an access widening, a containment setting. The human owns
+	// it, so the editor says so rather than presenting it as routine.
+	HumanOnly   bool
 	Application string
 	Default     any
 	Enum        []any
@@ -86,12 +90,12 @@ type configDetail struct {
 type configSchema struct {
 	Type       any `json:"type"`
 	Properties map[string]struct {
-		Type    any               `json:"type"`
-		Enum    []any             `json:"enum"`
-		Minimum *float64          `json:"minimum"`
-		Maximum *float64          `json:"maximum"`
-		Default any               `json:"default"`
-		XConfig *configXConfig    `json:"x-config"`
+		Type    any            `json:"type"`
+		Enum    []any          `json:"enum"`
+		Minimum *float64       `json:"minimum"`
+		Maximum *float64       `json:"maximum"`
+		Default any            `json:"default"`
+		XConfig *configXConfig `json:"x-config"`
 	} `json:"properties"`
 }
 
@@ -100,6 +104,7 @@ type configXConfig struct {
 	Description string `json:"description"`
 	Secret      bool   `json:"secret"`
 	ReadOnly    bool   `json:"readOnly"`
+	HumanOnly   bool   `json:"humanOnly"`
 	Application string `json:"application"`
 }
 
@@ -129,6 +134,7 @@ func configFields(detail configDetail) []configField {
 			f.Description = prop.XConfig.Description
 			f.Secret = prop.XConfig.Secret
 			f.ReadOnly = prop.XConfig.ReadOnly
+			f.HumanOnly = prop.XConfig.HumanOnly
 			if prop.XConfig.Application != "" {
 				f.Application = prop.XConfig.Application
 			}
@@ -243,8 +249,12 @@ type configPatchResult struct {
 	OK     bool   `json:"ok"`
 	Domain string `json:"domain"`
 	Rev    int    `json:"rev"`
-	Code   string `json:"code"`
-	Error  string `json:"error"`
+	// Applies names when each changed property takes effect ("immediate",
+	// "next turn", "component restart"). The harness reports what the OWNER
+	// promised; the UI must not imply a change is live when it is not.
+	Applies map[string]string `json:"applies"`
+	Code    string            `json:"code"`
+	Error   string            `json:"error"`
 }
 
 // configApply sends one validated patch. expectRev pins the revision the human
@@ -283,6 +293,27 @@ func configReset(comp *sdk.Component, domain string,
 		return out, fmt.Errorf("%s", configPatchMessage(out))
 	}
 	return out, nil
+}
+
+// configApplyNote reduces the harness's per-property `applies` map to one
+// phrase for the status line, or "" when nothing needs saying. "immediate" is
+// deliberately silent: a note that always carries a timing trains the human to
+// ignore it, and then it stops warning them the one time it matters.
+func configApplyNote(applies map[string]string) string {
+	seen := map[string]bool{}
+	var names []string
+	for _, when := range applies {
+		if when == "" || when == "immediate" || seen[when] {
+			continue
+		}
+		seen[when] = true
+		names = append(names, when)
+	}
+	if len(names) == 0 {
+		return ""
+	}
+	sort.Strings(names)
+	return strings.Join(names, ", ")
 }
 
 // configPatchMessage prefers the harness's own explanation: "refused by the
