@@ -505,9 +505,12 @@ func TestLiveEventAdoptsBusy(t *testing.T) {
 	m.roundClosed = false
 
 	// A token frame for the current session while idle: a turn this client
-	// did not start is live (resume, wake, another client) — adopt busy.
+	// did not start is live (resume, wake, another client) — adopt busy. The
+	// turnId is part of the frame because runTurn stamps it on every frame it
+	// publishes; claimsLiveTurn reads it as the frame's own claim to belong to
+	// a turn (a content-less control call emits none).
 	updated, _ := m.Update(sessionEventMsg{kind: "token",
-		event: sessionEvent{SessionID: "game", Content: "hi"}})
+		event: sessionEvent{SessionID: "game", TurnID: "turn-1", Content: "hi"}})
 	m = updated.(model)
 	if !m.busy {
 		t.Fatal("live token did not adopt busy")
@@ -531,7 +534,7 @@ func TestLiveEventAdoptsBusy(t *testing.T) {
 	m.session = "game"
 	m.roundClosed = true
 	updated, _ = m.Update(sessionEventMsg{kind: "token",
-		event: sessionEvent{SessionID: "game", Content: "late"}})
+		event: sessionEvent{SessionID: "game", TurnID: "turn-1", Content: "late"}})
 	m = updated.(model)
 	if m.busy {
 		t.Fatal("late token after done re-opened busy")
@@ -541,7 +544,7 @@ func TestLiveEventAdoptsBusy(t *testing.T) {
 	m = newTestModel()
 	m.session = "game"
 	updated, _ = m.Update(sessionEventMsg{kind: "token",
-		event: sessionEvent{SessionID: "other", Content: "child"}})
+		event: sessionEvent{SessionID: "other", TurnID: "turn-2", Content: "child"}})
 	m = updated.(model)
 	if m.busy {
 		t.Fatal("another session's token adopted busy")
@@ -3097,5 +3100,77 @@ func TestNoticeEventRendersMachineryRow(t *testing.T) {
 	m.applySessionEvent(sessionEventMsg{kind: "notice", event: sessionEvent{SessionID: "game"}})
 	if len(m.blocks) != 1 {
 		t.Fatalf("empty notice added a block: %+v", m.blocks)
+	}
+}
+
+// TestControlFramesDoNotAdoptBusy is the /compact latch regression: a
+// content-less control call (manual compaction) publishes context frames that
+// carry no turnId, and non-turn machinery (a repo map, lsp diagnostics, a
+// fleet-settled notice) publishes frames that outlive the turn that caused
+// them. Any of them used to set busy=true through turnActivityKinds, and
+// nothing could clear it — busy is cleared only by the done frame of a turn
+// that never started — so the client sat in "mid-turn" until /restart.
+func TestControlFramesDoNotAdoptBusy(t *testing.T) {
+	cases := []struct {
+		name string
+		kind string
+		ev   sessionEvent
+	}{
+		// The manual /compact commit's own reset:compact frame.
+		{"compact commit", "context", sessionEvent{
+			SessionID: "game", Reason: "reset:compact", Generation: 3,
+			BeforeTokens: 90000, AfterTokens: 12000,
+		}},
+		// A refusal frame of the same control call.
+		{"compact declined", "context", sessionEvent{
+			SessionID: "game", Reason: "compact:declined"}},
+		// Non-turn machinery, each published from an idle slot.
+		{"repo map", "map", sessionEvent{SessionID: "game", Path: "/w"}},
+		{"lsp verdict", "diagnostics", sessionEvent{SessionID: "game", Path: "a.go"}},
+		{"fleet settled", "notice", sessionEvent{SessionID: "game", Content: "[fleet task 1 done]"}},
+	}
+	for _, tc := range cases {
+		m := newTestModel()
+		m.session, m.connected = "game", true
+		// Drive the path a bus frame takes: the adoption rule lives in
+		// Update, not in applySessionEvent.
+		updated, _ := m.Update(sessionEventMsg{kind: tc.kind, event: tc.ev})
+		got := updated.(model)
+		if got.busy {
+			t.Fatalf("%s frame adopted busy with no turn to finish", tc.name)
+		}
+		// And the latch is real: the /compact guard answers instead of
+		// hanging, so the same command can simply be retried.
+		// The point of the fix: the control call runs now. Before it, busy
+		// was true, so localCompact refused with "wait for the turn to
+		// finish" for a turn that had already finished.
+		if _, cmd := localCompact(got, slashCommand{Name: "compact"}, ""); cmd == nil {
+			t.Fatalf("%s frame left /compact refused as mid-turn", tc.name)
+		}
+	}
+
+	// The rule still fires for a real turn this client did not start: a
+	// turn-only kind carrying a turnId adopts busy, and done clears it.
+	m := newTestModel()
+	m.session = "game"
+	updated, _ := m.Update(sessionEventMsg{kind: "token",
+		event: sessionEvent{SessionID: "game", TurnID: "turn-1", Content: "hi"}})
+	if !updated.(model).busy {
+		t.Fatal("a live turn's token frame did not adopt busy")
+	}
+	updated, _ = updated.(model).Update(sessionEventMsg{kind: "done",
+		event: sessionEvent{SessionID: "game", TurnID: "turn-1", Reply: "ok"}})
+	if updated.(model).busy {
+		t.Fatal("done did not clear busy")
+	}
+
+	// A frame whose kind is turn-only but that carries no turnId is not
+	// evidence either: core stamped no turn on it.
+	m = newTestModel()
+	m.session = "game"
+	updated, _ = m.Update(sessionEventMsg{kind: "notice",
+		event: sessionEvent{SessionID: "game", Content: "[fleet task 1 done]"}})
+	if updated.(model).busy {
+		t.Fatal("a notice without turnId adopted busy")
 	}
 }

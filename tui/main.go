@@ -99,6 +99,7 @@ type sessionEvent struct {
 	Path           string          `json:"path"`
 	Text           string          `json:"text"`
 	SessionID      string          `json:"sessionId"`
+	TurnID         string          `json:"turnId"`
 	Content        string          `json:"content"`
 	Reasoning      string          `json:"reasoning"`
 	Tool           string          `json:"tool"`
@@ -339,16 +340,38 @@ const sessionProbeTimeout = 5 * time.Second
 // is running: adopt busy so the spinner, ESC-stop and steer-Enter behave
 // like an own turn. "done" clears busy (finishTurn) and "status" is excluded
 // because the idle readback also emits it.
+//
+// Kinds that OUTLIVE a turn stay out of this set, and the set alone is not
+// enough — see claimsLiveTurn. Three of them were in it and each could adopt
+// a turn that never existed:
+//   - "context": a content-less control call (/compact) publishes context
+//     frames with an empty turnId, including the commit's own reset:compact
+//     frame. Adopting busy from them left the client claiming "mid-turn"
+//     with no turn to finish: Enter steered into nothing, /compact answered
+//     "wait for the turn to finish", and only /restart — a fresh process with
+//     busy=false — got it going again.
+//   - "map": the repomap append after ev.workspace.opened, published from the
+//     idle slot rather than from a running turn.
+//   - diagnostics: lsp verdicts, delivered by an idle slot long after the turn
+//     that made the edit. (The set said "diag", which is not the subject kind,
+//     so that guard never fired at all.)
 var turnActivityKinds = map[string]bool{
 	"token":     true,
 	"assistant": true,
 	"toolcall":  true,
 	"retry":     true,
 	"notice":    true,
-	"context":   true,
 	"steer":     true,
-	"map":       true,
-	"diag":      true,
+}
+
+// claimsLiveTurn reports whether a frame is evidence that THIS conversation is
+// mid-turn, which is what licenses adoptBusy. It requires both a turn-only kind
+// and the frame's own turnId: core stamps turnId on every frame runTurn
+// publishes and leaves it empty (or absent) on the frames a content-less
+// control call emits, so the turnId is the wire's own statement about whether
+// a turn produced this frame.
+func claimsLiveTurn(kind string, ev sessionEvent) bool {
+	return turnActivityKinds[kind] && ev.TurnID != ""
 }
 
 // adoptBusy marks the current conversation busy for a turn this process did
@@ -2783,7 +2806,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// busy so the spinner, ESC-stop and steer-Enter all work. The
 			// token guard mirrors applySessionEvent's roundClosed check — a
 			// late token after "done" must not re-open busy.
-			if !m.busy && turnActivityKinds[msg.kind] &&
+			if !m.busy && claimsLiveTurn(msg.kind, msg.event) &&
 				(msg.kind != "token" || !m.roundClosed) {
 				m.adoptBusy()
 				m.syncViewport(false)

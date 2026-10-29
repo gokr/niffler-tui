@@ -6,6 +6,20 @@ project aims for [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+- `/compact` no longer leaves the client stuck claiming a mid-turn. The
+  "adopt busy from an activity frame" rule (used for a turn this client did not
+  start: a resume, a wake, another client's continuation) matched event kinds,
+  and three of those kinds also arrive with no turn behind them: `context`
+  (every `/compact` publishes context frames, including the commit's own
+  `reset:compact`), `map` (the repo-map append) and the lsp `diagnostics`
+  verdict — the last under a misspelled key, `diag`, so its guard never fired
+  at all. Adopting busy from them set a flag only a `done` frame clears, and no
+  `done` was coming: Enter steered into nothing and `/compact` answered "wait
+  for the turn to finish" until `/restart`. The rule now requires the frame's
+  own `turnId` (core stamps it on everything a turn publishes and leaves it
+  empty on control-call and idle-lane frames), so a control call never adopts
+  busy.
+
 - The approval gate never grows past the terminal. Arguments used to be dumped
   into the modal in full, so a program-shaped call (a fabric program, a long
   script) could push the tool name and the verdict keys off the screen — the
