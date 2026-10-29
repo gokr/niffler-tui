@@ -6,6 +6,18 @@ project aims for [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.10.0] — 2026-10-29
+
+The client catches up with the harness it talks to: Fleet gets an inbox and
+reports worth reading, a schema-driven `/config` editor lands, approval
+gates stop outgrowing the terminal, and the client's own state consolidates
+under one home. Instance routes come from the harness's fleet registry now, so
+the client-side registry file is gone.
+
+`niffler.json` had already moved through 0.8.0 and 0.9.0 to 0.9.1 without a
+tag, so those changes ship here as one version: there is no v0.8.x or v0.9.x
+to install, and this section covers everything since v0.7.0.
+
 - `/compact` no longer leaves the client stuck claiming a mid-turn. The
   "adopt busy from an activity frame" rule (used for a turn this client did not
   start: a resume, a wake, another client's continuation) matched event kinds,
@@ -38,7 +50,10 @@ project aims for [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   report carries. Asking for a report is an explicit act because it needs the
   peer to answer — when the instance is down, rebuilt or its transcript is gone
   the client says so and leaves the verdict in the inbox, which is the split
-  docs/FLEET-INBOX.md describes.
+  docs/FLEET-INBOX.md describes. Newer harnesses page the full prose
+  (`report`, `nextOffset`, `hasMore`); detail is requested explicitly rather
+  than pulling every report into the inbox, and a paged report keeps its
+  paragraphs instead of being flattened into one line.
 - Per-conversation state moved into subdirectories: `~/.niffler/history/` for
   `history-*.jsonl`, `~/.niffler/sessions/` for the last-session and restart
   handoff files. Existing files migrate on startup from both the current home
@@ -95,9 +110,61 @@ project aims for [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Alt+N / Alt+Shift+N skip a peer that fails to connect, reporting it and trying
   the next candidate; an exhausted ring stays on the current instance.
 
+- The shift+tab ladder offers `none`, `minimal` and `xhigh` beside `""`, `low`,
+  `medium`, `high` and `max`. `none` is not the same as the empty entry: empty
+  omits `reasoning_effort` so the provider picks (measured on one prompt: a
+  493-character reasoning trace), while `none` asks for no reasoning at all
+  (zero) — so "don't think" used to be unreachable from the client. `minimal`
+  and `xhigh` come along because providers accept them even where their own
+  model metadata omits them, and the ladder is a preference, not a capability
+  list: a level a provider rejects costs the effort, not the turn, because the
+  harness retries once without the field.
+- `/workspace` reports whether a workspace was ever chosen. The harness now
+  reports `cwdPinned` on session status, so the client tells a workspace the
+  human picked from the harness-root default a control call recorded —
+  "not chosen — this is the harness-root default" — instead of letting you
+  discover it by hitting an immutability refusal. A successful `/workspace`
+  repin marks the conversation pinned so the report stops claiming the default,
+  and the help line no longer promises "repin before the first turn": a
+  never-chosen workspace stays repinnable even after turns, a chosen one does
+  not.
+- `/tasks` shows what a coding task actually changed. The row used to render an
+  artifact as one summary line, because the client's struct mirrored a
+  name/mediaType/size/digest descriptor — a shape a coding artifact does not
+  have. The inbox now carries the artifact the worker produced, so a row reads
+  in the order a reviewer reads it: what the worker said, `changed: 9cba035 →
+  4a54dee "fix the flaky test"`, the commit URL and the diffstat. An off-base
+  commit is flagged (`onBase` is the difference between "built on the work you
+  approved" and "replaced it"), and an uncommitted change is described as such
+  instead of passing for progress.
 
 ### Fixed
 
+- A key pressed during history search no longer crashes the client in Fleet.
+  `model.Update` has a value receiver, so every path in it returns a `model`,
+  but one handler it calls — `handleSearchKey` — had a pointer receiver, which
+  put a `*model` into the `tea.Model` interface. A single-instance session never
+  notices (Bubble Tea only calls methods on the interface), while Fleet stores
+  each instance as a concrete `model` and asserts the result back — so the panic
+  needed fleet instantiated AND an active search, which is why it read as
+  random. The fix is the receiver.
+- `a`/`A` on a gate with no session now explains itself instead of appearing
+  dead. Both verdicts grant by remembering the tool or the conversation, keyed
+  by session id, and a request carrying no `sessionId` — a direct harness call,
+  or a nested call from a runner that is not driving this client — cannot be
+  remembered; the key handler consumed the keystroke and returned without
+  answering. Such a gate now renders a hint that does not advertise `a`/`A` at
+  all, pressing one sets a notice saying Enter approves this one only, and the
+  notice clears on the next key so it cannot outlive its prompt. Strings added
+  for en, zh and zh-TW.
+- Drag selection and `/copy` work on terminals that drop OSC 52. They only
+  emitted OSC 52, which Apple's Terminal and GNOME Terminal (VTE) silently
+  ignore — and with mouse tracking on, those terminals have no native selection
+  for Cmd-C either, so nothing could be copied. A local session (no
+  `SSH_CONNECTION`/`SSH_CLIENT`/`SSH_TTY`) now also writes through `pbcopy`,
+  `wl-copy`, `xclip` or `xsel`; over SSH, OSC 52 stays the only path so the
+  remote machine's clipboard is never filled by mistake. `pbcopy` runs with
+  `LC_ALL=en_US.UTF-8` because it decodes input by locale.
 - A switch to an unreachable instance now says what failed instead of `EOF`.
   The forwarding relay's own diagnosis (a refused guest bus, an SSH failure, a
   missing guest CLI, an unreadable `var/nats-url`) is captured from the child's
@@ -107,6 +174,9 @@ project aims for [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   mismatch is still reported as itself.
 
 ### Changed
+
+- READMEs are short entry points now; the reference lives in `MANUAL.md`, with
+  `MANUAL.zh.md` and `MANUAL.zh-TW.md` beside it.
 
 - Consolidate client-local preferences, aliases, instance registry, activity,
   history, session and restart-handoff files under `~/.niffler/` on Linux and
