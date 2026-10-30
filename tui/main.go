@@ -1577,6 +1577,16 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.handleSearchKey(msg)
 		}
 		keyName := msg.String()
+		// One ESC arms the two-stage stop prompt ("Stop? press esc again").
+		// Any OTHER key disarms it: the prompt asks for an immediate second
+		// ESC, so a human who armed it, hesitated and typed something else had
+		// already made a different choice. Left armed, the next ESC — minutes
+		// later, meaning only to arm again — would cancel the turn outright.
+		// Mouse events deliberately do not disarm: scrolling to read is not
+		// changing your mind about stopping.
+		if m.stopArmed && keyName != "esc" {
+			m.stopArmed = false
+		}
 		// An active @file completion behaves like the slash one: Tab cycles,
 		// Enter accepts the filled reference and falls through to sending,
 		// Esc dismisses, any other key dismisses and then edits.

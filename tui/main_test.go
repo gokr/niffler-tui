@@ -2117,6 +2117,36 @@ func TestSecondEscapeCancelsAndArmsStopping(t *testing.T) {
 	}
 }
 
+func TestAnyOtherKeyDisarmsStopPrompt(t *testing.T) {
+	m := newTestModel()
+	m.busy = true
+	m.session = "game"
+
+	updated, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyEsc})
+	got := updated.(model)
+	if !got.stopArmed {
+		t.Fatal("first esc should arm the stop prompt")
+	}
+
+	// Typing something else is a different decision: the prompt must go away,
+	// and a later single ESC must arm again rather than cancel outright.
+	updated, _ = got.Update(tea.KeyPressMsg{Code: 'x', Text: "x"})
+	got = updated.(model)
+	if got.stopArmed {
+		t.Fatal("another key should disarm the stop prompt")
+	}
+	if !got.busy {
+		t.Fatal("disarming must not stop the turn")
+	}
+
+	// The same ESC now only re-arms: no cancel command, still busy.
+	updated, cmd := got.Update(tea.KeyPressMsg{Code: tea.KeyEsc})
+	got = updated.(model)
+	if cmd != nil || !got.stopArmed || got.stopping {
+		t.Fatalf("re-arm after disarm: armed=%v stopping=%v cmd=%v", got.stopArmed, got.stopping, cmd != nil)
+	}
+}
+
 func TestTranscriptCacheInvalidatedByMutations(t *testing.T) {
 	m := newTestModel()
 	m.addBlock(blockUser, "first")
