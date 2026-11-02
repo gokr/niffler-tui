@@ -683,26 +683,35 @@ func searchSessionContent(comp *sdk.Component, query string) ([]sessionSummary, 
 			match[id] = msg.Snippet
 		}
 	}
-	headers, err := loadConversationHeaders(comp)
-	if err != nil {
-		return nil, err
-	}
-	byID := make(map[string]sessionRow, len(headers))
-	for _, row := range headers {
-		byID[row.ID] = row
-	}
+	// Resolve ONLY the hit conversations by id. Reading the whole
+	// `conversation` kind here was the version that shipped first and it was a
+	// mistake: pageStoreList walks up to 10 pages of 1000, on every keystroke
+	// behind the debounce. The store serializes all SQL through one connection
+	// (sqlite MaxOpenConns(1)), so that walk queued ahead of every other
+	// caller's 0.2ms `get` — including provider resolution on the critical
+	// path of each turn. A window of 40 providers measured a 1221ms tail while
+	// four searches ran. Bounded gets touch one row each and cannot.
 	summaries := make([]sessionSummary, 0, len(order))
 	for _, id := range order {
-		row, ok := byID[id]
-		if !ok {
-			// The header is missing (a conversation pruned while its messages
-			// remain, or a page boundary). Report the id rather than dropping
-			// a real hit: the user can still open it.
-			row = sessionRow{ID: id}
+		var title string
+		var createdAt float64
+		var response struct {
+			OK    bool `json:"ok"`
+			Value struct {
+				Title     string  `json:"title"`
+				CreatedAt float64 `json:"createdAt"`
+			} `json:"value"`
+		}
+		// A missing header is not a failure: report the id rather than
+		// dropping a real content hit the user can still open.
+		if err := requestInto(comp, "store", "get",
+			map[string]any{"kind": "conversation", "id": id}, &response); err == nil &&
+			response.OK {
+			title = response.Value.Title
+			createdAt = response.Value.CreatedAt
 		}
 		summaries = append(summaries, sessionSummary{
-			ID: row.ID, Title: row.Value.Title, CreatedAt: row.Value.CreatedAt,
-			Match: match[id],
+			ID: id, Title: title, CreatedAt: createdAt, Match: match[id],
 		})
 	}
 	return summaries, nil
@@ -720,16 +729,6 @@ func searchMessageHits(comp *sdk.Component, query string) ([]json.RawMessage, er
 		return nil, err
 	}
 	return response.Items, nil
-}
-
-// loadConversationHeaders reads the conversation headers (one bounded page
-// set, the same paging every other list read uses).
-func loadConversationHeaders(comp *sdk.Component) ([]sessionRow, error) {
-	rows, err := pageStoreList(comp, "conversation")
-	if err != nil {
-		return nil, err
-	}
-	return toSessionRows(rows), nil
 }
 
 // cutSessionID turns a message id ("<conversationId>:<seq>") into the
