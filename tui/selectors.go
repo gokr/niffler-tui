@@ -555,7 +555,13 @@ func sessionSelectorItems(loc Locale, current string, sessions []sessionSummary,
 		} else if marked != "" {
 			title = marked + s.ID
 		}
+		// A CONTENT match shows the matched text instead of the id: "found in
+		// this conversation" is the whole point of a body search, and the id
+		// is already visible in the title when there is no title.
 		description := s.ID
+		if s.Match != "" {
+			description = strings.TrimSpace(s.Match)
+		}
 		if s.subagent() {
 			description = t(loc, "selector.sessionSubagent", s.Parent) + " · " + description
 		}

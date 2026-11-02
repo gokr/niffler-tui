@@ -475,6 +475,11 @@ type sessionSummary struct {
 	CreatedAt float64
 	Parent    string
 	Closed    bool
+	// Match is why a CONTENT search returned this conversation: the matched
+	// text span, marked in [brackets] by the store. Empty when the match was
+	// the title (or when no search ran), which is the common case — a title
+	// match needs no explanation, a body match does.
+	Match string
 }
 
 // subagent reports whether the conversation is a delegated child session.
@@ -632,6 +637,146 @@ func searchSessionList(comp *sdk.Component, query string) ([]sessionSummary, err
 	return buildSessionSummaries(toSessionRows(rows), loadSessionLineage(comp)), nil
 }
 
+// searchSessionContent finds conversations by the text INSIDE them, not just
+// title/id — the half that was missing: the browser asked the store for
+// `kind: conversation`, whose indexed fields are id + title only, so typing a
+// phrase you remember the agent saying found nothing even though the store
+// indexes message content and tool-call arguments (docs/WIRE.md, store
+// `search`).
+//
+// Two queries, because the store searches one kind at a time and a kind has
+// one index shape:
+//
+//  1. messages ranked (rank: true), which returns the sessions containing the
+//     phrase most relevant first and carries a span-marked snippet per hit;
+//  2. the conversation headers for those ids, for title/createdAt/lineage.
+//
+// The header lookup is a plain list, not a search: a conversation whose title
+// does NOT match must still resolve, or a body match would vanish. It is
+// bounded by contentHitLimit, and the ids are a set, so the cost is one page.
+func searchSessionContent(comp *sdk.Component, query string) ([]sessionSummary, error) {
+	raw, err := searchMessageHits(comp, query)
+	if err != nil {
+		return nil, err
+	}
+	if len(raw) == 0 {
+		return nil, nil
+	}
+	// sessionId is the message id's prefix before the first separator; the
+	// store's ids are "<conversationId>:<seq>".
+	match := make(map[string]string, len(raw))
+	order := make([]string, 0, len(raw))
+	for _, msgRaw := range raw {
+		var msg struct {
+			ID      string `json:"id"`
+			Snippet string `json:"snippet"`
+		}
+		if json.Unmarshal(msgRaw, &msg) != nil || msg.ID == "" {
+			continue
+		}
+		id, ok := cutSessionID(msg.ID)
+		if !ok {
+			continue
+		}
+		if _, seen := match[id]; !seen {
+			order = append(order, id)
+			match[id] = msg.Snippet
+		}
+	}
+	headers, err := loadConversationHeaders(comp)
+	if err != nil {
+		return nil, err
+	}
+	byID := make(map[string]sessionRow, len(headers))
+	for _, row := range headers {
+		byID[row.ID] = row
+	}
+	summaries := make([]sessionSummary, 0, len(order))
+	for _, id := range order {
+		row, ok := byID[id]
+		if !ok {
+			// The header is missing (a conversation pruned while its messages
+			// remain, or a page boundary). Report the id rather than dropping
+			// a real hit: the user can still open it.
+			row = sessionRow{ID: id}
+		}
+		summaries = append(summaries, sessionSummary{
+			ID: row.ID, Title: row.Value.Title, CreatedAt: row.Value.CreatedAt,
+			Match: match[id],
+		})
+	}
+	return summaries, nil
+}
+
+// searchMessageHits runs the ranked message search and returns the raw hits.
+// Ranking (not id order) is what makes a content search useful: the most
+// relevant session comes first, and the store already computes bm25.
+func searchMessageHits(comp *sdk.Component, query string) ([]json.RawMessage, error) {
+	var response struct {
+		Items []json.RawMessage `json:"items"`
+	}
+	if err := requestInto(comp, "store", "search",
+		messageSearchArgs(query, contentHitLimit), &response); err != nil {
+		return nil, err
+	}
+	return response.Items, nil
+}
+
+// loadConversationHeaders reads the conversation headers (one bounded page
+// set, the same paging every other list read uses).
+func loadConversationHeaders(comp *sdk.Component) ([]sessionRow, error) {
+	rows, err := pageStoreList(comp, "conversation")
+	if err != nil {
+		return nil, err
+	}
+	return toSessionRows(rows), nil
+}
+
+// cutSessionID turns a message id ("<conversationId>:<seq>") into the
+// conversation id it belongs to. ok=false for anything that is not a message
+// id, so a malformed hit is skipped rather than folded into a bogus session.
+func cutSessionID(messageID string) (string, bool) {
+	id, _, ok := strings.Cut(messageID, ":")
+	if !ok || id == "" {
+		return "", false
+	}
+	return id, true
+}
+
+// mergeSearchHits unions the title matches and the content matches, title
+// hits FIRST (a title match is the strongest signal and must not be pushed
+// below body matches by relevance ranking), de-duplicated by conversation id.
+func mergeSearchHits(titles, content []sessionSummary) []sessionSummary {
+	seen := make(map[string]bool, len(titles)+len(content))
+	merged := make([]sessionSummary, 0, len(titles)+len(content))
+	for _, s := range titles {
+		seen[s.ID] = true
+		merged = append(merged, s)
+	}
+	for _, s := range content {
+		if seen[s.ID] {
+			continue
+		}
+		seen[s.ID] = true
+		merged = append(merged, s)
+	}
+	return merged
+}
+
+// messageSearchArgs is the store request for the CONTENT half: ranked, with a
+// snippet per hit. Ranked (not id order) is what makes a content search
+// useful — the store already computes bm25.
+func messageSearchArgs(query string, limit int) map[string]any {
+	return map[string]any{"kind": "message", "query": query, "rank": true,
+		"snippet": true, "limit": limit}
+}
+
+// contentHitLimit bounds the message hits a content search asks for. Each hit
+// is one snippet, and a session appears once, so this is "how many sessions a
+// text search may surface" — enough to be useful, small enough that the
+// browser stays scrollable.
+const contentHitLimit = 40
+
 // sessionSearchDebounce bounds keystroke chatter to one store call: a
 // search fires only after the filter box has been quiet this long.
 const sessionSearchDebounce = 250 * time.Millisecond
@@ -649,6 +794,12 @@ type sessionSearchMsg struct {
 	Query    string
 	Sessions []sessionSummary
 	Err      error
+	// PartialErr is set when the CONTENT half of the search failed while the
+	// title half answered — a store without the message index, or a hiccup.
+	// The results are still shown (they are real title matches) and the
+	// browser says the search was partial, so an empty result is never
+	// mistaken for "no conversation mentions this".
+	PartialErr error
 }
 
 func sessionSearchDebounceCmd(gen int, query string) tea.Cmd {
@@ -659,8 +810,26 @@ func sessionSearchDebounceCmd(gen int, query string) tea.Cmd {
 
 func sessionSearchCmd(comp *sdk.Component, gen int, query string) tea.Cmd {
 	return func() tea.Msg {
+		// Titles FIRST, then content: a title match is the strongest signal and
+		// must not be pushed below body matches by relevance ranking (a
+		// three-word title hit outranks nothing). The union is what makes this
+		// "free text search in sessions" rather than "search the titles".
 		sessions, err := searchSessionList(comp, query)
-		return sessionSearchMsg{Gen: gen, Query: query, Sessions: sessions, Err: err}
+		if err != nil {
+			return sessionSearchMsg{Gen: gen, Query: query, Err: err}
+		}
+		contentErr := error(nil)
+		content, cerr := searchSessionContent(comp, query)
+		if cerr != nil {
+			// A store without the message index (or an older harness) still
+			// answers the title half: degrade to that rather than failing the
+			// whole search. Recorded so the browser can say the search was
+			// partial instead of silently pretending it was complete.
+			contentErr = cerr
+		}
+		return sessionSearchMsg{Gen: gen, Query: query,
+			Sessions: mergeSearchHits(sessions, content),
+			Err:      nil, PartialErr: contentErr}
 	}
 }
 

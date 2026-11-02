@@ -1526,6 +1526,14 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.sessionSearchFallback(msg.Query)
 			return m, nil
 		}
+		// A failed CONTENT half (an older store with no message index) still
+		// leaves real title matches, so show them — but say the search was
+		// partial. Without the note, "no results" for a phrase the agent
+		// definitely said reads as "this harness has no such text".
+		if msg.PartialErr != nil {
+			m.contextNote = "text search covers titles only here: " +
+				msg.PartialErr.Error()
+		}
 		m.applySessionSearchResults(msg.Sessions, msg.Query)
 		return m, nil
 
