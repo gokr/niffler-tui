@@ -247,7 +247,11 @@ func (m model) branchChip() string {
 		return ""
 	}
 	if m.worktree {
-		return t(m.loc, "workspace.branchWorktree", m.branch)
+		label := t(m.loc, "workspace.branchWorktree", m.branch)
+		if m.isolation == "worktree" {
+			label += " · isolated"
+		}
+		return label
 	}
 	return t(m.loc, "workspace.branch", m.branch)
 }
@@ -415,7 +419,7 @@ func localWorkspace(m model, cmd slashCommand, argument string) (tea.Model, tea.
 	argument = strings.TrimSpace(argument)
 	if argument == "" {
 		m.addBlock(blockMeta, workspaceReport(m.loc, m.cwd, m.branch,
-			m.worktree, m.primary, m.grantedRoots, m.cwdPinned))
+			m.worktree, m.primary, m.grantedRoots, m.cwdPinned)+"\nisolation: "+m.isolation)
 		m.syncViewport(true)
 		return m, nil
 	}

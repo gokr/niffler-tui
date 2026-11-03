@@ -223,6 +223,10 @@ func builtinSlashCommands() []slashCommand {
 		// /roots: the workspace is the primary root (immutable once turns
 		// exist, and what relative paths resolve against), while /roots grants
 		// EXTRA roots on top of it.
+		{Name: "worktree", Description: "inspect worktrees; add NAME [--fork], merge, rm PATH, close", builtin: true, run: localWorktree, Params: []slashParam{
+			{Name: "subcommand", Kind: "enum", Values: []string{"add", "new", "merge", "rm", "close"}},
+			{Name: "name", Kind: "string"},
+		}},
 		{Name: "workspace", Description: "show the conversation workspace; repin it before the first turn", builtin: true, run: localWorkspace, Params: []slashParam{
 			{Name: "path", Kind: "string", Description: "new workspace directory (empty = show the current one)"},
 		}},

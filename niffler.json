@@ -65,7 +65,8 @@
         "tui/toolrender.go",
         "tui/transcript.go",
         "tui/uirelease.go",
-        "tui/workspace.go"
+        "tui/workspace.go",
+        "tui/worktree.go"
       ],
       "interactive": true,
       "description": "Interactive terminal chat client; registers no LLM tools"

@@ -621,6 +621,7 @@ type model struct {
 	// worktree visible (workspace.go, /roots).
 	cwd          string
 	cwdPinned    bool // the cwd is a decision, not the harness-root default
+	isolation    string
 	grantedRoots []string
 	branch       string
 	// worktree marks the workspace as a LINKED git worktree (not the primary
@@ -1386,6 +1387,34 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.primary = msg.Primary
 		}
 
+	case worktreeMsg:
+		if msg.Session != m.session {
+			break
+		}
+		m.controlPending = false
+		if msg.Err != nil {
+			m.addBlock(blockError, "/worktree: "+msg.Err.Error())
+			m.syncViewport(true)
+			break
+		}
+		if msg.Target != "" && msg.Target != m.session {
+			var cmd tea.Cmd
+			m, cmd = m.switchSessionWithHistory(msg.Target)
+			if m.session != msg.Target {
+				m.addBlock(blockMeta, "Worktree operation succeeded, but target conversation is already open elsewhere: "+msg.Target)
+				m.syncViewport(true)
+				break
+			}
+			cmds = append(cmds, cmd, bootstrapBackendCmd(m.comp, m.session))
+		}
+		if msg.Cwd != "" && (msg.Target == "" || msg.Target == m.session) {
+			m.cwd, m.cwdPinned = msg.Cwd, true
+			cmds = append(cmds, loadBranchCmd(m.cwd, m.remoteInstance))
+		}
+		m.isolation = msg.Isolation
+		m.addBlock(blockMeta, msg.Text)
+		m.syncViewport(true)
+
 	case workspaceChangeMsg:
 		if msg.Session != m.session {
 			break
@@ -2001,6 +2030,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.runtime.OK = true
 		}
 		m.contextUsed = msg.Conversation.ContextUsed
+		m.isolation = msg.Conversation.Isolation
 		m.promptTokens = msg.Conversation.PromptTokens
 		if msg.Conversation.Cwd != "" {
 			m.cwd = msg.Conversation.Cwd
@@ -4035,7 +4065,10 @@ func resolveNATSURL() string {
 	if root := strings.TrimSpace(os.Getenv("NIF_ROOT")); root != "" {
 		paths = append(paths, filepath.Join(root, "var", "nats-url"))
 	}
-	paths = append(paths, filepath.Join("var", "nats-url"))
+	// SDK discovery follows the binary's home clone, never a worktree cwd.
+	if len(paths) == 0 {
+		return sdk.ResolveNatsUrl("")
+	}
 	for _, path := range paths {
 		data, err := os.ReadFile(path)
 		if err == nil {

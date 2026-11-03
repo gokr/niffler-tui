@@ -212,6 +212,13 @@ Local commands are handled by the TUI and are never sent to the model:
   preview, and `v` opens the full block in place, scrolled with
   `up`/`down`/`pgup`/`pgdn`/`home`/`end` or the mouse wheel and closed again
   with `v`. `enter`/`esc`/`a`/`A` keep their verdict meaning in both views.
+- `/worktree [add NAME [--fork]|merge|rm PATH|close]` — inspect the current
+  tree, create an isolated sibling, preview then merge through the approval
+  gate, or remove a clean merged tree (branch kept). Add moves pristine or
+  unpinned conversations and forks chosen conversations with history. Dirty
+  trees refuse a move; explicitly use `--fork` to leave those edits behind.
+  Close requires an origin and switches back to it after removal. Forks copy
+  raw completed history, not compaction checkpoints. Requires an updated harness.
 - `/workspace [path]` — where this conversation works, and the control for the
   one thing the client pins on your behalf: started in a directory, the first
   turn pins it as the conversation's workspace. A bare `/workspace` reports the
