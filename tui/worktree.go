@@ -46,6 +46,60 @@ type worktreeInfo struct {
 		Isolation string `json:"isolation"`
 	} `json:"workspace"`
 }
+
+// closeWorktree decides where the client goes BEFORE anything is removed, so a
+// failure leaves the tree and this transcript intact.
+//
+// Two cases, and the second was missing until a user hit it: a FORK returns to
+// its origin; a MOVED conversation has no origin and its workspace is immutable,
+// so the only honest destination is a fresh conversation in the primary. The old
+// transcript stays as the record — it is not repinned, which core would refuse
+// anyway.
+func closeWorktree(info worktreeInfo, freshID string, primaryCwd func() string,
+	prepare func(id, dir string) error, remove func() error) (target, cwd, detail string, err error) {
+	if !info.Workspace.Linked {
+		return "", "", "", fmt.Errorf("close needs a linked worktree; nothing removed")
+	}
+	primary := info.Workspace.Primary
+	if primary == "" {
+		primary = primaryCwd()
+	}
+	if primary == "" {
+		return "", "", "", fmt.Errorf("cannot find the primary checkout; nothing removed")
+	}
+	target = info.Origin.Session
+	if target != "" {
+		detail = "returned to origin"
+	} else {
+		if freshID == "" {
+			return "", "", "", fmt.Errorf("cannot mint a conversation id; nothing removed")
+		}
+		if err = prepare(freshID, primary); err != nil {
+			return "", "", "", fmt.Errorf("cannot open a conversation in the primary; nothing removed: %w", err)
+		}
+		target, cwd = freshID, primary
+		detail = "new conversation opened in the primary; this transcript is preserved"
+	}
+	if err = remove(); err != nil {
+		return "", "", "", err
+	}
+	return target, cwd, "worktree removed; branch kept; " + detail, nil
+}
+
+// infoFailure decides whether a session_info error blocks the operation.
+//
+// A conversation that has not run a turn yet has NO stored header, so
+// session_info answers "no conversation '<id>'". That is not a failure:
+// /worktree add is most useful BEFORE the first turn, and refusing there made
+// the command unusable on a fresh conversation ("/worktree: core.session_info:
+// no conversation 'conv-…'"). Everything else is a real failure.
+func infoFailure(msg string) error {
+	if msg == "" || strings.Contains(msg, "no conversation") {
+		return nil
+	}
+	return fmt.Errorf("%s", msg)
+}
+
 type worktreeMsg struct {
 	Session, Target, Cwd, Text, Isolation string
 	Err                                   error
@@ -135,8 +189,8 @@ func worktreeCommand(comp *sdk.Component, session, cwd, action, name string, exp
 		if err := requestInto(comp, "core", "session_info", map[string]any{"sessionId": session}, &info); err != nil {
 			return fail(err)
 		}
-		if info.Error != "" {
-			return fail(fmt.Errorf("%s", info.Error))
+		if err := infoFailure(info.Error); err != nil {
+			return fail(err)
 		}
 		if info.Workspace.Root != "" {
 			cwd = info.Workspace.Root
@@ -234,10 +288,29 @@ func worktreeCommand(comp *sdk.Component, session, cwd, action, name string, exp
 				return fail(fmt.Errorf("refusing to remove the active workspace; use close to return to its origin"))
 			}
 			if action == "close" {
-				if !info.Workspace.Linked || info.Origin.Session == "" {
-					return fail(fmt.Errorf("close needs a linked worktree with an origin; nothing removed"))
+				var receipt json.RawMessage
+				target, dest, detail, err := closeWorktree(info, newSessionID(),
+					func() string { return info.Workspace.Primary },
+					func(id, dir string) error {
+						var response sessionRootsResponse
+						if err := requestInto(comp, "core", "session",
+							map[string]any{"sessionId": id, "cwd": dir}, &response); err != nil {
+							return err
+						}
+						if response.Error != "" {
+							return fmt.Errorf("%s", response.Error)
+						}
+						return nil
+					},
+					func() error {
+						return worktreeInvoke(comp, session, "git_worktree",
+							map[string]any{"op": "remove", "repo": primary, "path": cwd}, &receipt)
+					})
+				if err != nil {
+					return fail(err)
 				}
-				path = cwd
+				msg.Target, msg.Cwd, msg.Text, msg.Isolation = target, dest, detail, ""
+				break
 			}
 			if path == "" {
 				return fail(fmt.Errorf("/worktree rm needs an absolute PATH"))
@@ -248,10 +321,6 @@ func worktreeCommand(comp *sdk.Component, session, cwd, action, name string, exp
 			}
 			msg.Text = "worktree removed; branch kept"
 			msg.Isolation = ""
-			if action == "close" {
-				msg.Target = info.Origin.Session
-				msg.Text += "; returned to origin"
-			}
 		}
 		return msg
 	}
