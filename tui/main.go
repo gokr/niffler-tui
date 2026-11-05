@@ -562,9 +562,18 @@ type model struct {
 	// Cross-provider model list for /model: the cache plus the provider-set
 	// key it was built from (a stale key means a provider changed while the
 	// fetch was in flight, so the list is dropped and refetched on demand).
+	// The key also carries the catalog epoch below, so a catalog refresh
+	// invalidates the same way a provider add/remove does.
 	allModels        []modelCandidate
 	allModelsKey     string
 	allModelsLoading bool
+	// modelsCatalogEpoch counts ev.models.updated signals. A refresh can add,
+	// drop or re-price models without the provider set changing (a plugin
+	// source that was failing is retried; a newly spawned component registers
+	// one), which the provider-set key alone cannot see — the list would stay
+	// pinned for the process lifetime. Bumping this both invalidates the cache
+	// and drops any cross-provider reply still in flight.
+	modelsCatalogEpoch int
 	// The /session browser: the loaded conversations (with their subagent
 	// lineage) and whether the child sessions are shown. A view preference for
 	// this run, not persisted state.
@@ -2228,7 +2237,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.mode == modeModels {
 			m.selector.list.StopSpinner()
 		}
-		if msg.Key != allModelsKey(m.providers, m.providerStatus) {
+		if msg.Key != allModelsKey(m.providers, m.providerStatus, m.modelsCatalogEpoch) {
 			break // provider set changed while in flight: stale list
 		}
 		m.allModels = msg.Items
@@ -2831,9 +2840,28 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		cmds = append(cmds, refreshRuntimeCmd(m.comp, m.session, m.providerOverride, m.modelOverride))
 
 	case modelsCatalogUpdatedMsg:
+		// models published a new catalog (baseline, a plugin source, or both):
+		// models appear, disappear and get re-priced without any provider
+		// being added or removed, so bump the epoch to drop the cross-provider
+		// cache — otherwise /model keeps showing the list it fetched before the
+		// refresh and new models stay invisible until the client restarts. The
+		// bump also invalidates any cross-provider reply still in flight. The
+		// refetch itself is on demand (opening /model), like every other path.
+		m.modelsCatalogEpoch++
 		cmds = append(cmds, loadCatalogProvidersCmd(m.comp))
 		if m.runtime.Catalog != "" {
 			cmds = append(cmds, loadModelsCmd(m.comp, m.runtime.Catalog))
+		}
+		// A picker already on screen is showing the stale list: rebuild it now,
+		// then refetch behind a spinner the way opening /model does.
+		if m.mode == modeModels {
+			m.openModelSelector() // falls back to the active catalog until the refetch lands
+			if !m.allModelsUsable() && !m.allModelsLoading {
+				m.allModelsLoading = true
+				cmds = append(cmds, m.selector.list.StartSpinner())
+				cmds = append(cmds, loadAllModelsCmd(m.comp, m.providers, m.providerStatus,
+					m.modelsCatalogEpoch))
+			}
 		}
 
 	case spinner.TickMsg:

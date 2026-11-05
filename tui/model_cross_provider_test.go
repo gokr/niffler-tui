@@ -16,7 +16,7 @@ func newModelPicker(providers []providerSummary, status providerStatusResponse,
 	m.providers = providers
 	m.providerStatus = status
 	m.allModels = candidates
-	m.allModelsKey = allModelsKey(providers, status)
+	m.allModelsKey = allModelsKey(providers, status, 0)
 	m.openModelSelector() // sets mode modeModels
 	return m
 }
@@ -139,6 +139,34 @@ func TestAllModelsKeyInvalidatesOnProviderChange(t *testing.T) {
 	m.providers = append(m.providers, providerSummary{Nickname: "xiaomi"})
 	if m.allModelsUsable() {
 		t.Fatal("provider set changed but the cached list was still used")
+	}
+}
+
+// A models catalog refresh changes the offered models WITHOUT changing the
+// provider set — a plugin source that was failing is retried, a newly spawned
+// component registers one, a release adds models. ev.models.updated must
+// invalidate the cached cross-provider list, or /model keeps serving the list
+// it fetched before the refresh and the new models stay invisible until the
+// client restarts (how a rebuilt synthetic component's models went missing).
+func TestModelsCatalogUpdatedInvalidatesCrossProviderCache(t *testing.T) {
+	providers := []providerSummary{{Nickname: "synthetic", Catalog: "synthetic"}}
+	status := providerStatusResponse{Source: "store"}
+	m := newModelPicker(providers, status, crossProviderCandidates())
+	if !m.allModelsUsable() {
+		t.Fatal("cache for the current provider set should be usable")
+	}
+
+	updated, _ := m.Update(modelsCatalogUpdatedMsg{})
+	m = updated.(model)
+
+	if m.allModelsUsable() {
+		t.Fatal("catalog refresh did not invalidate the cross-provider cache")
+	}
+	// The stale key must not match the current one either: allModelsMsg drops a
+	// reply whose key no longer matches, so a fetch started before the refresh
+	// is discarded instead of being adopted as fresh.
+	if stale := allModelsKey(m.providers, m.providerStatus, m.modelsCatalogEpoch); stale == m.allModelsKey {
+		t.Fatalf("key %q still matches after refresh; a stale reply would be adopted", stale)
 	}
 }
 

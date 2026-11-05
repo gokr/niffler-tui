@@ -346,7 +346,7 @@ func localModel(m model, cmd slashCommand, argument string) (tea.Model, tea.Cmd)
 	}
 	if needAll {
 		m.allModelsLoading = true
-		cmds = append(cmds, loadAllModelsCmd(m.comp, m.providers, m.providerStatus))
+		cmds = append(cmds, loadAllModelsCmd(m.comp, m.providers, m.providerStatus, m.modelsCatalogEpoch))
 	}
 	return m, tea.Batch(cmds...)
 }
@@ -1212,7 +1212,7 @@ func (m model) configuredCatalogProviders() []catalogProvider {
 // added or removed since) is as unusable as no cache: refetch on demand.
 func (m model) allModelsUsable() bool {
 	return m.allModelsKey != "" &&
-		m.allModelsKey == allModelsKey(m.providers, m.providerStatus) &&
+		m.allModelsKey == allModelsKey(m.providers, m.providerStatus, m.modelsCatalogEpoch) &&
 		len(m.allModels) > 0
 }
 

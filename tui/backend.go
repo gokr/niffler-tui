@@ -980,7 +980,11 @@ func loadModelsCmd(comp *sdk.Component, catalog string) tea.Cmd {
 // built from: every configured nickname with its catalog id, plus the
 // environment fallback when active. A reply whose key no longer matches is
 // stale (a provider was added/removed while it was in flight).
-func allModelsKey(providers []providerSummary, status providerStatusResponse) string {
+//
+// epoch is the catalog refresh counter: a models refresh can change the
+// offered models without changing the provider set, so it must break the key
+// the same way a provider edit does.
+func allModelsKey(providers []providerSummary, status providerStatusResponse, epoch int) string {
 	var b strings.Builder
 	seen := map[string]bool{}
 	add := func(nick, catalog string) {
@@ -999,6 +1003,7 @@ func allModelsKey(providers []providerSummary, status providerStatusResponse) st
 	if status.Source == "environment" {
 		add(status.Provider.Nickname, status.Provider.Catalog)
 	}
+	fmt.Fprintf(&b, "epoch=%d", epoch)
 	return b.String()
 }
 
@@ -1008,7 +1013,7 @@ func allModelsKey(providers []providerSummary, status providerStatusResponse) st
 // no catalog entry through their own /models endpoint (ids only). Sequential
 // on purpose — providers are few and each round trip is short, and one msg
 // keeps the picker's spinner and ordering honest.
-func loadAllModelsCmd(comp *sdk.Component, providers []providerSummary, status providerStatusResponse) tea.Cmd {
+func loadAllModelsCmd(comp *sdk.Component, providers []providerSummary, status providerStatusResponse, epoch int) tea.Cmd {
 	type target struct{ nick, catalog string }
 	var targets []target
 	seen := map[string]bool{}
@@ -1023,7 +1028,7 @@ func loadAllModelsCmd(comp *sdk.Component, providers []providerSummary, status p
 		!seen[status.Provider.Nickname] {
 		targets = append(targets, target{status.Provider.Nickname, status.Provider.Catalog})
 	}
-	key := allModelsKey(providers, status)
+	key := allModelsKey(providers, status, epoch)
 	return func() tea.Msg {
 		var items []modelCandidate
 		var errs []string
