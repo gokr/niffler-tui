@@ -1623,6 +1623,25 @@ func TestThinkingEffortCycle(t *testing.T) {
 	}
 }
 
+func TestThinkingEffortLabelsEveryLocale(t *testing.T) {
+	for loc, catalog := range catalogs {
+		for _, effort := range effortCycle {
+			m := newTestModel()
+			m.loc, m.session = loc, "game"
+			m.thinkingEffort = effort
+			label := m.effortLabel()
+			if catalog["level."+label] == "" {
+				t.Errorf("locale %s: missing label for effort %q", loc, effort)
+				continue
+			}
+			m.applyThinkingEffort(thinkingEffortMsg{Session: "game", Effort: effort})
+			if len(m.blocks) != 1 || !strings.Contains(m.blocks[0].text, catalog["level."+label]) {
+				t.Errorf("locale %s effort %q: missing confirmation label", loc, effort)
+			}
+		}
+	}
+}
+
 func TestThinkingEffortMessageAppliesOrDrops(t *testing.T) {
 	m := newTestModel()
 	m.session = "game"
