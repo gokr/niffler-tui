@@ -6,6 +6,55 @@ import (
 	"testing"
 )
 
+func TestWorktreeAddSelectsWorkspaceBeforeGit(t *testing.T) {
+	for _, session := range []string{"startup", "ownership-fresh"} {
+		t.Run(session, func(t *testing.T) {
+			cwd, pinned, infos := "/harness", false, 0
+			request := func(component, tool string, args map[string]any, out any) error {
+				if args["sessionId"] != session {
+					t.Fatalf("wrong session: %v", args)
+				}
+				switch tool {
+				case "session_info":
+					infos++
+					info := out.(*worktreeInfo)
+					if infos == 1 {
+						info.Error = "no conversation"
+					} else {
+						info.Workspace.Primary = cwd
+						info.Workspace.Branch = "main"
+					}
+				case "session":
+					if dir, ok := args["cwd"].(string); ok {
+						cwd, pinned = dir, true
+					}
+					*out.(*sessionRootsResponse) = sessionRootsResponse{Cwd: cwd, CwdPinned: pinned}
+				default:
+					t.Fatalf("unexpected request %s.%s", component, tool)
+				}
+				return nil
+			}
+			invoke := func(id, tool string, args map[string]any, out any) error {
+				if id != session || !pinned || cwd != "/project" || args["repo"] != "/project" {
+					t.Fatalf("git before workspace selection: %s %s %v", id, cwd, args)
+				}
+				if tool == "git_worktree" {
+					if args["base"] != "main" {
+						t.Fatalf("stale branch: %v", args)
+					}
+					v := out.(*struct{ Path, Branch string })
+					v.Path, v.Branch = "/tree", "feature"
+				}
+				return nil
+			}
+			msg := worktreeCommandWith(session, "/project", "add", "feature", false, request, invoke, nil)().(worktreeMsg)
+			if msg.Err != nil || msg.Cwd != "/tree" || cwd != "/tree" || infos != 2 {
+				t.Fatalf("result=%+v cwd=%s infos=%d", msg, cwd, infos)
+			}
+		})
+	}
+}
+
 func TestWorktreeBirthDecision(t *testing.T) {
 	for _, tc := range []struct {
 		pristine, pinned, dirty, fork bool
@@ -145,5 +194,102 @@ func TestInfoFailureAllowsAFreshConversation(t *testing.T) {
 	}
 	if err := infoFailure("core.session_info: store unavailable"); err == nil {
 		t.Fatal("a real failure must still be reported")
+	}
+}
+
+// /worktree status asked for `git_worktree_list {status: true}` — the whole
+// point of the view — and rendered it through the human-facing report, so the
+// report must carry the facts that decision needs: this conversation's place in
+// the graph, its granted roots, and per tree the dirt and the divergence.
+func TestWorktreeStatusAsksForStatusAndRendersIt(t *testing.T) {
+	var asked map[string]any
+	request := func(_ string, tool string, args map[string]any, out any) error {
+		switch tool {
+		case "session_info":
+			info := out.(*worktreeInfo)
+			info.Workspace.Root = "/repo"
+			info.Workspace.Primary = "/repo"
+			info.Workspace.Branch = "main"
+			info.Origin.Session = "conv-origin"
+		case "session":
+			*out.(*sessionRootsResponse) = sessionRootsResponse{
+				Cwd:          "/repo",
+				CwdPinned:    true,
+				GrantedRoots: []string{"/repo", "/shared/lib"},
+			}
+		default:
+			t.Fatalf("unexpected request %s", tool)
+		}
+		return nil
+	}
+	invoke := func(_ string, tool string, args map[string]any, out any) error {
+		if tool != "git_worktree_list" {
+			t.Fatalf("unexpected invoke %s", tool)
+		}
+		asked = args
+		clean, ahead, behind := true, 2, 0
+		dirty := false
+		*out.(*worktreeListInfo) = worktreeListInfo{
+			Container: "/repo.wt",
+			Compare:   "main",
+			Trees: []worktreeEntry{
+				{Path: "/repo", Branch: "main", Current: true, Clean: &dirty,
+					Changed: 1, Untracked: 3},
+				{Path: "/repo.wt/feat", Branch: "feat", Clean: &clean,
+					Ahead: &ahead, Behind: &behind},
+			},
+		}
+		return nil
+	}
+	msg := worktreeCommandWith("conv-1", "/repo", "status", "", false,
+		request, invoke, nil)().(worktreeMsg)
+	if msg.Err != nil {
+		t.Fatalf("/worktree status failed: %v", msg.Err)
+	}
+	if asked["status"] != true {
+		t.Fatalf("status was not requested from git_worktree_list: %v", asked)
+	}
+	for _, want := range []string{
+		"workspace: /repo (primary checkout, branch main)",
+		"origin:    conv-origin",
+		"roots:     1 granted",
+		"/shared/lib",
+		"/repo.wt/feat",
+		"clean, 2 ahead of main",
+		"dirty (1 changed, 3 untracked)",
+	} {
+		if !strings.Contains(msg.Text, want) {
+			t.Fatalf("report is missing %q:\n%s", want, msg.Text)
+		}
+	}
+	// The primary is not a grant, and no JSON blob is rendered.
+	if strings.Contains(msg.Text, `"trees"`) || strings.Contains(msg.Text, "roots:     2 granted") {
+		t.Fatalf("report leaked the raw listing or counted the primary as a grant:\n%s", msg.Text)
+	}
+}
+
+// A tree that was never measured must not be called clean, and a listing with
+// no compare ref must not invent "level with". Both are what the pointer fields
+// exist for.
+func TestWorktreeReportOmitsUnmeasuredFacts(t *testing.T) {
+	list := worktreeListInfo{Trees: []worktreeEntry{
+		{Path: "/repo.wt/x", Branch: "x"},
+	}}
+	got := worktreeStatusReport("/repo", "/repo", worktreeInfo{}, nil, list)
+	line := ""
+	for _, l := range strings.Split(got, "\n") {
+		if strings.Contains(l, "/repo.wt/x") {
+			line = l
+		}
+	}
+	if line == "" {
+		t.Fatalf("tree row missing:\n%s", got)
+	}
+	if strings.Contains(line, "clean") || strings.Contains(line, "ahead") ||
+		strings.Contains(line, "level with") {
+		t.Fatalf("unmeasured facts were rendered: %q", line)
+	}
+	if !strings.Contains(got, "roots:     none granted") {
+		t.Fatalf("grant line missing:\n%s", got)
 	}
 }

@@ -47,6 +47,188 @@ type worktreeInfo struct {
 	} `json:"workspace"`
 }
 
+// worktreeListInfo is the part of `git_worktree_list {status: true}` the status
+// view renders. The dirt/divergence fields are POINTERS on purpose: a listing
+// asks for status only when a human needs it, and a tree nobody measured must
+// not be reported as clean.
+type worktreeListInfo struct {
+	Container string          `json:"container"`
+	Compare   string          `json:"compare"`
+	Trees     []worktreeEntry `json:"trees"`
+}
+
+type worktreeEntry struct {
+	Path       string `json:"path"`
+	Branch     string `json:"branch"`
+	Head       string `json:"head"`
+	Detached   bool   `json:"detached"`
+	Current    bool   `json:"isCurrent"`
+	Locked     bool   `json:"locked"`
+	LockReason string `json:"lockReason"`
+	Prunable   bool   `json:"prunable"`
+	Clean      *bool  `json:"clean"`
+	Changed    int    `json:"changed"`
+	Untracked  int    `json:"untracked"`
+	Ahead      *int   `json:"ahead"`
+	Behind     *int   `json:"behind"`
+	Owner      *struct {
+		SessionID string `json:"sessionId"`
+		State     string `json:"state"`
+	} `json:"owner"`
+}
+
+// worktreeDirt is one tree's cleanliness in words. A tree that was not measured
+// (no status asked for, or the directory is gone) says nothing at all.
+func worktreeDirt(e worktreeEntry) string {
+	if e.Clean == nil {
+		return ""
+	}
+	if *e.Clean {
+		return "clean"
+	}
+	var parts []string
+	if e.Changed > 0 {
+		parts = append(parts, fmt.Sprintf("%d changed", e.Changed))
+	}
+	if e.Untracked > 0 {
+		parts = append(parts, fmt.Sprintf("%d untracked", e.Untracked))
+	}
+	if len(parts) == 0 {
+		return "dirty"
+	}
+	return "dirty (" + strings.Join(parts, ", ") + ")"
+}
+
+// worktreeDivergence is how far a tree sits from the branch the listing compared
+// against (the primary's current branch — the one a tree is cut from). Silence
+// when there is nothing to compare: a detached primary has no branch name, and a
+// tree git could not read has no counts.
+func worktreeDivergence(e worktreeEntry, compare string) string {
+	if compare == "" || e.Ahead == nil || e.Behind == nil {
+		return ""
+	}
+	ahead, behind := *e.Ahead, *e.Behind
+	switch {
+	case ahead == 0 && behind == 0:
+		return "level with " + compare
+	case behind == 0:
+		return fmt.Sprintf("%d ahead of %s", ahead, compare)
+	case ahead == 0:
+		return fmt.Sprintf("%d behind %s", behind, compare)
+	}
+	return fmt.Sprintf("%d ahead, %d behind %s", ahead, behind, compare)
+}
+
+// worktreeFactsLine is the comma-joined tail of one tree's row: what a human
+// deciding "can I retire this, should I merge it" needs, in reading order.
+func worktreeFactsLine(e worktreeEntry, compare string) string {
+	var parts []string
+	if dirt := worktreeDirt(e); dirt != "" {
+		parts = append(parts, dirt)
+	}
+	if div := worktreeDivergence(e, compare); div != "" {
+		parts = append(parts, div)
+	}
+	if e.Detached {
+		parts = append(parts, "detached HEAD")
+	}
+	if e.Prunable {
+		parts = append(parts, "prunable (directory gone — rm or prune)")
+	} else if e.Locked {
+		parts = append(parts, "locked")
+	}
+	if e.Owner != nil && e.Owner.SessionID != "" {
+		parts = append(parts, "owner "+e.Owner.SessionID)
+	}
+	return strings.Join(parts, ", ")
+}
+
+// worktreeName is a tree's label in the status view: its branch, or an honest
+// marker when it has none (a detached HEAD is a state, not a missing name).
+func worktreeName(e worktreeEntry) string {
+	if e.Branch == "" {
+		return "(detached)"
+	}
+	return e.Branch
+}
+
+// worktreeStatusReport renders /worktree: where this conversation works, the
+// roots a human granted on top of it, and every tree of the repository with the
+// dirt and divergence that decide what to do next.
+//
+// It replaces a raw JSON dump. The JSON was complete and unreadable: the one
+// question a human opens this for — "what is in my other trees, can I retire
+// them" — could only be answered by parsing it by eye. Tools keep the JSON
+// (git_worktree_list is the model's view); this is the human's.
+func worktreeStatusReport(workspace, primary string, info worktreeInfo,
+	granted []string, list worktreeListInfo) string {
+	var b strings.Builder
+	branch := info.Workspace.Branch
+	if branch == "" {
+		branch = "none"
+	}
+	kind := "primary checkout"
+	if info.Workspace.Linked {
+		kind = "linked worktree"
+	}
+	fmt.Fprintf(&b, "workspace: %s (%s, branch %s)\n", workspace, kind, branch)
+	if primary != "" {
+		fmt.Fprintf(&b, "primary:   %s\n", primary)
+	}
+	isolation := info.Workspace.Isolation
+	if isolation == "" {
+		isolation = "shared"
+	}
+	fmt.Fprintf(&b, "isolation: %s\n", isolation)
+	if info.Origin.Session != "" {
+		fmt.Fprintf(&b, "origin:    %s (fork; close returns here)\n", info.Origin.Session)
+	} else {
+		b.WriteString("origin:    none (moved conversation: its workspace is immutable)\n")
+	}
+	// Grants are a security decision — they widen what this conversation may
+	// write — so they belong beside the workspace they widen, not only in
+	// /roots.
+	if len(granted) == 0 {
+		b.WriteString("roots:     none granted\n")
+	} else {
+		fmt.Fprintf(&b, "roots:     %d granted\n", len(granted))
+		for _, root := range granted {
+			fmt.Fprintf(&b, "             %s\n", root)
+		}
+	}
+	if list.Container != "" {
+		fmt.Fprintf(&b, "container: %s\n", list.Container)
+	}
+	if len(list.Trees) == 0 {
+		b.WriteString("trees:     none reported (is this a git checkout?)\n")
+		return b.String()
+	}
+	if list.Compare != "" {
+		fmt.Fprintf(&b, "trees (compared with %s; * = this conversation):\n", list.Compare)
+	} else {
+		b.WriteString("trees (* = this conversation):\n")
+	}
+	// Column widths from the real values, so the rows line up in a terminal
+	// without padding guesses.
+	nameWidth, pathWidth := 0, 0
+	for _, e := range list.Trees {
+		nameWidth = max(nameWidth, len(worktreeName(e)))
+		pathWidth = max(pathWidth, len(e.Path))
+	}
+	for _, e := range list.Trees {
+		marker := " "
+		if e.Current {
+			marker = "*"
+		}
+		line := fmt.Sprintf("  %s %-*s  %-*s", marker, nameWidth, worktreeName(e), pathWidth, e.Path)
+		if facts := worktreeFactsLine(e, list.Compare); facts != "" {
+			line += "  " + facts
+		}
+		b.WriteString(strings.TrimRight(line, " ") + "\n")
+	}
+	return b.String()
+}
+
 // closeWorktree decides where the client goes BEFORE anything is removed, so a
 // failure leaves the tree and this transcript intact.
 //
@@ -178,22 +360,71 @@ func localWorktree(m model, cmd slashCommand, argument string) (tea.Model, tea.C
 		return m, nil
 	}
 	m.controlPending = true
-	return m, worktreeCommand(m.comp, m.session, m.cwd, action, name, explicitFork)
+	return m, worktreeCommand(m.comp, m.session, m.cwd, action, name, explicitFork, m.grantedRoots)
 }
 
-func worktreeCommand(comp *sdk.Component, session, cwd, action, name string, explicitFork bool) tea.Cmd {
+func worktreeCommand(comp *sdk.Component, session, cwd, action, name string,
+	explicitFork bool, granted []string) tea.Cmd {
+	return worktreeCommandWith(session, cwd, action, name, explicitFork,
+		func(component, tool string, args map[string]any, out any) error {
+			return requestInto(comp, component, tool, args, out)
+		}, func(session, tool string, args map[string]any, out any) error {
+			return worktreeInvoke(comp, session, tool, args, out)
+		}, granted)
+}
+
+func worktreeCommandWith(session, cwd, action, name string, explicitFork bool,
+	request func(string, string, map[string]any, any) error,
+	invoke func(string, string, map[string]any, any) error, granted []string) tea.Cmd {
 	return func() tea.Msg {
 		msg := worktreeMsg{Session: session}
 		fail := func(err error) tea.Msg { msg.Err = err; return msg }
 		var info worktreeInfo
-		if err := requestInto(comp, "core", "session_info", map[string]any{"sessionId": session}, &info); err != nil {
+		if err := request("core", "session_info", map[string]any{"sessionId": session}, &info); err != nil {
 			return fail(err)
 		}
 		if err := infoFailure(info.Error); err != nil {
 			return fail(err)
 		}
-		if info.Workspace.Root != "" {
-			cwd = info.Workspace.Root
+		// A fresh session's launch directory has not necessarily reached core:
+		// the first chat turn normally supplies it. Establish it before any
+		// session-scoped Git call, whose write fence uses core's workspace.
+		// Never move an existing conversation with a chosen workspace or turns.
+		var status sessionRootsResponse
+		if err := request("core", "session", map[string]any{"sessionId": session}, &status); err != nil {
+			return fail(err)
+		}
+		if status.Error != "" {
+			return fail(fmt.Errorf("%s", status.Error))
+		}
+		if !status.CwdPinned && info.MessageCount == 0 {
+			if cwd == "" {
+				return fail(fmt.Errorf("workspace is unknown"))
+			}
+			if err := request("core", "session", map[string]any{"sessionId": session, "cwd": cwd}, &status); err != nil {
+				return fail(err)
+			}
+			if status.Error != "" {
+				return fail(fmt.Errorf("cannot select workspace: %s", status.Error))
+			}
+			// Refresh checkout facts after the selection, not the default root.
+			info = worktreeInfo{}
+			if err := request("core", "session_info", map[string]any{"sessionId": session}, &info); err != nil {
+				return fail(err)
+			}
+			if err := infoFailure(info.Error); err != nil {
+				return fail(err)
+			}
+		}
+		if status.Cwd != "" {
+			cwd = status.Cwd
+		}
+		// The grants the human made are core's answer, not this client's
+		// memory: the status readback carries them, and the primary is filtered
+		// out (it is the workspace, not a grant). m.grantedRoots is only a
+		// fallback for a core too old to report them.
+		if status.GrantedRoots != nil {
+			granted = grantedRoots(status.GrantedRoots, status.Cwd)
 		}
 		primary := info.Workspace.Primary
 		if primary == "" {
@@ -202,26 +433,22 @@ func worktreeCommand(comp *sdk.Component, session, cwd, action, name string, exp
 		msg.Isolation = info.Workspace.Isolation
 		switch action {
 		case "status":
-			var trees json.RawMessage
-			if err := worktreeInvoke(comp, session, "git_worktree_list", map[string]any{"repo": cwd}, &trees); err != nil {
+			// status: true — the dirt and divergence are what a human opens
+			// this view to decide on, and they cost two git calls per tree.
+			var list worktreeListInfo
+			if err := invoke(session, "git_worktree_list",
+				map[string]any{"repo": cwd, "status": true}, &list); err != nil {
 				return fail(err)
 			}
-			msg.Text = fmt.Sprintf("workspace: %s\nprimary: %s\nbranch: %s\nisolation: %s\norigin: %s\n%s", cwd, primary, info.Workspace.Branch, info.Workspace.Isolation, info.Origin.Session, trees)
+			msg.Text = worktreeStatusReport(cwd, primary, info, granted, list)
 		case "add":
 			if name == "" {
 				return fail(fmt.Errorf("/worktree add needs NAME"))
 			}
-			var status sessionRootsResponse
-			if err := requestInto(comp, "core", "session", map[string]any{"sessionId": session}, &status); err != nil {
-				return fail(err)
-			}
-			if status.Error != "" {
-				return fail(fmt.Errorf("%s", status.Error))
-			}
 			var dirty struct {
 				Text string `json:"text"`
 			}
-			if err := worktreeInvoke(comp, session, "git_status", map[string]any{"repo": cwd}, &dirty); err != nil {
+			if err := invoke(session, "git_status", map[string]any{"repo": cwd}, &dirty); err != nil {
 				return fail(err)
 			}
 			decision := worktreeBirthDecision(info.MessageCount == 0, status.CwdPinned, worktreeStatusDirty(dirty.Text), explicitFork)
@@ -229,7 +456,7 @@ func worktreeCommand(comp *sdk.Component, session, cwd, action, name string, exp
 				return fail(fmt.Errorf("current tree has uncommitted changes:\n%s\nCommit first, or /worktree add %s --fork to leave them here", dirty.Text, name))
 			}
 			var created struct{ Path, Branch string }
-			if err := worktreeInvoke(comp, session, "git_worktree", map[string]any{"op": "add", "repo": cwd, "name": name, "branch": name, "base": info.Workspace.Branch}, &created); err != nil {
+			if err := invoke(session, "git_worktree", map[string]any{"op": "add", "repo": cwd, "name": name, "branch": name, "base": info.Workspace.Branch}, &created); err != nil {
 				return fail(err)
 			}
 			if created.Path == "" {
@@ -241,7 +468,7 @@ func worktreeCommand(comp *sdk.Component, session, cwd, action, name string, exp
 					Session string `json:"sessionId"`
 					Error   string `json:"error"`
 				}
-				if err := requestInto(comp, "agent", "agent_fork", map[string]any{"source": session, "cwd": created.Path}, &fork); err != nil {
+				if err := request("agent", "agent_fork", map[string]any{"source": session, "cwd": created.Path}, &fork); err != nil {
 					return fail(fmt.Errorf("tree created at %s; fork failed: %w", created.Path, err))
 				}
 				if fork.Error != "" || fork.Session == "" {
@@ -250,7 +477,7 @@ func worktreeCommand(comp *sdk.Component, session, cwd, action, name string, exp
 				target = fork.Session
 			}
 			var selected sessionRootsResponse
-			if err := requestInto(comp, "core", "session", map[string]any{"sessionId": target, "cwd": created.Path, "isolation": "worktree", "checkout": map[string]any{"primaryRoot": primary, "branch": created.Branch}}, &selected); err != nil {
+			if err := request("core", "session", map[string]any{"sessionId": target, "cwd": created.Path, "isolation": "worktree", "checkout": map[string]any{"primaryRoot": primary, "branch": created.Branch}}, &selected); err != nil {
 				return fail(fmt.Errorf("tree created at %s; selection failed: %w", created.Path, err))
 			}
 			if selected.Error != "" {
@@ -271,14 +498,14 @@ func worktreeCommand(comp *sdk.Component, session, cwd, action, name string, exp
 				Clean     bool     `json:"clean"`
 				Conflicts []string `json:"conflicts"`
 			}
-			if err := worktreeInvoke(comp, session, "git_merge_preview", map[string]any{"repo": primary, "from_ref": info.Workspace.Branch}, &preview); err != nil {
+			if err := invoke(session, "git_merge_preview", map[string]any{"repo": primary, "from_ref": info.Workspace.Branch}, &preview); err != nil {
 				return fail(err)
 			}
 			if !preview.Clean {
 				return fail(fmt.Errorf("merge conflicts: %s", strings.Join(preview.Conflicts, ", ")))
 			}
 			var receipt json.RawMessage
-			if err := worktreeInvoke(comp, session, "git_merge", map[string]any{"op": "start", "repo": primary, "from_ref": info.Workspace.Branch}, &receipt); err != nil {
+			if err := invoke(session, "git_merge", map[string]any{"op": "start", "repo": primary, "from_ref": info.Workspace.Branch}, &receipt); err != nil {
 				return fail(err)
 			}
 			msg.Text = "merged: " + string(receipt) + "\nWorktree kept; /worktree close to retire it and return to origin."
@@ -293,7 +520,7 @@ func worktreeCommand(comp *sdk.Component, session, cwd, action, name string, exp
 					func() string { return info.Workspace.Primary },
 					func(id, dir string) error {
 						var response sessionRootsResponse
-						if err := requestInto(comp, "core", "session",
+						if err := request("core", "session",
 							map[string]any{"sessionId": id, "cwd": dir}, &response); err != nil {
 							return err
 						}
@@ -303,7 +530,7 @@ func worktreeCommand(comp *sdk.Component, session, cwd, action, name string, exp
 						return nil
 					},
 					func() error {
-						return worktreeInvoke(comp, session, "git_worktree",
+						return invoke(session, "git_worktree",
 							map[string]any{"op": "remove", "repo": primary, "path": cwd}, &receipt)
 					})
 				if err != nil {
@@ -316,7 +543,7 @@ func worktreeCommand(comp *sdk.Component, session, cwd, action, name string, exp
 				return fail(fmt.Errorf("/worktree rm needs an absolute PATH"))
 			}
 			var receipt json.RawMessage
-			if err := worktreeInvoke(comp, session, "git_worktree", map[string]any{"op": "remove", "repo": primary, "path": path}, &receipt); err != nil {
+			if err := invoke(session, "git_worktree", map[string]any{"op": "remove", "repo": primary, "path": path}, &receipt); err != nil {
 				return fail(err)
 			}
 			msg.Text = "worktree removed; branch kept"
