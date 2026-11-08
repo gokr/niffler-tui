@@ -152,8 +152,9 @@ Local commands are handled by the TUI and are never sent to the model:
   precise navigation for it); a bare `/lsp` opens the server browser
 - `/config [domain]` — browse and edit the settings components declare: a bare
   `/config` lists the domains (owner, property count, when a change applies),
-  `/config repomap.gates` opens that domain's fields. Pick a field, type a new
-  value, enter applies it through the harness's `config_patch` with the
+  enter opens the highlighted domain's fields (or name it directly:
+  `/config repomap.gates`). Pick a field, type a new value, enter applies it
+  through the harness's `config_patch` with the
   revision you were looking at, so a concurrent change is a visible conflict
   instead of a lost update. Secrets show `set`/`unset` and are never held by
   the client; read-only fields are marked; a domain whose owner is not running

@@ -277,6 +277,39 @@ func (m model) configFormView() string {
 	return b.String()
 }
 
+// handleConfigSelectorKey serves enter in the two config browsers. It mirrors
+// localConfig's argument path exactly, so typing `/config <domain>` and picking
+// the domain from the list do the same thing.
+func (m model) handleConfigSelectorKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	if msg.String() != "enter" || m.busy {
+		return m, nil
+	}
+	switch m.mode {
+	case modeConfigDomains:
+		row, ok := m.selector.list.SelectedItem().(configDomainItem)
+		if !ok {
+			return m, nil
+		}
+		m.configEditing = row.domain.Domain
+		m.configFields = nil
+		m.configNote = t(m.loc, "config.loading")
+		m.mode = modeConfig
+		m.layout()
+		return m, configDetailCmd(m.comp, m.configEditing)
+	case modeConfig:
+		row, ok := m.selector.list.SelectedItem().(configFieldItem)
+		if !ok {
+			return m, nil
+		}
+		// A read-only field, or one whose owner is stopped, still opens: the
+		// form states why it cannot be saved. Refusing the keystroke here
+		// would repeat the dead end this handler exists to remove.
+		m.openConfigEditForm(row.field)
+		return m, nil
+	}
+	return m, nil
+}
+
 // updateConfigForm handles the one-field editor: enter submits, esc abandons
 // without a write, and every other key goes to the input.
 func (m model) updateConfigForm(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {

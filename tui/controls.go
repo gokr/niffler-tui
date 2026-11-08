@@ -1737,6 +1737,14 @@ func (m model) handleControlKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, cmd
 	}
+	// The config browser owns two row types of its own (a domain row and a
+	// field row are configDomainItem/configFieldItem, not selectorItems), so
+	// enter is handled here: falling through to the shared switch below would
+	// find no selectable item and swallow Enter, leaving the browser a dead
+	// end.
+	if m.mode == modeConfigDomains || m.mode == modeConfig {
+		return m.handleConfigSelectorKey(msg)
+	}
 	// The conversation browser (modeSessions): `a` shows or hides the subagent
 	// sessions the list holds back by default. Handled after the filter guard
 	// so typing an `a` into the filter box filters instead of toggling.

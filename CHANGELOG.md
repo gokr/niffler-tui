@@ -6,6 +6,14 @@ project aims for [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+- `/config`: Enter on a domain (and on a field) does nothing. Both browser
+  levels use row types of their own, so the shared selector's enter switch
+  found no selectable item and returned before it could dispatch — the only
+  way into a domain was typing it as an argument. Enter now opens the
+  highlighted domain and, one level down, the field editor.
+
 ## [0.10.0] — 2026-10-29
 
 The client catches up with the harness it talks to: Fleet gets an inbox and
