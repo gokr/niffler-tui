@@ -6,6 +6,26 @@ project aims for [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+
+- **`/worktree add` never refuses, and picks the outcome itself.** An
+  uncommitted tree used to be a refusal telling you to re-run with `--fork`,
+  which read as if a dirty tree blocked creating one — it does not: a tree is
+  cut from your last commit. The decision now turns on the conversation, not on
+  whether you can have a tree: a pristine conversation moves into the new tree,
+  a conversation with history (or a chosen workspace) forks automatically and
+  keeps its transcript and tree. `--fork` remains only to force a fork from a
+  pristine conversation. The report says what follows from your uncommitted
+  work — that it stayed behind, and that `merge` will refuse for the files it
+  would touch until it is committed — instead of naming a flag.
+
+- `merge` prints what it did (`merged feat into main (2 commits)`, the files,
+  the target's new short commit) rather than the tool's receipt JSON, refuses
+  when the branch has nothing the target lacks instead of reporting a
+  meaningless success, and `close` says where you land in both cases: back at a
+  fork's origin, or in a fresh primary conversation that keeps the old
+  transcript as the record.
+
 ### Fixed
 
 - `/config`: Enter on a domain (and on a field) does nothing. Both browser

@@ -55,18 +55,60 @@ func TestWorktreeAddSelectsWorkspaceBeforeGit(t *testing.T) {
 	}
 }
 
+// A dirty tree no longer refuses: `git worktree add` cuts a sibling tree from a
+// commit, so uncommitted changes never block it. What they change is whether the
+// CONVERSATION can follow — a transcript that describes edits which stayed
+// behind must not silently claim the new tree.
 func TestWorktreeBirthDecision(t *testing.T) {
 	for _, tc := range []struct {
 		pristine, pinned, dirty, fork bool
 		want                          string
+		name                          string
 	}{
-		{true, true, false, false, "move"}, {false, false, false, false, "move"},
-		{false, true, false, false, "fork"}, {true, false, true, false, "refuse"},
-		{false, true, true, false, "refuse"}, {false, true, true, true, "fork"},
+		{true, false, false, false, "move", "fresh conversation"},
+		{true, true, false, false, "move", "fresh, workspace chosen"},
+		{true, false, true, false, "move", "fresh conversation in a dirty tree"},
+		{true, false, false, true, "fork", "fresh, but keep the original"},
+		{false, false, false, false, "move", "turns, workspace never chosen"},
+		{false, true, false, false, "fork", "turns, workspace chosen"},
+		{false, false, true, false, "fork", "turns, dirty tree"},
+		{false, true, true, false, "fork", "turns, chosen and dirty"},
 	} {
 		if got := worktreeBirthDecision(tc.pristine, tc.pinned, tc.dirty, tc.fork); got != tc.want {
-			t.Fatalf("%+v: %s", tc, got)
+			t.Fatalf("%s: %+v → %s, want %s", tc.name, tc, got, tc.want)
 		}
+		// Whatever the inputs, a tree request is never refused.
+		if got := worktreeBirthDecision(tc.pristine, tc.pinned, tc.dirty, tc.fork); got == "refuse" {
+			t.Fatalf("%s: refused", tc.name)
+		}
+	}
+}
+
+// The report has to explain the one non-obvious consequence: work that was
+// uncommitted stays behind, and merge will refuse for the files it touches until
+// it is committed. Silence there is what made the old flow confusing.
+func TestWorktreeAddReportExplainsWhatStayedBehind(t *testing.T) {
+	clean := worktreeAddReport("fork", "/repo", "/repo.wt/feat", "feat", false)
+	if strings.Contains(clean, "stayed there") {
+		t.Fatalf("a clean source tree claimed work stayed behind:\n%s", clean)
+	}
+	if !strings.Contains(clean, "new conversation has that history") {
+		t.Fatalf("a fork did not say where the transcript went:\n%s", clean)
+	}
+	if strings.Contains(clean, "continues in the new tree") {
+		t.Fatalf("a fork claimed this conversation moved:\n%s", clean)
+	}
+
+	dirty := worktreeAddReport("fork", "/repo", "/repo.wt/feat", "feat", true)
+	for _, want := range []string{"stayed there", "/worktree merge refuses"} {
+		if !strings.Contains(dirty, want) {
+			t.Fatalf("dirty report is missing %q:\n%s", want, dirty)
+		}
+	}
+
+	moved := worktreeAddReport("move", "/repo", "/repo.wt/feat", "feat", false)
+	if !strings.Contains(moved, "continues in the new tree") {
+		t.Fatalf("a move did not say the conversation moved:\n%s", moved)
 	}
 }
 func TestWorktreePorcelainDirt(t *testing.T) {
@@ -265,6 +307,43 @@ func TestWorktreeStatusAsksForStatusAndRendersIt(t *testing.T) {
 	// The primary is not a grant, and no JSON blob is rendered.
 	if strings.Contains(msg.Text, `"trees"`) || strings.Contains(msg.Text, "roots:     2 granted") {
 		t.Fatalf("report leaked the raw listing or counted the primary as a grant:\n%s", msg.Text)
+	}
+}
+
+// A merge report says where the work went and what to do next, instead of
+// printing the receipt JSON the tool returns.
+func TestWorktreeMergeReport(t *testing.T) {
+	got := worktreeMergeReport("feat", "main",
+		"0123456789abcdef0123456789abcdef01234567", 2,
+		[]string{"a.go", "b.go"})
+	for _, want := range []string{
+		"merged feat into main (2 commits)",
+		"2 file(s): a.go, b.go",
+		"main now at 0123456",
+		"/worktree close retires it",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("missing %q:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, "0123456789abcdef") {
+		t.Fatalf("full oid printed:\n%s", got)
+	}
+
+	many := make([]string, 0, 20)
+	for i := 0; i < 20; i++ {
+		many = append(many, fmt.Sprintf("f%d.go", i))
+	}
+	long := worktreeMergeReport("feat", "main", "", 1, many)
+	if !strings.Contains(long, "+14 more") {
+		t.Fatalf("a long file list was not bounded:\n%s", long)
+	}
+	if strings.Contains(long, "now at") {
+		t.Fatalf("invented a head for an empty oid:\n%s", long)
+	}
+	// One commit is singular.
+	if !strings.Contains(worktreeMergeReport("f", "m", "", 1, nil), "(1 commit)") {
+		t.Fatal("singular commit not rendered")
 	}
 }
 

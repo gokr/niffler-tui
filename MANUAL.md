@@ -213,13 +213,27 @@ Local commands are handled by the TUI and are never sent to the model:
   preview, and `v` opens the full block in place, scrolled with
   `up`/`down`/`pgup`/`pgdn`/`home`/`end` or the mouse wheel and closed again
   with `v`. `enter`/`esc`/`a`/`A` keep their verdict meaning in both views.
-- `/worktree [add NAME [--fork]|merge|rm PATH|close]` — inspect the current
-  tree, create an isolated sibling, preview then merge through the approval
-  gate, or remove a clean merged tree (branch kept). Add moves pristine or
-  unpinned conversations and forks chosen conversations with history. Dirty
-  trees refuse a move; explicitly use `--fork` to leave those edits behind.
-  Close requires an origin and switches back to it after removal. Forks copy
-  raw completed history, not compaction checkpoints. Requires an updated harness.
+- `/worktree [add NAME|merge|rm PATH|close]` — the isolated-work loop, one
+  command at a time: a bare `/worktree` reports where this conversation works
+  (primary or linked tree, branch, isolation, fork origin, granted roots) and
+  every tree of the repository with its dirt and how far it is from the
+  primary's branch; `add NAME` cuts an isolated sibling and moves you into it;
+  `merge` previews and then merges back through the approval gate; `close`
+  retires the tree and puts you back where the work should continue.
+  **`add` never refuses.** The tree is cut from your last commit, so
+  uncommitted work in the current tree cannot block it — it simply is not in
+  the new tree, and `merge` will refuse for the files it would touch until that
+  work is committed. What the uncommitted state changes is the conversation: a
+  pristine conversation moves into the new tree (same id, same transcript); a
+  conversation with history — or one whose workspace was already chosen —
+  **forks automatically**, keeping its transcript and its tree while a new
+  conversation with that history works in the new one. Forks copy raw completed
+  history, not compaction checkpoints. `--fork` still forces a fork from a
+  pristine conversation; it is no longer needed for anything else. `merge`
+  refuses when the branch has nothing the target lacks, so a no-op merge is an
+  error rather than a confusing success. `close` returns to a fork's origin;
+  for a moved conversation it opens a fresh one in the primary and keeps this
+  transcript as the record. Requires an updated harness.
 - `/workspace [path]` — where this conversation works, and the control for the
   one thing the client pins on your behalf: started in a directory, the first
   turn pins it as the conversation's workspace. A bare `/workspace` reports the

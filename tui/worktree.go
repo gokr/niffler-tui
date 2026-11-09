@@ -10,6 +10,14 @@ import (
 	sdk "niffler.dev/sdk"
 )
 
+const (
+	// mergeFilePreview bounds the file list a merge report prints; the rest is
+	// a count, so a 200-file merge stays one screen.
+	mergeFilePreview = 6
+	// mergeOidShort is the abbreviation git itself prints for a commit id.
+	mergeOidShort = 7
+)
+
 // Porcelain --branch has only ## metadata lines in a clean tree. Treat
 // any other nonempty output as dirt, including capped/unrecognized output.
 func worktreeStatusDirty(text string) bool {
@@ -21,14 +29,61 @@ func worktreeStatusDirty(text string) bool {
 	return false
 }
 
+// worktreeBirthDecision decides which conversation ends up working in the new
+// tree. It never refuses: the human asked for a tree, creating one is
+// reversible (/worktree rm), and neither outcome loses anything — a fork copies
+// the history, a move leaves the old tree untouched.
+//
+// The tree itself is never in question. `git worktree add` cuts a sibling tree
+// from a COMMIT, so uncommitted changes in the current tree do not prevent it;
+// they simply are not in the new tree. What that means depends on the
+// conversation, not on the tree:
+//
+//   - pristine (no turns): move. Nothing in the transcript refers to the old
+//     tree, so the same conversation can continue in the new one. This is the
+//     smooth path and the common one — `/worktree add` as the first thing in a
+//     conversation — and it keeps the conversation id the human is looking at.
+//   - has turns, and the workspace was chosen or the tree is dirty: fork. A
+//     conversation that moved would describe edits and commits that are not in
+//     the tree it now claims to be in (they stayed behind), so the original
+//     keeps its transcript and its tree, and the work in the new tree gets its
+//     own record.
+//   - has turns, workspace never chosen, clean tree: move (core allows it, the
+//     workspace was not a decision yet).
+//
+// `explicitFork` still forces a fork: a pristine conversation may be worth
+// keeping in the primary as its own record.
 func worktreeBirthDecision(pristine, pinned, dirty, explicitFork bool) string {
-	if dirty && !explicitFork {
-		return "refuse"
+	if explicitFork {
+		return "fork"
 	}
-	if explicitFork || (!pristine && pinned) {
+	if pristine {
+		return "move"
+	}
+	if dirty || pinned {
 		return "fork"
 	}
 	return "move"
+}
+
+// worktreeAddReport says what just happened and what the new tree cannot carry.
+// The old text was a decision word plus a flag name ("refuse … use --fork"),
+// which described the implementation rather than the situation: a human reading
+// it had to work out that a tree is cut from a commit and that their
+// uncommitted work therefore stayed behind.
+func worktreeAddReport(decision, source, path, branch string, sourceDirty bool) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "%s → %s (branch %s)\n", decision, path, branch)
+	if sourceDirty {
+		fmt.Fprintf(&b, "  uncommitted changes in %s stayed there — a tree is cut from the last commit, so they are not in the new one; /worktree merge refuses for files it would touch until they are committed\n", source)
+	}
+	switch decision {
+	case "fork":
+		b.WriteString("  this conversation keeps its transcript and its tree; a new conversation has that history and works in the new tree")
+	default:
+		b.WriteString("  this conversation continues in the new tree")
+	}
+	return b.String()
 }
 
 type worktreeInfo struct {
@@ -229,6 +284,45 @@ func worktreeStatusReport(workspace, primary string, info worktreeInfo,
 	return b.String()
 }
 
+// worktreeMergeReport is the human-facing summary of a completed merge: what
+// went where, how much, and what to do next. The receipt JSON it replaces
+// answered none of those questions in one reading.
+func worktreeMergeReport(from, into, head string, commits int, files []string) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "merged %s into %s (%d commit", from, into, commits)
+	if commits != 1 {
+		b.WriteString("s")
+	}
+	b.WriteString(")\n")
+	if len(files) > 0 {
+		shown := files
+		suffix := ""
+		if len(shown) > mergeFilePreview {
+			shown, suffix = shown[:mergeFilePreview],
+				fmt.Sprintf(", +%d more", len(files)-mergeFilePreview)
+		}
+		fmt.Fprintf(&b, "  %d file(s): %s%s\n", len(files), strings.Join(shown, ", "), suffix)
+	}
+	if short := shortOid(head); short != "" {
+		fmt.Fprintf(&b, "  %s now at %s\n", into, short)
+	}
+	if len(files) == 0 && commits == 0 {
+		b.WriteString("  nothing changed\n")
+	}
+	b.WriteString("the tree is still there — /worktree close retires it when you are done checking the result")
+	return b.String()
+}
+
+// shortOid is git's own abbrevivation as the UI shows it: the first seven
+// characters, or the whole thing when it is shorter than that.
+func shortOid(oid string) string {
+	oid = strings.TrimSpace(oid)
+	if len(oid) <= mergeOidShort {
+		return oid
+	}
+	return oid[:mergeOidShort]
+}
+
 // closeWorktree decides where the client goes BEFORE anything is removed, so a
 // failure leaves the tree and this transcript intact.
 //
@@ -342,7 +436,7 @@ func localWorktree(m model, cmd slashCommand, argument string) (tea.Model, tea.C
 	}
 	explicitFork := len(fields) == 3 && fields[2] == "--fork"
 	if len(fields) > 3 || (len(fields) == 3 && !explicitFork) {
-		m.addBlock(blockError, "usage: /worktree [add NAME [--fork]|merge|rm PATH|close]")
+		m.addBlock(blockError, "usage: /worktree [add NAME|merge|rm PATH|close]")
 		m.syncViewport(true)
 		return m, nil
 	}
@@ -451,10 +545,9 @@ func worktreeCommandWith(session, cwd, action, name string, explicitFork bool,
 			if err := invoke(session, "git_status", map[string]any{"repo": cwd}, &dirty); err != nil {
 				return fail(err)
 			}
-			decision := worktreeBirthDecision(info.MessageCount == 0, status.CwdPinned, worktreeStatusDirty(dirty.Text), explicitFork)
-			if decision == "refuse" {
-				return fail(fmt.Errorf("current tree has uncommitted changes:\n%s\nCommit first, or /worktree add %s --fork to leave them here", dirty.Text, name))
-			}
+			sourceDirty := worktreeStatusDirty(dirty.Text)
+			decision := worktreeBirthDecision(info.MessageCount == 0, status.CwdPinned,
+				sourceDirty, explicitFork)
 			var created struct{ Path, Branch string }
 			if err := invoke(session, "git_worktree", map[string]any{"op": "add", "repo": cwd, "name": name, "branch": name, "base": info.Workspace.Branch}, &created); err != nil {
 				return fail(err)
@@ -486,10 +579,8 @@ func worktreeCommandWith(session, cwd, action, name string, explicitFork bool,
 			msg.Target = target
 			msg.Cwd = created.Path
 			msg.Isolation = "worktree"
-			msg.Text = decision + " → " + created.Path + " (branch " + created.Branch + ")"
-			if decision == "fork" {
-				msg.Text += "; original conversation preserved. Raw completed history copied, not compaction checkpoints."
-			}
+			msg.Text = worktreeAddReport(decision, cwd, created.Path,
+				created.Branch, sourceDirty)
 		case "merge":
 			if !info.Workspace.Linked {
 				return fail(fmt.Errorf("merge needs a linked worktree"))
@@ -497,6 +588,9 @@ func worktreeCommandWith(session, cwd, action, name string, explicitFork bool,
 			var preview struct {
 				Clean     bool     `json:"clean"`
 				Conflicts []string `json:"conflicts"`
+				Ahead     int      `json:"ahead"`
+				Behind    int      `json:"behind"`
+				Stat      string   `json:"stat"`
 			}
 			if err := invoke(session, "git_merge_preview", map[string]any{"repo": primary, "from_ref": info.Workspace.Branch}, &preview); err != nil {
 				return fail(err)
@@ -504,11 +598,29 @@ func worktreeCommandWith(session, cwd, action, name string, explicitFork bool,
 			if !preview.Clean {
 				return fail(fmt.Errorf("merge conflicts: %s", strings.Join(preview.Conflicts, ", ")))
 			}
-			var receipt json.RawMessage
+			if preview.Ahead == 0 {
+				// Merging nothing reports success and confuses: the branch is
+				// already contained in the target, which usually means the work
+				// was committed somewhere else.
+				return fail(fmt.Errorf("nothing to merge: %s has no commits that %s lacks",
+					info.Workspace.Branch, primary))
+			}
+			var receipt struct {
+				Merged bool     `json:"merged"`
+				Into   string   `json:"into"`
+				From   string   `json:"from"`
+				Head   string   `json:"head"`
+				Files  []string `json:"files"`
+				Warn   string   `json:"warning"`
+			}
 			if err := invoke(session, "git_merge", map[string]any{"op": "start", "repo": primary, "from_ref": info.Workspace.Branch}, &receipt); err != nil {
 				return fail(err)
 			}
-			msg.Text = "merged: " + string(receipt) + "\nWorktree kept; /worktree close to retire it and return to origin."
+			msg.Text = worktreeMergeReport(receipt.From, receipt.Into, receipt.Head,
+				preview.Ahead, receipt.Files) + "\n" + receipt.Warn
+			if receipt.Warn == "" {
+				msg.Text = strings.TrimSuffix(msg.Text, "\n")
+			}
 		case "rm", "close":
 			path := name
 			if action == "rm" && path == cwd {
@@ -537,6 +649,17 @@ func worktreeCommandWith(session, cwd, action, name string, explicitFork bool,
 					return fail(err)
 				}
 				msg.Target, msg.Cwd, msg.Text, msg.Isolation = target, dest, detail, ""
+				if info.Origin.Session != "" {
+					msg.Text += "\nthis conversation continues where it came from"
+				} else {
+					// A moved conversation cannot go back: its workspace is
+					// immutable, so close opens a fresh one in the primary and
+					// this transcript stays as the record. Saying it here is the
+					// difference between "my conversation vanished" and knowing
+					// where it went.
+					msg.Text += "\nfresh conversation opened in the primary; this " +
+						"transcript is kept as the record of the work"
+				}
 				break
 			}
 			if path == "" {
