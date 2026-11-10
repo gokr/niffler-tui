@@ -26,6 +26,22 @@ project aims for [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   fork's origin, or in a fresh primary conversation that keeps the old
   transcript as the record.
 
+### Added
+
+- **The background badge says whether a completion will wake you.** "bg 2"
+  told you something was running and nothing about whether its exit would bring
+  the conversation back. The segment now carries core's own readback:
+  `bg 2 · wake 1/3` while a wake is still admissible, and an explicit
+  `completion waits for your next message` once the budget is spent or wakes are
+  disabled. A job owned by another conversation (or by a direct caller) keeps
+  its place in the count but adds no promise —
+  `completion will not wake this conversation`. Every `/processes` row gains the
+  same answer per job: notifies this conversation, another one, or nobody. The
+  readback refreshes when a turn ends and on the badge tick, so a human's own
+  message resetting the budget shows up immediately. Nothing is derived
+  client-side: `maxWakes`, `wake {max, used}` and `process_list.session` come
+  from core, because a guess would promise a wake the runner then declines.
+
 ### Fixed
 
 - `/config`: Enter on a domain (and on a field) does nothing. Both browser

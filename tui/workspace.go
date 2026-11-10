@@ -32,7 +32,12 @@ import (
 type grantedRootsMsg struct {
 	Session string
 	Roots   []string
-	Err     error
+	// Wake is the same reply's answer to "would a background settlement wake
+	// this conversation?" (docs/WIRE.md "Settlement notices"). It rides this
+	// readback because it comes from the same core call, and both are facts the
+	// bottom row shows — a second request per refresh would buy nothing.
+	Wake wakeInfo
+	Err  error
 }
 
 // rootChangeMsg reports the outcome of a /roots add|remove. Roots is the set
@@ -71,7 +76,11 @@ type sessionRootsResponse struct {
 	GrantedRoots []string `json:"grantedRoots"`
 	Cwd          string   `json:"cwd"`
 	CwdPinned    bool     `json:"cwdPinned"`
-	Error        string   `json:"error"`
+	// Wake is the conversation's autonomous-wake budget readback. Absent from
+	// an older harness, in which case the zero value makes the UI promise
+	// nothing rather than guess.
+	Wake  wakeInfo `json:"wake"`
+	Error string   `json:"error"`
 }
 
 // grantedRoots returns the grant list for display, dropping the primary
@@ -101,6 +110,33 @@ func grantedFromResponse(response sessionRootsResponse) []string {
 	return grantedRoots(response.GrantedRoots, response.Cwd)
 }
 
+// wakeMsg carries the conversation's autonomous-wake readback. It is separate
+// from grantedRootsMsg on purpose: this refresh is silent (no transcript
+// block), because it rides routine events — a turn ending, a badge tick while
+// jobs run — and a report block every ten seconds would bury the conversation.
+type wakeMsg struct {
+	Session string
+	Wake    wakeInfo
+	Err     error
+}
+
+// loadWakeCmd reads whether a background settlement would wake this session.
+// The answer comes from core (the budget is derived from stored history), never
+// from the client, so the UI cannot promise a wake the runner would decline.
+func loadWakeCmd(comp *sdk.Component, session string) tea.Cmd {
+	return func() tea.Msg {
+		var response sessionRootsResponse
+		if err := requestInto(comp, "core", "session",
+			map[string]any{"sessionId": session}, &response); err != nil {
+			return wakeMsg{Session: session, Err: err}
+		}
+		if response.Error != "" {
+			return wakeMsg{Session: session, Err: errors.New(response.Error)}
+		}
+		return wakeMsg{Session: session, Wake: response.Wake}
+	}
+}
+
 // loadRootsCmd reads the conversation's granted roots. It is the same call
 // /approvals makes for its mode: a session status read, no turn.
 func loadRootsCmd(comp *sdk.Component, session string) tea.Cmd {
@@ -113,7 +149,8 @@ func loadRootsCmd(comp *sdk.Component, session string) tea.Cmd {
 		if response.Error != "" {
 			return grantedRootsMsg{Session: session, Err: errors.New(response.Error)}
 		}
-		return grantedRootsMsg{Session: session, Roots: grantedFromResponse(response)}
+		return grantedRootsMsg{Session: session, Roots: grantedFromResponse(response),
+			Wake: response.Wake}
 	}
 }
 

@@ -1017,7 +1017,7 @@ func (m *model) openProcessesSelectorWithLoading() {
 // openProcessesSelector rebuilds the /processes list from the snapshot.
 func (m *model) openProcessesSelector() {
 	m.selector = newSelector(t(m.loc, "selector.processes"),
-		processSelectorItems(m.loc, m.processes, m.processesConfirmKill), m.width, m.height-3)
+		processSelectorItemsFor(m.loc, m.processes, m.processesConfirmKill, m.session), m.width, m.height-3)
 	m.mode = modeProcesses
 	m.layout()
 }

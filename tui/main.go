@@ -632,7 +632,12 @@ type model struct {
 	cwdPinned    bool // the cwd is a decision, not the harness-root default
 	isolation    string
 	grantedRoots []string
-	branch       string
+	// wake is core's readback of whether a background settlement would start a
+	// turn in THIS conversation (budget remaining, or 0 when wakes are off). The
+	// zero value means "not loaded": the badge then promises nothing rather
+	// than guess, which keeps an older harness from looking broken.
+	wake   wakeInfo
+	branch string
 	// worktree marks the workspace as a LINKED git worktree (not the primary
 	// checkout) and primary names the checkout it branches from, so the row can
 	// distinguish "my checkout" from "a worktree of my checkout".
@@ -1345,6 +1350,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case approvalsModeMsg:
 		return m, m.applyApprovalsMode(msg)
+
+	case wakeMsg:
+		if msg.Session != m.session || msg.Err != nil {
+			break
+		}
+		m.wake = msg.Wake
 
 	case grantedRootsMsg:
 		// A readback for a conversation we have since left is stale: the
@@ -2731,6 +2742,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// work; the snapshot handlers disarm it when nothing is left.
 		m.bgTicking = false
 		cmds = append(cmds, processesListCmd(m.comp), agentsListCmd(m.comp, m.session))
+		// The wake budget moves for reasons this client cannot see (a wake turn
+		// ran, the human's message reset it), and the badge's promise must not
+		// go stale: refresh it on the same tick that refreshes the roster.
+		if runningCount(m.processes) > 0 {
+			cmds = append(cmds, loadWakeCmd(m.comp, m.session))
+		}
 		if cmd := m.armBgTick(); cmd != nil {
 			cmds = append(cmds, cmd)
 		}
@@ -2942,6 +2959,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else {
 			m.finishTurn(msg.reply, "")
 		}
+		// A finished turn may have been a wake turn (consuming budget) or the
+		// human's own message (resetting it), so the badge's promise is stale
+		// until this readback lands.
+		cmds = append(cmds, loadWakeCmd(m.comp, m.session))
 		m.syncViewport(true)
 
 	case steerDoneMsg:
@@ -3964,7 +3985,7 @@ func (m model) bottomLine() string {
 		}
 		line += chip
 	}
-	if badge := processesBadgeText(m.loc, m.processes, epochNow()); badge != "" {
+	if badge := processesBadgeTextFor(m.loc, m.processes, m.session, m.wake, epochNow()); badge != "" {
 		if line != "" {
 			line += "  │  "
 		}

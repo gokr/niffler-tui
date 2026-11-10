@@ -36,9 +36,36 @@ type processSummary struct {
 	// StartedAt is the spawn time (epoch seconds); older components omit
 	// it and the badge/cycle ages degrade to the plain count/status.
 	StartedAt float64 `json:"started_at"`
+	// Session is the conversation that owns this process, and Notifies says
+	// whether it therefore has somebody to tell when it exits. Both are absent
+	// from older components; an empty Session reads as "not mine", which is
+	// the honest answer for a harness that cannot say.
+	Session  string `json:"session"`
+	Notifies bool   `json:"notifies"`
 }
 
 func (p processSummary) running() bool { return p.Status == "running" }
+
+// mine reports whether this process reports its completion to the named
+// conversation. A process started by a direct caller (no session) never
+// notifies anyone, and one owned by a different conversation notifies THAT
+// one — neither will bring this conversation back.
+func (p processSummary) mine(session string) bool {
+	return session != "" && p.Session == session && p.Notifies
+}
+
+// wakeInfo is core's answer to "would a completion wake this conversation?".
+// Max is 0 when wakes are disabled; Used counts trailing wake turns since the
+// human's last message (docs/WIRE.md "Settlement notices"). The client never
+// derives these — a guess would promise a wake the runner then declines.
+type wakeInfo struct {
+	Max  int `json:"max"`
+	Used int `json:"used"`
+}
+
+// exhausted reports that no further autonomous wake can be admitted until the
+// human speaks again.
+func (w wakeInfo) exhausted() bool { return w.Max <= 0 || w.Used >= w.Max }
 
 // processesListMsg carries the registry snapshot for the badge and the
 // /processes panel.
@@ -131,21 +158,60 @@ func runningCount(processes []processSummary) int {
 // runs, empty otherwise (most conversations never start one). The age is
 // the longest-running entry's; an unknown timestamp (older component)
 // degrades to the plain count.
+//
+// The count is every running process, but the WAKE suffix is scoped to this
+// conversation: it answers "will one of these come back to me?" rather than
+// merely "is something running?". A process owned by another conversation (or
+// by a direct caller) still runs here, so it stays in the count while adding
+// no promise.
 func processesBadgeText(loc Locale, processes []processSummary, now ...float64) string {
+	return processesBadgeTextFor(loc, processes, "", wakeInfo{}, now...)
+}
+
+// processesBadgeTextFor is processesBadgeText plus the wake answer: `wake` is
+// core's readback for `session`, or the zero value when it is unknown (an
+// older harness, or a status reply not yet loaded), in which case no promise
+// is made at all.
+func processesBadgeTextFor(loc Locale, processes []processSummary, session string, wake wakeInfo, now ...float64) string {
 	count := runningCount(processes)
 	if count == 0 {
 		return ""
 	}
 	oldest := float64(0)
+	notifying := 0
 	for _, p := range processes {
-		if p.running() && p.StartedAt > oldest {
+		if !p.running() {
+			continue
+		}
+		if p.StartedAt > oldest {
 			oldest = p.StartedAt
 		}
+		if p.mine(session) {
+			notifying++
+		}
 	}
+	badge := t(loc, "processes.badge", strconv.Itoa(count))
 	if oldest > 0 && len(now) > 0 {
-		return t(loc, "processes.badgeAge", strconv.Itoa(count), humanAge(now[0]-oldest))
+		badge = t(loc, "processes.badgeAge", strconv.Itoa(count), humanAge(now[0]-oldest))
 	}
-	return t(loc, "processes.badge", strconv.Itoa(count))
+	// No session, or no wake readback yet: say nothing about waking. A promise
+	// this client cannot source is worse than silence — it is exactly the
+	// uncertainty the suffix exists to remove.
+	if session == "" || (wake.Max == 0 && wake.Used == 0) {
+		return badge
+	}
+	switch {
+	case notifying == 0:
+		// Nothing running here will report back: say so, because the absence of
+		// a wake is exactly what a human is trying to find out.
+		return badge + " · " + t(loc, "processes.noWake")
+	case wake.Max <= 0:
+		return badge + " · " + t(loc, "processes.wakeOff")
+	case wake.exhausted():
+		return badge + " · " + t(loc, "processes.wakeSpent", strconv.Itoa(wake.Used), strconv.Itoa(wake.Max))
+	default:
+		return badge + " · " + t(loc, "processes.wakeReady", strconv.Itoa(wake.Used), strconv.Itoa(wake.Max))
+	}
 }
 
 // sortProcesses puts running entries first, then by numeric id (p2 < p10).
@@ -171,11 +237,22 @@ func sortProcesses(processes []processSummary) {
 // (two-stage, same shape as /lsp's two-stage remove). An empty registry
 // shows a note instead of bubbles' bare "no items".
 func processSelectorItems(loc Locale, processes []processSummary, confirmKill string) []list.Item {
+	return processSelectorItemsFor(loc, processes, confirmKill, "")
+}
+
+// processSelectorItemsFor is processSelectorItems plus the ownership row: every
+// entry says whether its completion will reach THIS conversation. The panel is
+// where a human goes to ask that question about a specific job, and "running"
+// alone never answered it.
+func processSelectorItemsFor(loc Locale, processes []processSummary, confirmKill, session string) []list.Item {
 	sortProcesses(processes)
 	items := make([]list.Item, 0, len(processes)+1)
 	for _, p := range processes {
 		title := p.ID + " " + p.Label
 		description := p.Status + " · " + p.Command
+		if p.running() {
+			description += " · " + processNotifyNote(loc, p, session)
+		}
 		if p.ID == confirmKill {
 			title = t(loc, "processes.confirmKillShort") + " " + title
 		} else if p.running() {
@@ -195,6 +272,25 @@ func processSelectorItems(loc Locale, processes []processSummary, confirmKill st
 		})
 	}
 	return items
+}
+
+// processNotifyNote states, for one row, whether its exit reaches this
+// conversation. The three outcomes are genuinely different situations and a
+// human acts differently in each: a job that will wake them (do nothing), one
+// owned by another conversation (switch there to see it), and one with no
+// owner at all (nobody will be told — poll it or it is invisible).
+func processNotifyNote(loc Locale, p processSummary, session string) string {
+	if session == "" {
+		return ""
+	}
+	switch {
+	case p.mine(session):
+		return t(loc, "processes.notifyHere")
+	case p.Session != "" && p.Session != session:
+		return t(loc, "processes.notifyOther")
+	default:
+		return t(loc, "processes.notifyNone")
+	}
 }
 
 // peekTitle is the peek view's header line.
