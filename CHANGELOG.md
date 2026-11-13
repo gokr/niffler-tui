@@ -8,6 +8,10 @@ project aims for [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- New conversations (`/new` and the session browser) retain the current
+  provider/model selection instead of reverting to the global default.
+  Existing conversations still restore their own saved selection.
+
 - **`/worktree add` never refuses, and picks the outcome itself.** An
   uncommitted tree used to be a refusal telling you to re-run with `--fork`,
   which read as if a dirty tree blocked creating one — it does not: a tree is

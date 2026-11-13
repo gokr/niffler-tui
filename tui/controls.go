@@ -466,14 +466,45 @@ func localExport(m model, cmd slashCommand, argument string) (tea.Model, tea.Cmd
 	}
 }
 
+// startNewSession carries the current selection only into a fresh conversation.
+// Existing-session switches still restore their own header. The first turn
+// persists these pins through sendTurn, without changing any global defaults.
+func (m model) startNewSession() (tea.Model, tea.Cmd) {
+	provider, selected := m.providerOverride, m.modelOverride
+	if provider == "" {
+		provider = m.runtime.Provider
+	}
+	if selected == "" {
+		selected = m.runtime.Model
+	}
+	runtime := m.runtime
+	id := newSessionID()
+	m, historyCmd := m.switchSessionWithHistory(id)
+	if m.session != id {
+		return m, historyCmd
+	}
+	m.sessionNeedsCreate = true
+	m.providerOverride, m.modelOverride = provider, selected
+	m.runtime = runtime
+	bootstrap := bootstrapBackendCmd(m.comp, id)
+	return m, tea.Batch(historyCmd, func() tea.Msg {
+		return inheritNewSessionSelection(bootstrap().(bootstrapMsg), provider, selected, runtime)
+	})
+}
+
+func inheritNewSessionSelection(msg bootstrapMsg, provider, selected string, runtime runtimeResolution) bootstrapMsg {
+	if !msg.ConversationExists {
+		msg.Conversation.ProviderOverride = provider
+		msg.Conversation.ModelOverride = selected
+		msg.Runtime = runtime
+	}
+	return msg
+}
+
 func localNew(m model, cmd slashCommand, argument string) (tea.Model, tea.Cmd) {
 	id := strings.TrimSpace(argument)
 	if id == "" {
-		id = newSessionID()
-		// Genuinely new conversation: the first turn pins the launch directory
-		// as the workspace (see sendTurn). An explicit id argument may name an
-		// existing conversation, so it keeps the current flag.
-		m.sessionNeedsCreate = true
+		return m.startNewSession()
 	}
 	m, historyCmd := m.switchSessionWithHistory(id)
 	return m, tea.Batch(historyCmd, bootstrapBackendCmd(m.comp, id))
@@ -2004,9 +2035,7 @@ func (m model) handleControlKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case modeSessions:
 		switch selected.kind {
 		case selectorNewSession:
-			id := newSessionID()
-			m, historyCmd := m.switchSessionWithHistory(id)
-			return m, tea.Batch(historyCmd, bootstrapBackendCmd(m.comp, id))
+			return m.startNewSession()
 		case selectorSession:
 			if selected.id == m.session {
 				// Re-selecting the current session just dismisses the
