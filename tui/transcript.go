@@ -67,6 +67,7 @@ const (
 	blockError
 	blockNotice
 	blockDiagnostics
+	blockMemory
 	// blockShell is a shell escape's output (!command, ?command) — terminal
 	// text, dimmed, and never part of the conversation unless its "?" marker
 	// sent a copy of it to the model as a turn.
@@ -281,6 +282,8 @@ func (m *model) renderPiece(i int) string {
 		return toolStyle.Render("tool> " + block.text)
 	case blockShell:
 		return shellStyle.Render(block.text)
+	case blockMemory:
+		return m.renderMemory(block)
 	case blockDiagnostics:
 		return m.renderDiagnostics(block)
 	case blockMeta:

@@ -34,6 +34,7 @@ type storedMessage struct {
 	ToolCalls  []storedToolCall `json:"tool_calls"`
 	DurationMs int              `json:"durationMs"`
 	Notice     json.RawMessage  `json:"notice"`
+	Memory     json.RawMessage  `json:"memory"`
 }
 
 // messageContent is a persisted message's content. A multimodal array — the
@@ -277,7 +278,7 @@ func conversationHistoryCmd(comp *sdk.Component, session string, gen, anchor int
 		}
 		return conversationHistoryMsg{
 			Session: session, Gen: gen, Anchor: anchor,
-			Blocks: replayConversation(mergeCleanDiagnostics(comp, session, messages)),
+			Blocks: replayConversation(mergeMemoryActivity(comp, session, mergeCleanDiagnostics(comp, session, messages))),
 		}
 	}
 }
@@ -332,6 +333,13 @@ func replayConversation(messages []storedMessage) []transcriptBlock {
 	// streamed ones.
 	var scratch model
 	for _, msg := range messages {
+		if len(msg.Memory) > 0 {
+			var activity memoryActivity
+			if json.Unmarshal(msg.Memory, &activity) == nil && activity.Operation != "" {
+				scratch.appendMemory(activity)
+				continue
+			}
+		}
 		switch msg.Role {
 		case "diagnostic":
 			scratch.appendDiagnostics(msg.Name, string(msg.Content))

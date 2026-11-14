@@ -5,6 +5,19 @@
 Detailed usage and reference. For installation and a first conversation, start
 with the [README](README.md). Remote/fleet support is optional and experimental.
 
+## Memory activity
+
+A compatible harness renders durable memory as distinct **◇ Memory** blocks,
+using the theme's link accent (warnings/refusals use its warning color). Labels
+distinguish saved, updated, forgotten, searched and applied recall. A lookup is
+not labelled as injected context. Empty searches and text fallback remain visible.
+
+The tool-detail control (`ctrl+e`) expands facts and warnings; with tools hidden,
+memory keeps a compact attribution row. Applied recall reconstructs from stored
+message metadata; other operations load from durable memory activity records.
+Stable IDs deduplicate live events against replay. Older metadata-only events
+are ignored. This presentation never changes the model's prompt or history.
+
 ## Contents
 
 - [Run](#run) — connection and conversation selection

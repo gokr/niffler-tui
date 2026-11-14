@@ -95,6 +95,11 @@ func (u usageStats) cacheHitPct() float64 {
 }
 
 type sessionEvent struct {
+	MemoryID       string          `json:"id"`
+	Operation      string          `json:"operation"`
+	Subject        string          `json:"subject"`
+	Scope          string          `json:"scope"`
+	Injected       bool            `json:"injected"`
 	Contents       []string        `json:"contents"`
 	Path           string          `json:"path"`
 	Text           string          `json:"text"`
@@ -1609,7 +1614,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		merged = append(merged, m.blocks[:anchor]...)
 		merged = append(merged, msg.Blocks...)
 		merged = append(merged, m.blocks[anchor:]...)
-		m.blocks = merged
+		m.blocks = dedupMemoryBlocks(merged)
 		m.renderFrom = 0 // recomputed by the next render
 		m.markTranscriptDirty()
 		// Pin to the newest message: startup and switches should show the
@@ -3135,6 +3140,11 @@ func (m *model) applySessionEvent(msg sessionEventMsg) tea.Cmd {
 				}
 			}
 		}
+
+	case "memory":
+		m.appendMemory(memoryActivity{ID: event.MemoryID, Operation: event.Operation,
+			Phase: event.Phase, Text: event.Text, Subject: event.Subject,
+			Scope: event.Scope, Injected: event.Injected, Result: event.Result})
 
 	case "diagnostics":
 		m.appendDiagnostics(event.Path, event.Text)

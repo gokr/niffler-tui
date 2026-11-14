@@ -6,6 +6,13 @@ project aims for [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- Distinct ◇ Memory activity blocks for compatible harnesses: saved/updated,
+  forgotten, searched and applied recall, with expandable details and fallback
+  warnings. Reconnect restores durable memory activity; stable IDs deduplicate
+  live and replayed blocks. Idle memory events do not mark a turn busy.
+
 ### Changed
 
 - New conversations (`/new` and the session browser) retain the current
