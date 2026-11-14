@@ -1771,9 +1771,17 @@ func (m model) handleControlKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	// The config browser owns two row types of its own (a domain row and a
 	// field row are configDomainItem/configFieldItem, not selectorItems), so
 	// enter is handled here: falling through to the shared switch below would
-	// find no selectable item and swallow Enter, leaving the browser a dead
-	// end.
-	if m.mode == modeConfigDomains || m.mode == modeConfig {
+	// find no selectable item and swallow Enter, leaving the browser enter-only
+	// in one direction.
+	//
+	// ONLY enter. This check once caught every key, which made the browser a
+	// dead end in the literal sense: arrows, j/k, page keys and "/" (the
+	// filter) were swallowed before the list ever saw them, and esc could not
+	// leave — the reported "I could not navigate with arrow up or down, and
+	// there was no way out", while the footer advertised filter/enter/esc.
+	// Everything else belongs to the shared handling below.
+	if (m.mode == modeConfigDomains || m.mode == modeConfig) &&
+		msg.String() == "enter" {
 		return m.handleConfigSelectorKey(msg)
 	}
 	// The conversation browser (modeSessions): `a` shows or hides the subagent

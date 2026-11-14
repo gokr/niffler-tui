@@ -103,6 +103,91 @@ func TestConfigEnterOpensTheFieldEditor(t *testing.T) {
 	}
 }
 
+// Navigation is the whole point of a browser, and it was a dead end too: the
+// config handler ran BEFORE the shared list forwarding and returned nil for
+// every key except enter, so arrows, j/k, page keys, the "/" filter and even
+// esc were swallowed. The list could not be scrolled and there was no way back
+// out of /config except ctrl+c — while the footer advertised
+// "/: filter • enter: edit • esc: back".
+func TestConfigArrowsMoveTheSelection(t *testing.T) {
+	m := newConfigBrowser(t, testConfigDomains())
+
+	updated, _ := m.handleControlKey(tea.KeyPressMsg{Code: tea.KeyDown})
+	got := updated.(model)
+	if idx := got.selector.list.Index(); idx != 1 {
+		t.Fatalf("down: index = %d, want 1", idx)
+	}
+	updated, _ = got.handleControlKey(tea.KeyPressMsg{Code: tea.KeyUp})
+	got = updated.(model)
+	if idx := got.selector.list.Index(); idx != 0 {
+		t.Fatalf("up: index = %d, want 0", idx)
+	}
+}
+
+// The field list navigates the same way — it is a second, separate mode.
+func TestConfigFieldListArrowsMoveTheSelection(t *testing.T) {
+	m := newConfigBrowser(t, testConfigDomains())
+	m.configFields = configFields(testConfigDetail())
+	m.openConfigFieldSelector()
+
+	updated, _ := m.handleControlKey(tea.KeyPressMsg{Code: tea.KeyDown})
+	got := updated.(model)
+	if idx := got.selector.list.Index(); idx != 1 {
+		t.Fatalf("down: index = %d, want 1 (rows are still the field list)", idx)
+	}
+	if got.mode != modeConfig {
+		t.Fatalf("mode = %v after navigating, want modeConfig", got.mode)
+	}
+}
+
+// esc leaves the browser. Without it the only exit was ctrl+c, which quits
+// the whole client.
+func TestConfigEscLeavesTheBrowser(t *testing.T) {
+	m := newConfigBrowser(t, testConfigDomains())
+
+	updated, _ := m.handleControlKey(tea.KeyPressMsg{Code: tea.KeyEscape})
+	got := updated.(model)
+	if got.mode != modeChat {
+		t.Fatalf("mode = %v, want modeChat", got.mode)
+	}
+}
+
+// "/" starts the fuzzy filter, which the footer promises. The list must own
+// the keystrokes from then on.
+func TestConfigSlashStartsTheFilter(t *testing.T) {
+	m := newConfigBrowser(t, testConfigDomains())
+
+	updated, _ := m.handleControlKey(tea.KeyPressMsg{Code: '/', Text: "/"})
+	got := updated.(model)
+	if !got.selector.list.SettingFilter() {
+		t.Fatal("\"/\" did not start the filter")
+	}
+	// And typing narrows: the shared forwarding must keep working while the
+	// filter is open, or the box would take one character and stall.
+	updated, _ = got.handleControlKey(tea.KeyPressMsg{Code: 'o', Text: "o"})
+	got = updated.(model)
+	if got.mode != modeConfigDomains {
+		t.Fatalf("mode = %v while filtering, want modeConfigDomains", got.mode)
+	}
+}
+
+// Enter still opens the row it is on AFTER navigating — the regression that a
+// naive fix (forward everything, then also handle enter) would introduce.
+func TestConfigEnterOpensTheNavigatedRow(t *testing.T) {
+	m := newConfigBrowser(t, testConfigDomains())
+
+	updated, _ := m.handleControlKey(tea.KeyPressMsg{Code: tea.KeyDown})
+	updated, cmd := updated.(model).handleControlKey(tea.KeyPressMsg{Code: tea.KeyEnter})
+	got := updated.(model)
+	if got.configEditing != "observe.caps" {
+		t.Fatalf("configEditing = %q, want observe.caps (the second row)",
+			got.configEditing)
+	}
+	if cmd == nil {
+		t.Fatal("no detail fetch dispatched")
+	}
+}
+
 // The browser keys must not leak into other selectors: /model and /session rows
 // are selectorItems and keep their own enter handling.
 func TestConfigKeysDoNotShadowOtherSelectors(t *testing.T) {
