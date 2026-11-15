@@ -1344,6 +1344,9 @@ func (m model) providerDefaultModel() string {
 // currently active provider. Re-selecting the already active provider and
 // metadata-only actions (update, strip) keep the same backend.
 func (m model) providerActionChangedProvider(msg providerActionMsg) bool {
+	if msg.EmbeddingOnly {
+		return false
+	}
 	active := m.providerStatus.Provider.Nickname
 	switch msg.Action {
 	case "switch", "add":

@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"net"
 	"net/url"
 	"strconv"
 	"strings"
@@ -18,6 +19,8 @@ const (
 	providerFieldCatalog
 	providerFieldModel
 	providerFieldContext
+	providerFieldEmbedModel
+	providerFieldEmbedBaseURL
 	providerFieldCount
 )
 
@@ -71,6 +74,8 @@ func newEditProviderForm(p providerSummary, width int, loc Locale) providerForm 
 	form.inputs[providerFieldBaseURL].SetValue(p.BaseURL)
 	form.inputs[providerFieldCatalog].SetValue(p.Catalog)
 	form.inputs[providerFieldModel].SetValue(p.Model)
+	form.inputs[providerFieldEmbedModel].SetValue(p.EmbedModel)
+	form.inputs[providerFieldEmbedBaseURL].SetValue(p.EmbedBaseURL)
 	if p.Context > 0 {
 		form.inputs[providerFieldContext].SetValue(strconv.Itoa(p.Context))
 	}
@@ -94,6 +99,8 @@ func newProviderFormFields(width int, loc Locale) providerForm {
 		t(loc, "form.prompt.catalog"),
 		t(loc, "form.prompt.model"),
 		t(loc, "form.prompt.context"),
+		"Embedding model: ",
+		"Embedding URL: ",
 	}
 	placeholders := []string{
 		"work-openrouter",
@@ -102,6 +109,8 @@ func newProviderFormFields(width int, loc Locale) providerForm {
 		t(loc, "form.placeholder.catalog"),
 		t(loc, "form.placeholder.model"),
 		t(loc, "form.placeholder.context"),
+		"optional, e.g. local-nomic-q4",
+		"optional; defaults to base URL",
 	}
 	var form providerForm
 	form.loc = loc
@@ -155,16 +164,18 @@ func (f providerForm) update(msg tea.Msg) (providerForm, tea.Cmd) {
 
 func (f providerForm) values() (providerFormValues, error) {
 	values := providerFormValues{
-		Nickname: strings.TrimSpace(f.inputs[providerFieldNickname].Value()),
-		BaseURL:  strings.TrimSpace(f.inputs[providerFieldBaseURL].Value()),
-		APIKey:   strings.TrimSpace(f.inputs[providerFieldAPIKey].Value()),
-		Catalog:  strings.TrimSpace(f.inputs[providerFieldCatalog].Value()),
-		Model:    strings.TrimSpace(f.inputs[providerFieldModel].Value()),
+		EmbedModel:   strings.TrimSpace(f.inputs[providerFieldEmbedModel].Value()),
+		EmbedBaseURL: strings.TrimSpace(f.inputs[providerFieldEmbedBaseURL].Value()),
+		Nickname:     strings.TrimSpace(f.inputs[providerFieldNickname].Value()),
+		BaseURL:      strings.TrimSpace(f.inputs[providerFieldBaseURL].Value()),
+		APIKey:       strings.TrimSpace(f.inputs[providerFieldAPIKey].Value()),
+		Catalog:      strings.TrimSpace(f.inputs[providerFieldCatalog].Value()),
+		Model:        strings.TrimSpace(f.inputs[providerFieldModel].Value()),
 	}
 	if values.Nickname == "" && !f.edit {
 		return providerFormValues{}, fmt.Errorf("%s", t(f.loc, "form.nicknameRequired"))
 	}
-	if values.APIKey == "" && !f.edit {
+	if values.APIKey == "" && !f.edit && !loopbackProviderURL(values.BaseURL) {
 		return providerFormValues{}, fmt.Errorf("%s", t(f.loc, "form.apiKeyRequired"))
 	}
 	if values.BaseURL == "" {
@@ -174,7 +185,7 @@ func (f providerForm) values() (providerFormValues, error) {
 	if err != nil || parsed.Host == "" || (parsed.Scheme != "http" && parsed.Scheme != "https") {
 		return providerFormValues{}, fmt.Errorf("%s", t(f.loc, "form.baseUrlInvalid"))
 	}
-	if values.Model == "" {
+	if values.Model == "" && values.EmbedModel == "" {
 		// No model typed: fall back to the live list or catalog auto-pick so
 		// connecting a provider never requires typing a model id.
 		if picked := pickDefaultServedModel(f.served); picked != "" {
@@ -196,6 +207,12 @@ func (f providerForm) values() (providerFormValues, error) {
 		values.Model = match
 		f.inputs[providerFieldModel].SetValue(match)
 	}
+	if values.EmbedBaseURL != "" {
+		u, err := url.Parse(values.EmbedBaseURL)
+		if err != nil || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https") {
+			return providerFormValues{}, fmt.Errorf("invalid embedding URL: use http(s) with a host")
+		}
+	}
 	contextText := strings.TrimSpace(f.inputs[providerFieldContext].Value())
 	if contextText != "" && contextText != "0" {
 		contextSize, err := strconv.Atoi(contextText)
@@ -211,6 +228,9 @@ func (f providerForm) values() (providerFormValues, error) {
 // endpoint. Same prefill/normalize contract as setCatalogModels, but with
 // authoritative ids — preferred over catalog data on submit.
 func (f *providerForm) setServedModels(ids []string) {
+	if f.inputs[providerFieldModel].Value() == "" && f.inputs[providerFieldEmbedModel].Value() != "" {
+		return
+	}
 	if len(ids) == 0 {
 		return
 	}
@@ -305,6 +325,9 @@ func (f *providerForm) clearSecret() {
 // tool-call model) so connecting does not require typing a model id, and
 // normalizes an inherited value to its exact catalog spelling.
 func (f *providerForm) setCatalogModels(catalogID string, models []modelSummary) {
+	if f.inputs[providerFieldModel].Value() == "" && f.inputs[providerFieldEmbedModel].Value() != "" {
+		return
+	}
 	if catalogID != f.catalogID || len(models) == 0 {
 		return
 	}
@@ -407,6 +430,7 @@ func (f providerForm) view(width int) string {
 		meta = t(f.loc, "form.editMeta", f.template)
 	}
 	out.WriteString(metaStyle.Render(meta))
+	out.WriteString("\nEmbedding-only: set Embedding model and leave chat Model blank; this keeps the active chat provider. A loopback Base URL may omit the API key.")
 	out.WriteString("\n\n")
 	for i := range f.inputs {
 		out.WriteString(f.inputs[i].View())
@@ -429,4 +453,19 @@ func (f providerForm) view(width int) string {
 		Width(max(24, min(width-6, 88))).
 		Render(out.String())
 	return panel
+}
+
+// Advisory form validation only. Provider owns and rechecks the authoritative
+// credential rule; a local embedding endpoint does not need a dummy API key.
+func loopbackProviderURL(raw string) bool {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return false
+	}
+	host := u.Hostname()
+	if host == "localhost" {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }

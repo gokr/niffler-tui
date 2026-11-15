@@ -30,14 +30,16 @@ type okResponse struct {
 }
 
 type providerSummary struct {
-	Nickname    string `json:"nickname"`
-	AuthType    string `json:"authType"`
-	BaseURL     string `json:"baseUrl"`
-	Model       string `json:"model"`
-	Catalog     string `json:"catalog"`
-	Context     int    `json:"context"`
-	Active      bool   `json:"active"`
-	StripPrefix bool   `json:"stripPrefix"`
+	EmbedModel   string `json:"embedModel"`
+	EmbedBaseURL string `json:"embedBaseUrl"`
+	Nickname     string `json:"nickname"`
+	AuthType     string `json:"authType"`
+	BaseURL      string `json:"baseUrl"`
+	Model        string `json:"model"`
+	Catalog      string `json:"catalog"`
+	Context      int    `json:"context"`
+	Active       bool   `json:"active"`
+	StripPrefix  bool   `json:"stripPrefix"`
 }
 
 type providerListResponse struct {
@@ -280,8 +282,9 @@ type allModelsMsg struct {
 }
 
 type providerActionMsg struct {
-	Action   string
-	Nickname string
+	EmbeddingOnly bool
+	Action        string
+	Nickname      string
 	// Detail carries action-specific context for the status label (e.g. the
 	// new strip-prefix state for the "strip" action).
 	Detail string
@@ -1301,12 +1304,14 @@ func useEnvironmentProviderCmd(comp *sdk.Component, session string) tea.Cmd {
 }
 
 type providerFormValues struct {
-	Nickname string
-	APIKey   string
-	BaseURL  string
-	Catalog  string
-	Model    string
-	Context  int
+	EmbedModel   string
+	EmbedBaseURL string
+	Nickname     string
+	APIKey       string
+	BaseURL      string
+	Catalog      string
+	Model        string
+	Context      int
 }
 
 func addProviderCmd(comp *sdk.Component, values providerFormValues) tea.Cmd {
@@ -1315,12 +1320,13 @@ func addProviderCmd(comp *sdk.Component, values providerFormValues) tea.Cmd {
 		err := requestInto(comp, "provider", "provider_add", map[string]any{
 			"nickname": values.Nickname, "apiKey": values.APIKey,
 			"baseUrl": values.BaseURL, "catalog": values.Catalog,
-			"model": values.Model, "context": values.Context, "active": true,
+			"model": values.Model, "context": values.Context, "active": values.Model != "",
+			"embedModel": values.EmbedModel, "embedBaseUrl": values.EmbedBaseURL,
 		}, &response)
 		if err == nil && !response.OK {
 			err = fmt.Errorf("provider add failed")
 		}
-		return providerActionMsg{Action: "add", Nickname: values.Nickname, Err: err}
+		return providerActionMsg{Action: "add", Nickname: values.Nickname, EmbeddingOnly: values.Model == "" && values.EmbedModel != "", Err: err}
 	}
 }
 
@@ -1330,6 +1336,9 @@ func addProviderCmd(comp *sdk.Component, values providerFormValues) tea.Cmd {
 // to the add unchanged.
 func probeThenAddProviderCmd(comp *sdk.Component, values providerFormValues) tea.Cmd {
 	return func() tea.Msg {
+		if values.Model == "" && values.EmbedModel != "" {
+			return addProviderCmd(comp, values)()
+		}
 		var probe struct {
 			OK     bool `json:"ok"`
 			Models []struct {
@@ -1367,6 +1376,7 @@ func updateProviderCmd(comp *sdk.Component, values providerFormValues) tea.Cmd {
 			"baseUrl":  values.BaseURL,
 			"catalog":  values.Catalog,
 			"model":    values.Model, "context": values.Context,
+			"embedModel": values.EmbedModel, "embedBaseUrl": values.EmbedBaseURL,
 		}
 		if values.APIKey != "" {
 			args["apiKey"] = values.APIKey
