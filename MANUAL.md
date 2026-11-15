@@ -5,6 +5,19 @@
 Detailed usage and reference. For installation and a first conversation, start
 with the [README](README.md). Remote/fleet support is optional and experimental.
 
+## Embedding provider setup
+
+Provider add/edit forms include **Embedding model** and an optional **Embedding
+URL** override. For local nomic, use Base URL `http://127.0.0.1:18100/v1`,
+Embedding model `local-nomic-q4`, and leave API key and chat Model blank.
+Keyless registration is allowed only for loopback Base URLs. An embedding-only
+addition does not activate a new chat provider or clear the conversation's chat
+model pin. Leave the embedding URL empty to use the Base URL.
+
+Then open `/config memory` and set `embedProvider` to the provider nickname.
+This configuration needs no CLI calls. Installing and starting the optional local
+runtime still uses `make install-embed` and `make embed-up` in the harness.
+
 ## Memory activity
 
 A compatible harness renders durable memory as distinct **◇ Memory** blocks,
