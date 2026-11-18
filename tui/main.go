@@ -1175,14 +1175,8 @@ func (m model) sendTurn(content string, atts []attachment) tea.Cmd {
 			}
 			args["attachments"] = prepared
 		}
-		// A conversation with no header yet gets this TUI's launch directory
-		// pinned as its workspace: starting niffler-tui inside a project means
-		// the conversation works on that project. The retry below covers the
-		// small race where a model-only call created the header between
-		// bootstrap and this turn — that header carries no chosen workspace
-		// (core only records `cwd` for an explicit request), so the cwd is
-		// still applied rather than refused, and a conversation that already
-		// has turns but was never chosen can also be moved with /workspace.
+		// Pin a new conversation to the launch directory. Send the turn only
+		// once: a missing reply does not tell us whether it executed.
 		if m.sessionNeedsCreate {
 			args["cwd"] = m.cwd
 			// Birth-only: the agent identity is set when the conversation is
@@ -1195,10 +1189,6 @@ func (m model) sendTurn(content string, atts []attachment) tea.Cmd {
 			}
 		}
 		result, err := m.sessionRequest(args)
-		if err != nil && m.sessionNeedsCreate {
-			delete(args, "cwd")
-			result, err = m.sessionRequest(args)
-		}
 		if err != nil {
 			if errors.Is(err, errMidTurn) {
 				// The runner refused: the conversation is already mid-turn
