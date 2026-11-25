@@ -6,18 +6,62 @@ project aims for [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.11.0] — 2026-11-24
+
+This cycle is about the client telling you what is actually true — about the
+tree you are working in, the job you are about to walk away from, and the
+search you just typed. `/worktree` became a real workflow (add, status, merge,
+rm, close) with the move-versus-fork decision made for you; the background
+badge answers whether a completion will wake you; and free-text session search
+reaches what the agent actually *said* instead of only conversation titles.
+
+Paired harness: Niffler **0.6.0**.
+
 ### Added
 
-- Distinct ◇ Memory activity blocks for compatible harnesses: saved/updated,
+- **The background badge says whether a completion will wake you.** "bg 2"
+  told you something was running and nothing about whether its exit would bring
+  the conversation back. The segment now carries core's own readback:
+  `bg 2 · wake 1/3` while a wake is still admissible, and an explicit
+  `completion waits for your next message` once the budget is spent or wakes are
+  disabled. A job owned by another conversation (or by a direct caller) keeps
+  its place in the count but adds no promise —
+  `completion will not wake this conversation`. Every `/processes` row gains the
+  same answer per job: notifies this conversation, another one, or nobody. The
+  readback refreshes when a turn ends and on the badge tick, so a human's own
+  message resetting the budget shows up immediately. Nothing is derived
+  client-side: `maxWakes`, `wake {max, used}` and `process_list.session` come
+  from core, because a guess would promise a wake the runner then declines.
+
+- **Distinct ◇ Memory activity blocks** for compatible harnesses: saved/updated,
   forgotten, searched and applied recall, with expandable details and fallback
   warnings. Reconnect restores durable memory activity; stable IDs deduplicate
   live and replayed blocks. Idle memory events do not mark a turn busy.
 
-### Changed
+- **Embedding providers are configurable without touching your chat selection.**
+  The `/config` surface gained the fields needed to point a provider at an
+  embedding model, so enabling memory's semantic retrieval no longer means
+  editing the provider you chat with — or switching model just to try it.
 
-- New conversations (`/new` and the session browser) retain the current
-  provider/model selection instead of reverting to the global default.
-  Existing conversations still restore their own saved selection.
+- **`/worktree` commands with move-versus-fork routing.** `/worktree
+  [status|add NAME [--fork]|merge|rm PATH|close]`, backed by the harness's git
+  tools through the session-scoped control — never a direct component call,
+  which would bypass approval and lose session attribution.
+
+- **`/worktree status` reports the trees a human must choose between.** A bare
+  `/worktree` used to print six labelled lines and then the raw JSON from
+  `git_worktree_list`: complete and unreadable, listing only this repository's
+  trees without saying anything about them, so the questions the command exists
+  to answer — what is in my other trees, is any of them dirty, is any ready to
+  merge — went unanswered.
+
+- **Free-text session search reaches message content, not just titles.** The
+  `/session` browser asked the store to search `kind: conversation`, whose
+  indexed fields are id and title only, so typing a phrase you remembered the
+  agent *saying* found nothing even though the store indexes message content,
+  tool-call arguments and reasoning for exactly this purpose.
+
+### Changed
 
 - **`/worktree add` never refuses, and picks the outcome itself.** An
   uncommitted tree used to be a refusal telling you to re-run with `--fork`,
@@ -37,29 +81,35 @@ project aims for [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   fork's origin, or in a fresh primary conversation that keeps the old
   transcript as the record.
 
-### Added
-
-- **The background badge says whether a completion will wake you.** "bg 2"
-  told you something was running and nothing about whether its exit would bring
-  the conversation back. The segment now carries core's own readback:
-  `bg 2 · wake 1/3` while a wake is still admissible, and an explicit
-  `completion waits for your next message` once the budget is spent or wakes are
-  disabled. A job owned by another conversation (or by a direct caller) keeps
-  its place in the count but adds no promise —
-  `completion will not wake this conversation`. Every `/processes` row gains the
-  same answer per job: notifies this conversation, another one, or nobody. The
-  readback refreshes when a turn ends and on the badge tick, so a human's own
-  message resetting the budget shows up immediately. Nothing is derived
-  client-side: `maxWakes`, `wake {max, used}` and `process_list.session` come
-  from core, because a guess would promise a wake the runner then declines.
+- New conversations (`/new` and the session browser) retain the current
+  provider/model selection instead of reverting to the global default.
+  Existing conversations still restore their own saved selection.
 
 ### Fixed
 
-- `/config`: Enter on a domain (and on a field) does nothing. Both browser
-  levels use row types of their own, so the shared selector's enter switch
-  found no selectable item and returned before it could dispatch — the only
-  way into a domain was typing it as an argument. Enter now opens the
-  highlighted domain and, one level down, the field editor.
+- **`/config` is navigable again.** It swallowed every key but enter: the
+  browser's own enter handler ran *before* the shared selector forwarding and
+  returned nil for anything that was not enter, so arrows, `j`/`k` and page
+  keys did nothing. Enter now opens the highlighted domain and, one level down,
+  the field editor.
+
+- **`/worktree close` works on a moved conversation**, and `/worktree` commands
+  work before the first turn. `close` only handled forks, so a moved
+  conversation — which has no origin — was refused with "needs a linked
+  worktree with an origin" and left the user with no way out of the isolated
+  tree that `add` had created for them.
+
+- **A catalog refresh reaches an open `/model` picker.** The cross-provider
+  list the picker prefers was cached for the process lifetime under a key built
+  from the provider set alone, so it only broke when a provider was added or
+  removed — never when a catalog refresh changed the models.
+
+- **The two-stage stop prompt disarms when you do something else.** The armed
+  flag survived every other key, so a human who armed it, hesitated and then
+  typed or scrolled had already made a different choice — yet the next ESC,
+  minutes later, meaning only to arm, cancelled the turn.
+
+- Reasoning effort labels are displayed in full rather than truncated.
 
 ## [0.10.0] — 2026-10-29
 
